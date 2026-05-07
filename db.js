@@ -8,7 +8,8 @@ db.version(2).stores({
   sale_items: '++id, sale_id, product_id, product_name, quantity, unit_price, line_total',
   users: '++id, username, password, display_name, role, is_active',
   settings: '++id, key, value',
-  held_carts: '++id, name, items, customer_id, date'
+  held_carts: '++id, name, items, customer_id, date',
+  attendance: '++id, user_id, display_name, date, clock_in, clock_out, status'
 });
 
 const BUSINESS_TEMPLATES = {

@@ -83,7 +83,8 @@
       <div class="sidebar-divider"></div>
       <div class="sidebar-section" id="nav-hr">
         <div class="sidebar-label">HR</div>
-        <div class="nav-item" onclick="nav('user-mgmt')"><span class="nav-icon">🔐</span> User Management</div>
+        <div class="nav-item" onclick="nav('user-mgmt')"><span class="nav-icon">👥</span> Staff Management</div>
+        <div class="nav-item" onclick="nav('attendance')"><span class="nav-icon">📅</span> Attendance</div>
       </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section" id="nav-system">
@@ -223,11 +224,28 @@
       <div class="screen" id="screen-user-mgmt">
         <div class="page">
           <div class="page-header">
-            <div><div class="page-title">User Management</div><div class="page-subtitle">Manage login accounts and roles</div></div>
-            <div class="page-actions"><button class="btn btn-primary btn-sm" onclick="openUserForm()">+ New User</button></div>
+            <div><div class="page-title">Staff Management</div><div class="page-subtitle">Manage employee accounts and roles</div></div>
+            <div class="page-actions"><button class="btn btn-primary btn-sm" onclick="openUserForm()">+ New Employee</button></div>
           </div>
           <div class="card">
             <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Username</th><th>Display Name</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody id="users-tbody"></tbody></table></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ATTENDANCE SCREEN -->
+      <div class="screen" id="screen-attendance">
+        <div class="page">
+          <div class="page-header">
+            <div><div class="page-title">Attendance Tracking</div><div class="page-subtitle">Manage employee clock-ins and clock-outs</div></div>
+            <div class="page-actions"><button class="btn btn-primary btn-sm" onclick="clockInUser()">⏱️ Clock In/Out</button></div>
+          </div>
+          <div class="card">
+            <div class="filter-bar">
+              <input type="date" class="filter-select" id="att-date" onchange="renderAttendance()">
+              <div class="filter-spacer"></div>
+            </div>
+            <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Employee</th><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Status</th></tr></thead><tbody id="attendance-tbody"></tbody></table></div>
           </div>
         </div>
       </div>

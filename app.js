@@ -106,7 +106,8 @@ const SCREENS = {
   'categories': 'Inventory / Categories',
   'sales-history': 'Sales / History',
   'customers': 'Sales / Customers',
-  'user-mgmt': 'System / Users',
+  'user-mgmt': 'HR / Staff Management',
+  'attendance': 'HR / Attendance',
   'settings': 'System / Settings'
 };
 
@@ -119,7 +120,7 @@ function nav(screenId) {
     if (role === 'Counter' && !['pos', 'dashboard', 'sales-history', 'customers'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
-    if (role === 'HR' && !['user-mgmt'].includes(screenId)) {
+    if (role === 'HR' && !['user-mgmt', 'attendance'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
     if (role === 'Inventory' && !['products', 'categories'].includes(screenId)) {
@@ -148,6 +149,7 @@ function nav(screenId) {
   if(screenId === 'sales-history') renderSalesHistory();
   if(screenId === 'customers') renderCustomersTable();
   if(screenId === 'user-mgmt') renderUsersTable();
+  if(screenId === 'attendance') renderAttendance();
   if(screenId === 'settings') loadSettingsForm();
 }
 
@@ -186,7 +188,7 @@ async function renderPosGrid() {
   let products = await db.products.where('is_active').equals(true).toArray();
   
   if(posCategory) products = products.filter(p => p.category === posCategory);
-  if(term) products = products.filter(p => p.name.toLowerCase().includes(term) || p.sku.toLowerCase().includes(term) || p.barcode.toLowerCase().includes(term));
+  if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term) || (p.barcode||'').toLowerCase().includes(term));
   
   const grid = document.getElementById('pos-grid');
   grid.innerHTML = products.map(p => `
@@ -706,4 +708,106 @@ window.saveUser = async () => {
   const u = { username:document.getElementById('f-usr-name').value, password:document.getElementById('f-usr-pass').value, display_name:document.getElementById('f-usr-disp').value, role:document.getElementById('f-usr-role').value, is_active:document.getElementById('f-usr-active').value==='true' };
   if(id) await db.users.update(parseInt(id), u); else await db.users.add(u);
   closeModal(); renderUsersTable(); showToast('success', 'User saved');
+};
+
+// --- ATTENDANCE ---
+window.renderAttendance = async () => {
+  let dateVal = document.getElementById('att-date').value;
+  if(!dateVal) {
+    const d = new Date();
+    dateVal = d.toISOString().split('T')[0];
+    document.getElementById('att-date').value = dateVal;
+  }
+  
+  const records = await db.attendance.where('date').equals(dateVal).toArray();
+  const tbody = document.getElementById('attendance-tbody');
+  
+  if (records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">No attendance records for this date</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = records.map(r => {
+    let hoursStr = '-';
+    if (r.clock_in && r.clock_out) {
+      const diff = new Date(r.clock_out) - new Date(r.clock_in);
+      const hours = (diff / (1000 * 60 * 60)).toFixed(2);
+      hoursStr = hours + ' hrs';
+    }
+    return `
+    <tr>
+      <td class="fw-600">${r.display_name}</td>
+      <td>${r.date}</td>
+      <td class="td-mono text-success">${r.clock_in ? new Date(r.clock_in).toLocaleTimeString() : '-'}</td>
+      <td class="td-mono text-danger">${r.clock_out ? new Date(r.clock_out).toLocaleTimeString() : '-'}</td>
+      <td class="td-mono fw-600">${hoursStr}</td>
+      <td><span class="badge ${r.status==='Clocked In'?'badge-pending':'badge-completed'}">${r.status}</span></td>
+    </tr>
+    `;
+  }).join('');
+};
+
+window.clockInUser = async () => {
+  const users = await db.users.where('is_active').equals(true).toArray();
+  const dateVal = new Date().toISOString().split('T')[0];
+  
+  const html = `
+    <div class="form-group">
+      <label class="form-label">Select Employee</label>
+      <select class="form-input" id="att-emp-id">
+        ${users.map(u => `<option value="${u.id}">${u.display_name} (${u.role})</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group" style="margin-top:10px">
+      <label class="form-label">Action</label>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-primary" style="flex:1;background:var(--success);border-color:var(--success)" onclick="submitClockIn(true)">⏱️ Clock In</button>
+        <button class="btn btn-danger" style="flex:1" onclick="submitClockIn(false)">🛑 Clock Out</button>
+      </div>
+    </div>
+  `;
+  openModal('Clock In / Clock Out', html, `<button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
+};
+
+window.submitClockIn = async (isClockIn) => {
+  const empId = parseInt(document.getElementById('att-emp-id').value);
+  const emp = await db.users.get(empId);
+  const dateVal = new Date().toISOString().split('T')[0];
+  const now = new Date().toISOString();
+  
+  let record = await db.attendance.where({user_id: empId, date: dateVal}).first();
+  
+  if (isClockIn) {
+    if (record && record.clock_in) {
+      showToast('error', 'Already clocked in for today');
+      return;
+    }
+    if (!record) {
+      await db.attendance.add({
+        user_id: emp.id,
+        display_name: emp.display_name,
+        date: dateVal,
+        clock_in: now,
+        clock_out: null,
+        status: 'Clocked In'
+      });
+    } else {
+      await db.attendance.update(record.id, { clock_in: now, status: 'Clocked In' });
+    }
+    showToast('success', `${emp.display_name} clocked in!`);
+  } else {
+    if (!record || !record.clock_in) {
+      showToast('error', 'Must clock in first');
+      return;
+    }
+    if (record.clock_out) {
+      showToast('error', 'Already clocked out');
+      return;
+    }
+    await db.attendance.update(record.id, { clock_out: now, status: 'Completed' });
+    showToast('success', `${emp.display_name} clocked out!`);
+  }
+  
+  closeModal();
+  renderAttendance();
 };
