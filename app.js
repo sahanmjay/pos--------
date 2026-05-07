@@ -143,6 +143,7 @@ function nav(screenId) {
   document.getElementById('breadcrumb').innerHTML = bc;
   
   // Call init function for screen
+  if(screenId === 'pos') { renderPosCategories(); renderPosGrid(); }
   if(screenId === 'dashboard') initDashboard();
   if(screenId === 'products') renderProductsTable();
   if(screenId === 'categories') renderCategoriesTable();
@@ -168,6 +169,11 @@ function closeModal() {
 // --- POS SYSTEM ---
 async function renderPosCategories() {
   const cats = await db.categories.toArray();
+  
+  if (posCategory !== '' && !cats.find(c => c.name === posCategory)) {
+    posCategory = '';
+  }
+  
   let html = `<div class="cat-pill ${posCategory===''?'active':''}" onclick="setPosCategory('')">All</div>`;
   cats.forEach(c => {
     html += `<div class="cat-pill ${posCategory===c.name?'active':''}" onclick="setPosCategory('${c.name}')">${c.name}</div>`;
