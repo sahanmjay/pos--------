@@ -1,7 +1,8 @@
 const SUPABASE_URL = 'https://rakklmxpukcehbyjuxjy.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJha2tsbXhwdWtjZWhieWp1eGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNjY0MjgsImV4cCI6MjA5Mzc0MjQyOH0.05GCQVOXhH1CGWjgQkpu9mMKipT4wcPht4u3nf6c8Rc';
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const { createClient } = supabase;
+const supa = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Compatibility layer: mimics Dexie API so app.js works with minimal changes
 class SupaQuery {
@@ -14,13 +15,13 @@ class SupaQuery {
     return this;
   }
   async first() {
-    let q = supabase.from(this._table).select('*');
+    let q = supa.from(this._table).select('*');
     for (const f of this._filters) q = q.eq(f.field, f.val);
     const { data } = await q.limit(1).maybeSingle();
     return data || null;
   }
   async toArray() {
-    let q = supabase.from(this._table).select('*');
+    let q = supa.from(this._table).select('*');
     for (const f of this._filters) q = q.eq(f.field, f.val);
     const { data } = await q;
     return data || [];
@@ -31,44 +32,44 @@ class SupaTable {
   constructor(name) { this._name = name; }
 
   async toArray() {
-    const { data, error } = await supabase.from(this._name).select('*').order('id', { ascending: true });
+    const { data, error } = await supa.from(this._name).select('*').order('id', { ascending: true });
     if (error) { console.error('toArray', this._name, error); return []; }
     return data;
   }
 
   async get(id) {
-    const { data } = await supabase.from(this._name).select('*').eq('id', id).maybeSingle();
+    const { data } = await supa.from(this._name).select('*').eq('id', id).maybeSingle();
     return data || null;
   }
 
   async add(item) {
-    const { data, error } = await supabase.from(this._name).insert(item).select('id').single();
+    const { data, error } = await supa.from(this._name).insert(item).select('id').single();
     if (error) { console.error('add', this._name, error); return null; }
     return data.id;
   }
 
   async bulkAdd(items) {
-    const { error } = await supabase.from(this._name).insert(items);
+    const { error } = await supa.from(this._name).insert(items);
     if (error) console.error('bulkAdd', this._name, error);
   }
 
   async update(id, changes) {
-    const { error } = await supabase.from(this._name).update(changes).eq('id', id);
+    const { error } = await supa.from(this._name).update(changes).eq('id', id);
     if (error) console.error('update', this._name, error);
   }
 
   async delete(id) {
-    const { error } = await supabase.from(this._name).delete().eq('id', id);
+    const { error } = await supa.from(this._name).delete().eq('id', id);
     if (error) console.error('delete', this._name, error);
   }
 
   async clear() {
-    const { error } = await supabase.from(this._name).delete().neq('id', 0);
+    const { error } = await supa.from(this._name).delete().neq('id', 0);
     if (error) console.error('clear', this._name, error);
   }
 
   async count() {
-    const { count, error } = await supabase.from(this._name).select('*', { count: 'exact', head: true });
+    const { count, error } = await supa.from(this._name).select('*', { count: 'exact', head: true });
     if (error) return 0;
     return count;
   }
