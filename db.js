@@ -119,14 +119,23 @@ const PRODUCT_ICONS = {
 };
 
 async function seedDatabase() {
-  const userCount = await db.users.count();
-  if (userCount === 0) {
-    await db.users.bulkAdd([
-      { username:'admin', password:'123', display_name:'Administrator', role:'Admin', is_active:true },
-      { username:'counter', password:'123', display_name:'Counter Staff', role:'Counter', is_active:true },
-      { username:'hr', password:'123', display_name:'HR Manager', role:'HR', is_active:true },
-      { username:'inv', password:'123', display_name:'Inventory Manager', role:'Inventory', is_active:true }
-    ]);
+  const requiredUsers = [
+    { username:'admin', password:'123', display_name:'Administrator', role:'Admin', is_active:true },
+    { username:'counter', password:'123', display_name:'Counter Staff', role:'Counter', is_active:true },
+    { username:'hr', password:'123', display_name:'HR Manager', role:'HR', is_active:true },
+    { username:'inv', password:'123', display_name:'Inventory Manager', role:'Inventory', is_active:true }
+  ];
+
+  for (const user of requiredUsers) {
+    const existingUser = await db.users.where('username').equals(user.username).first();
+    if (!existingUser) {
+      await db.users.add(user);
+    } else {
+      // Ensure the old admin password is updated to 123 if it was 'admin'
+      if (user.username === 'admin' && existingUser.password === 'admin') {
+         await db.users.update(existingUser.id, { password: '123' });
+      }
+    }
   }
 
   const settingsCount = await db.settings.count();
