@@ -185,7 +185,8 @@ function getIcon(cat) {
 
 async function renderPosGrid() {
   const term = document.getElementById('pos-search').value.toLowerCase();
-  let products = await db.products.where('is_active').equals(true).toArray();
+  let products = await db.products.toArray();
+  products = products.filter(p => p.is_active === true).reverse();
   
   if(posCategory) products = products.filter(p => p.category === posCategory);
   if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term) || (p.barcode||'').toLowerCase().includes(term));
@@ -449,7 +450,8 @@ async function initDashboard() {
   const revenue = todaySales.reduce((s, x)=>s+x.total_amount, 0);
   const transCount = todaySales.length;
   
-  const products = await db.products.where('is_active').equals(true).toArray();
+  let products = await db.products.toArray();
+  products = products.filter(p => p.is_active === true);
   const lowStock = products.filter(p => p.stock_qty <= p.low_stock_threshold);
   
   const customers = await db.customers.toArray();
@@ -483,7 +485,7 @@ window.renderProductsTable = async () => {
   const term = document.getElementById('product-search').value.toLowerCase();
   
   if(currVal) products = products.filter(p => p.category === currVal);
-  if(term) products = products.filter(p => p.name.toLowerCase().includes(term) || p.sku.toLowerCase().includes(term));
+  if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term));
   
   document.getElementById('products-tbody').innerHTML = products.map(p => `
     <tr>
