@@ -63,10 +63,25 @@ async function doLogin() {
   document.getElementById('role-badge').textContent = user.role;
   
   // Apply role restrictions
-  if(user.role !== 'Admin') {
-    document.querySelectorAll('.sidebar-section:last-child .nav-item').forEach(el => el.style.display = 'none');
-  } else {
-    document.querySelectorAll('.nav-item').forEach(el => el.style.display = 'flex');
+  document.getElementById('nav-pos').style.display = 'none';
+  document.getElementById('nav-inventory').style.display = 'none';
+  document.getElementById('nav-sales').style.display = 'none';
+  document.getElementById('nav-hr').style.display = 'none';
+  document.getElementById('nav-system').style.display = 'none';
+
+  if(user.role === 'Admin') {
+    document.getElementById('nav-pos').style.display = 'block';
+    document.getElementById('nav-inventory').style.display = 'block';
+    document.getElementById('nav-sales').style.display = 'block';
+    document.getElementById('nav-hr').style.display = 'block';
+    document.getElementById('nav-system').style.display = 'block';
+  } else if (user.role === 'Counter') {
+    document.getElementById('nav-pos').style.display = 'block';
+    document.getElementById('nav-sales').style.display = 'block';
+  } else if (user.role === 'HR') {
+    document.getElementById('nav-hr').style.display = 'block';
+  } else if (user.role === 'Inventory') {
+    document.getElementById('nav-inventory').style.display = 'block';
   }
   
   nav('pos');
@@ -97,8 +112,19 @@ const SCREENS = {
 
 function nav(screenId) {
   if(!currentUser) return;
-  if(currentUser.role !== 'Admin' && (screenId === 'user-mgmt' || screenId === 'settings')) {
-    showToast('error', 'Access denied'); return;
+  
+  // Access control
+  const role = currentUser.role;
+  if (role !== 'Admin') {
+    if (role === 'Counter' && !['pos', 'dashboard', 'sales-history', 'customers'].includes(screenId)) {
+      showToast('error', 'Access denied'); return;
+    }
+    if (role === 'HR' && !['user-mgmt'].includes(screenId)) {
+      showToast('error', 'Access denied'); return;
+    }
+    if (role === 'Inventory' && !['products', 'categories'].includes(screenId)) {
+      showToast('error', 'Access denied'); return;
+    }
   }
   
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
@@ -670,9 +696,9 @@ window.renderUsersTable = async () => {
   document.getElementById('users-tbody').innerHTML = users.map(u => `<tr><td class="fw-600">${u.username}</td><td>${u.display_name}</td><td>${u.role}</td><td><span class="badge ${u.is_active?'badge-active':'badge-inactive'}">${u.is_active?'Active':'Inactive'}</span></td><td><button class="btn btn-ghost btn-sm btn-icon" onclick="openUserForm(${u.id})">✏️</button></td></tr>`).join('');
 };
 window.openUserForm = async (id = null) => {
-  let u = { username:'', password:'', display_name:'', role:'Cashier', is_active:true };
+  let u = { username:'', password:'', display_name:'', role:'Counter', is_active:true };
   if(id) u = await db.users.get(id);
-  const html = `<input type="hidden" id="f-usr-id" value="${id||''}"><div class="form-grid"><div class="form-group"><label class="form-label">Username</label><input class="form-input" id="f-usr-name" value="${u.username}"></div><div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="f-usr-pass" value="${u.password}"></div><div class="form-group"><label class="form-label">Display Name</label><input class="form-input" id="f-usr-disp" value="${u.display_name}"></div><div class="form-group"><label class="form-label">Role</label><select class="form-input" id="f-usr-role"><option ${u.role==='Admin'?'selected':''}>Admin</option><option ${u.role==='Manager'?'selected':''}>Manager</option><option ${u.role==='Cashier'?'selected':''}>Cashier</option></select></div><div class="form-group"><label class="form-label">Status</label><select class="form-input" id="f-usr-active"><option value="true" ${u.is_active?'selected':''}>Active</option><option value="false" ${!u.is_active?'selected':''}>Inactive</option></select></div></div>`;
+  const html = `<input type="hidden" id="f-usr-id" value="${id||''}"><div class="form-grid"><div class="form-group"><label class="form-label">Username</label><input class="form-input" id="f-usr-name" value="${u.username}"></div><div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="f-usr-pass" value="${u.password}"></div><div class="form-group"><label class="form-label">Display Name</label><input class="form-input" id="f-usr-disp" value="${u.display_name}"></div><div class="form-group"><label class="form-label">Role</label><select class="form-input" id="f-usr-role"><option ${u.role==='Admin'?'selected':''}>Admin</option><option ${u.role==='Counter'?'selected':''}>Counter</option><option ${u.role==='HR'?'selected':''}>HR</option><option ${u.role==='Inventory'?'selected':''}>Inventory</option></select></div><div class="form-group"><label class="form-label">Status</label><select class="form-input" id="f-usr-active"><option value="true" ${u.is_active?'selected':''}>Active</option><option value="false" ${!u.is_active?'selected':''}>Inactive</option></select></div></div>`;
   openModal(id?'Edit User':'New User', html, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveUser()">Save</button>`);
 };
 window.saveUser = async () => {

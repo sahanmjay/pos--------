@@ -64,26 +64,30 @@
   <div class="app-body">
     <!-- SIDEBAR -->
     <div class="sidebar" id="sidebar">
-      <div class="sidebar-section">
+      <div class="sidebar-section" id="nav-pos">
         <div class="nav-item active" onclick="nav('pos')"><span class="nav-icon">🛒</span> Point of Sale</div>
         <div class="nav-item" onclick="nav('dashboard')"><span class="nav-icon">⊞</span> Dashboard</div>
       </div>
       <div class="sidebar-divider"></div>
-      <div class="sidebar-section">
+      <div class="sidebar-section" id="nav-inventory">
         <div class="sidebar-label">Inventory</div>
         <div class="nav-item" onclick="nav('products')"><span class="nav-icon">📦</span> Products</div>
         <div class="nav-item" onclick="nav('categories')"><span class="nav-icon">🏷️</span> Categories</div>
       </div>
       <div class="sidebar-divider"></div>
-      <div class="sidebar-section">
+      <div class="sidebar-section" id="nav-sales">
         <div class="sidebar-label">Sales</div>
         <div class="nav-item" onclick="nav('sales-history')"><span class="nav-icon">📋</span> Sales History</div>
         <div class="nav-item" onclick="nav('customers')"><span class="nav-icon">👥</span> Customers</div>
       </div>
       <div class="sidebar-divider"></div>
-      <div class="sidebar-section">
-        <div class="sidebar-label">System</div>
+      <div class="sidebar-section" id="nav-hr">
+        <div class="sidebar-label">HR</div>
         <div class="nav-item" onclick="nav('user-mgmt')"><span class="nav-icon">🔐</span> User Management</div>
+      </div>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-section" id="nav-system">
+        <div class="sidebar-label">System</div>
         <div class="nav-item" onclick="nav('settings')"><span class="nav-icon">⚙️</span> Settings</div>
       </div>
     </div>

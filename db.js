@@ -122,8 +122,10 @@ async function seedDatabase() {
   const userCount = await db.users.count();
   if (userCount === 0) {
     await db.users.bulkAdd([
-      { username:'admin', password:'admin', display_name:'Administrator', role:'Admin', is_active:true },
-      { username:'cashier', password:'1234', display_name:'Cashier', role:'Cashier', is_active:true }
+      { username:'admin', password:'123', display_name:'Administrator', role:'Admin', is_active:true },
+      { username:'counter', password:'123', display_name:'Counter Staff', role:'Counter', is_active:true },
+      { username:'hr', password:'123', display_name:'HR Manager', role:'HR', is_active:true },
+      { username:'inv', password:'123', display_name:'Inventory Manager', role:'Inventory', is_active:true }
     ]);
   }
 
