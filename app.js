@@ -696,10 +696,22 @@ window.exportSalesCSV = async () => {
 // Categories & Users management (simplified for completion)
 window.renderCategoriesTable = async () => {
   const cats = await db.categories.toArray();
-  document.getElementById('categories-tbody').innerHTML = cats.map(c => `<tr><td class="fw-600">${c.name}</td><td>-</td><td><button class="btn btn-ghost btn-sm btn-icon" onclick="db.categories.delete(${c.id});renderCategoriesTable()">🗑️</button></td></tr>`).join('');
+  document.getElementById('categories-tbody').innerHTML = cats.map(c => `<tr><td class="fw-600">${c.name}</td><td>-</td><td><button class="btn btn-ghost btn-sm btn-icon" onclick="deleteCategory(${c.id})">🗑️</button></td></tr>`).join('');
+};
+window.deleteCategory = async (id) => {
+  await db.categories.delete(id);
+  renderCategoriesTable();
 };
 window.openCategoryForm = () => {
-  openModal('New Category', '<div class="form-group"><label class="form-label">Name</label><input class="form-input" id="f-cat-name"></div>', `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="db.categories.add({name:document.getElementById('f-cat-name').value});closeModal();renderCategoriesTable()">Save</button>`);
+  openModal('New Category', '<div class="form-group"><label class="form-label">Name</label><input class="form-input" id="f-cat-name"></div>', `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveCategory()">Save</button>`);
+};
+window.saveCategory = async () => {
+  const name = document.getElementById('f-cat-name').value;
+  if (!name) return showToast('error', 'Name is required');
+  await db.categories.add({ name });
+  closeModal();
+  renderCategoriesTable();
+  showToast('success', 'Category added');
 };
 window.renderUsersTable = async () => {
   const users = await db.users.toArray();

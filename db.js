@@ -1,17 +1,103 @@
-const db = new Dexie("NexPOS_Universal");
+const SUPABASE_URL = 'https://rakklmxpukcehbyjuxjy.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJha2tsbXhwdWtjZWhieWp1eGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNjY0MjgsImV4cCI6MjA5Mzc0MjQyOH0.05GCQVOXhH1CGWjgQkpu9mMKipT4wcPht4u3nf6c8Rc';
 
-db.version(2).stores({
-  products: '++id, name, sku, barcode, category, retail_price, wholesale_price, cost_price, stock_qty, low_stock_threshold, unit, is_active',
-  categories: '++id, name',
-  customers: '++id, name, phone, email, outstanding_balance',
-  sales: '++id, date, subtotal, discount, tax, total_amount, payment_type, status, customer_id, cashier, items_count',
-  sale_items: '++id, sale_id, product_id, product_name, quantity, unit_price, line_total',
-  users: '++id, username, password, display_name, role, is_active',
-  settings: '++id, key, value',
-  held_carts: '++id, name, items, customer_id, date',
-  attendance: '++id, user_id, display_name, date, clock_in, clock_out, status'
-});
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// Compatibility layer: mimics Dexie API so app.js works with minimal changes
+class SupaQuery {
+  constructor(table, filters) {
+    this._table = table;
+    this._filters = filters;
+  }
+  equals(val) {
+    this._filters.push({ field: this._field, val });
+    return this;
+  }
+  async first() {
+    let q = supabase.from(this._table).select('*');
+    for (const f of this._filters) q = q.eq(f.field, f.val);
+    const { data } = await q.limit(1).maybeSingle();
+    return data || null;
+  }
+  async toArray() {
+    let q = supabase.from(this._table).select('*');
+    for (const f of this._filters) q = q.eq(f.field, f.val);
+    const { data } = await q;
+    return data || [];
+  }
+}
+
+class SupaTable {
+  constructor(name) { this._name = name; }
+
+  async toArray() {
+    const { data, error } = await supabase.from(this._name).select('*').order('id', { ascending: true });
+    if (error) { console.error('toArray', this._name, error); return []; }
+    return data;
+  }
+
+  async get(id) {
+    const { data } = await supabase.from(this._name).select('*').eq('id', id).maybeSingle();
+    return data || null;
+  }
+
+  async add(item) {
+    const { data, error } = await supabase.from(this._name).insert(item).select('id').single();
+    if (error) { console.error('add', this._name, error); return null; }
+    return data.id;
+  }
+
+  async bulkAdd(items) {
+    const { error } = await supabase.from(this._name).insert(items);
+    if (error) console.error('bulkAdd', this._name, error);
+  }
+
+  async update(id, changes) {
+    const { error } = await supabase.from(this._name).update(changes).eq('id', id);
+    if (error) console.error('update', this._name, error);
+  }
+
+  async delete(id) {
+    const { error } = await supabase.from(this._name).delete().eq('id', id);
+    if (error) console.error('delete', this._name, error);
+  }
+
+  async clear() {
+    const { error } = await supabase.from(this._name).delete().neq('id', 0);
+    if (error) console.error('clear', this._name, error);
+  }
+
+  async count() {
+    const { count, error } = await supabase.from(this._name).select('*', { count: 'exact', head: true });
+    if (error) return 0;
+    return count;
+  }
+
+  where(fieldOrObj) {
+    const filters = [];
+    if (typeof fieldOrObj === 'object') {
+      for (const [k, v] of Object.entries(fieldOrObj)) filters.push({ field: k, val: v });
+      return new SupaQuery(this._name, filters);
+    }
+    const q = new SupaQuery(this._name, filters);
+    q._field = fieldOrObj;
+    return q;
+  }
+}
+
+const db = {
+  products:   new SupaTable('products'),
+  categories: new SupaTable('categories'),
+  customers:  new SupaTable('customers'),
+  sales:      new SupaTable('sales'),
+  sale_items:  new SupaTable('sale_items'),
+  users:      new SupaTable('users'),
+  settings:   new SupaTable('settings'),
+  attendance: new SupaTable('attendance'),
+  held_carts: new SupaTable('held_carts'),
+};
+
+// ─── BUSINESS TEMPLATES ───
 const BUSINESS_TEMPLATES = {
   'Retail Shop': {
     icon: '🏪', categories: ['Clothing','Footwear','Accessories','Bags','Jewelry'],
@@ -119,49 +205,6 @@ const PRODUCT_ICONS = {
   'default':'📦'
 };
 
-async function seedDatabase() {
-  const requiredUsers = [
-    { username:'admin', password:'123', display_name:'Administrator', role:'Admin', is_active:true },
-    { username:'counter', password:'123', display_name:'Counter Staff', role:'Counter', is_active:true },
-    { username:'hr', password:'123', display_name:'HR Manager', role:'HR', is_active:true },
-    { username:'inv', password:'123', display_name:'Inventory Manager', role:'Inventory', is_active:true }
-  ];
-
-  for (const user of requiredUsers) {
-    const existingUser = await db.users.where('username').equals(user.username).first();
-    if (!existingUser) {
-      await db.users.add(user);
-    } else {
-      // Ensure the old admin password is updated to 123 if it was 'admin'
-      if (user.username === 'admin' && existingUser.password === 'admin') {
-         await db.users.update(existingUser.id, { password: '123' });
-      }
-    }
-  }
-
-  const settingsCount = await db.settings.count();
-  if (settingsCount === 0) {
-    await db.settings.bulkAdd([
-      { key:'biz_name', value:'My Shop' },
-      { key:'biz_type', value:'Retail Shop' },
-      { key:'currency', value:'Rs.' },
-      { key:'tax_rate', value:'0' },
-      { key:'phone', value:'' },
-      { key:'address', value:'' }
-    ]);
-  }
-
-  const customerCount = await db.customers.count();
-  if (customerCount === 0) {
-    await db.customers.add({ name:'Walk-in Customer', phone:'', email:'', outstanding_balance:0 });
-  }
-
-  const prodCount = await db.products.count();
-  if (prodCount === 0) {
-    await loadBusinessTemplate('Retail Shop');
-  }
-}
-
 async function loadBusinessTemplate(type) {
   const tmpl = BUSINESS_TEMPLATES[type];
   if (!tmpl) return;
@@ -183,5 +226,3 @@ async function loadBusinessTemplate(type) {
     });
   }
 }
-
-seedDatabase();
