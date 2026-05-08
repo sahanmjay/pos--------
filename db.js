@@ -4,7 +4,10 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const { createClient } = supabase;
 const supa = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Compatibility layer: mimics Dexie API so app.js works with minimal changes
+let currentOrgId = null;
+
+// ─── SUPABASE COMPATIBILITY LAYER (with multi-tenancy) ───
+
 class SupaQuery {
   constructor(table, filters) {
     this._table = table;
@@ -16,12 +19,18 @@ class SupaQuery {
   }
   async first() {
     let q = supa.from(this._table).select('*');
+    if (currentOrgId && this._table !== 'organizations') {
+      q = q.eq('organization_id', currentOrgId);
+    }
     for (const f of this._filters) q = q.eq(f.field, f.val);
     const { data } = await q.limit(1).maybeSingle();
     return data || null;
   }
   async toArray() {
     let q = supa.from(this._table).select('*');
+    if (currentOrgId && this._table !== 'organizations') {
+      q = q.eq('organization_id', currentOrgId);
+    }
     for (const f of this._filters) q = q.eq(f.field, f.val);
     const { data } = await q;
     return data || [];
@@ -32,23 +41,37 @@ class SupaTable {
   constructor(name) { this._name = name; }
 
   async toArray() {
-    const { data, error } = await supa.from(this._name).select('*').order('id', { ascending: true });
+    let q = supa.from(this._name).select('*').order('id', { ascending: true });
+    if (currentOrgId && this._name !== 'organizations') {
+      q = q.eq('organization_id', currentOrgId);
+    }
+    const { data, error } = await q;
     if (error) { console.error('toArray', this._name, error); return []; }
     return data;
   }
 
   async get(id) {
-    const { data } = await supa.from(this._name).select('*').eq('id', id).maybeSingle();
+    let q = supa.from(this._name).select('*').eq('id', id);
+    if (currentOrgId && this._name !== 'organizations') {
+      q = q.eq('organization_id', currentOrgId);
+    }
+    const { data } = await q.maybeSingle();
     return data || null;
   }
 
   async add(item) {
+    if (currentOrgId && this._name !== 'organizations') {
+      item.organization_id = currentOrgId;
+    }
     const { data, error } = await supa.from(this._name).insert(item).select('id').single();
     if (error) { console.error('add', this._name, error); return null; }
     return data.id;
   }
 
   async bulkAdd(items) {
+    if (currentOrgId && this._name !== 'organizations') {
+      items = items.map(i => ({ ...i, organization_id: currentOrgId }));
+    }
     const { error } = await supa.from(this._name).insert(items);
     if (error) console.error('bulkAdd', this._name, error);
   }
@@ -64,12 +87,22 @@ class SupaTable {
   }
 
   async clear() {
-    const { error } = await supa.from(this._name).delete().neq('id', 0);
+    let q = supa.from(this._name).delete();
+    if (currentOrgId && this._name !== 'organizations') {
+      q = q.eq('organization_id', currentOrgId);
+    } else {
+      q = q.neq('id', 0);
+    }
+    const { error } = await q;
     if (error) console.error('clear', this._name, error);
   }
 
   async count() {
-    const { count, error } = await supa.from(this._name).select('*', { count: 'exact', head: true });
+    let q = supa.from(this._name).select('*', { count: 'exact', head: true });
+    if (currentOrgId && this._name !== 'organizations') {
+      q = q.eq('organization_id', currentOrgId);
+    }
+    const { count, error } = await q;
     if (error) return 0;
     return count;
   }
@@ -87,15 +120,16 @@ class SupaTable {
 }
 
 const db = {
-  products:   new SupaTable('products'),
-  categories: new SupaTable('categories'),
-  customers:  new SupaTable('customers'),
-  sales:      new SupaTable('sales'),
-  sale_items:  new SupaTable('sale_items'),
-  users:      new SupaTable('users'),
-  settings:   new SupaTable('settings'),
-  attendance: new SupaTable('attendance'),
-  held_carts: new SupaTable('held_carts'),
+  organizations: new SupaTable('organizations'),
+  products:      new SupaTable('products'),
+  categories:    new SupaTable('categories'),
+  customers:     new SupaTable('customers'),
+  sales:         new SupaTable('sales'),
+  sale_items:    new SupaTable('sale_items'),
+  users:         new SupaTable('users'),
+  settings:      new SupaTable('settings'),
+  attendance:    new SupaTable('attendance'),
+  held_carts:    new SupaTable('held_carts'),
 };
 
 // ─── BUSINESS TEMPLATES ───
@@ -204,6 +238,18 @@ const PRODUCT_ICONS = {
   'Tools':'🔨','Fasteners':'🔩','Paint':'🎨','Electrical':'⚡','Plumbing':'🔧','Safety':'🦺',
   'Rice & Curry':'🍛','Noodles':'🍜','Desserts':'🍨','Specials':'⭐',
   'default':'📦'
+};
+
+// ─── BUSINESS TYPE CONFIGS (extended per guide Fix 4) ───
+const BUSINESS_CONFIGS = {
+  'Retail Shop':    { units: ['pcs'], extraFields: ['size','color','brand'], receiptFooter: 'Thank you for shopping with us!' },
+  'Grocery Store':  { units: ['kg','packs','pcs','litre','g'], extraFields: ['expiry_date','supplier_name'], receiptFooter: 'Fresh goods, every day!' },
+  'Bookshop':       { units: ['pcs'], extraFields: ['author','isbn','publisher'], receiptFooter: 'Keep reading, keep growing.' },
+  'Meat Shop':      { units: ['kg','g','pcs','pack'], extraFields: ['cut_type','origin'], receiptFooter: 'Fresh cuts, every day.' },
+  'Bakery':         { units: ['pcs','kg','slice','box','dozen'], extraFields: ['made_date','allergens'], receiptFooter: 'Baked fresh daily!' },
+  'Pharmacy':       { units: ['pcs','strips','bottles','ml','mg'], extraFields: ['batch_number','expiry_date','manufacturer'], receiptFooter: 'Your health is our priority.' },
+  'Hardware Store':  { units: ['pcs','meters','kg','box','roll','litre'], extraFields: ['brand','warranty_months'], receiptFooter: 'Quality tools for quality work.' },
+  'Restaurant':     { units: ['portion','plate','cup','glass','pcs'], extraFields: ['table_number','waiter_name'], receiptFooter: 'Thank you! Come again.' },
 };
 
 async function loadBusinessTemplate(type) {

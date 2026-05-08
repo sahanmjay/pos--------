@@ -6,7 +6,6 @@ let posCategory = '';
 
 // --- INIT & UTILS ---
 document.addEventListener('DOMContentLoaded', async () => {
-  await loadSettings();
   setInterval(updateClock, 1000);
   updateClock();
 });
@@ -47,14 +46,24 @@ async function doLogin() {
   const p = document.getElementById('login-pass').value;
   const err = document.getElementById('login-error');
   
-  const user = await db.users.where('username').equals(u).first();
-  if(!user || user.password !== p || !user.is_active) {
+  // Query users directly (bypass org filter since we don't know the org yet)
+  const { data: user } = await supa
+    .from('users')
+    .select('*')
+    .eq('username', u)
+    .eq('password', p)
+    .eq('is_active', true)
+    .limit(1)
+    .maybeSingle();
+    
+  if(!user) {
     err.textContent = "Invalid username or password";
     err.style.display = 'block';
     return;
   }
   
   currentUser = user;
+  currentOrgId = user.organization_id;
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').classList.add('visible');
   
@@ -84,6 +93,7 @@ async function doLogin() {
     document.getElementById('nav-inventory').style.display = 'block';
   }
   
+  await loadSettings();
   nav('pos');
   renderPosCategories();
   renderPosGrid();
@@ -93,6 +103,7 @@ async function doLogin() {
 
 function signOut() {
   currentUser = null;
+  currentOrgId = null;
   document.getElementById('app').classList.remove('visible');
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('login-user').value = '';
