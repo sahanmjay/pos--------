@@ -85,6 +85,7 @@
         <div class="sidebar-label">HR</div>
         <div class="nav-item" onclick="nav('user-mgmt')"><span class="nav-icon">👥</span> Staff Management</div>
         <div class="nav-item" onclick="nav('attendance')"><span class="nav-icon">📅</span> Attendance</div>
+        <div class="nav-item" onclick="nav('payroll')" id="nav-payroll-item"><span class="nav-icon">💰</span> Payroll</div>
       </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section" id="nav-system">
@@ -250,6 +251,34 @@
         </div>
       </div>
 
+      <!-- PAYROLL SCREEN -->
+      <div class="screen" id="screen-payroll">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Employee Payroll</div>
+              <div class="card-subtitle">Calculate and process salaries based on attendance</div>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Last Paid</th>
+                  <th>Hours Worked</th>
+                  <th>Basic Pay</th>
+                  <th>OT Pay</th>
+                  <th>Total Due</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="payroll-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
       <!-- SETTINGS SCREEN -->
       <div class="screen" id="screen-settings">
         <div class="page">

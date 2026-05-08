@@ -130,6 +130,7 @@ const db = {
   settings:      new SupaTable('settings'),
   attendance:    new SupaTable('attendance'),
   held_carts:    new SupaTable('held_carts'),
+  payroll:       new SupaTable('payroll'),
 };
 
 // ─── BUSINESS TEMPLATES ───

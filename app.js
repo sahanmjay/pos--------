@@ -92,13 +92,17 @@ async function doLogin() {
     document.getElementById('nav-sales').style.display = 'block';
     document.getElementById('nav-hr').style.display = 'block';
     document.getElementById('nav-system').style.display = 'block';
+    document.getElementById('nav-payroll-item').style.display = 'block';
   } else if (user.role === 'Counter') {
     document.getElementById('nav-pos').style.display = 'block';
     document.getElementById('nav-sales').style.display = 'block';
   } else if (user.role === 'HR') {
     document.getElementById('nav-hr').style.display = 'block';
+    document.getElementById('nav-payroll-item').style.display = 'block';
   } else if (user.role === 'Inventory') {
     document.getElementById('nav-inventory').style.display = 'block';
+  } else if (user.role === 'Worker') {
+    document.getElementById('nav-pos').style.display = 'block';
   }
   
   await loadSettings();
@@ -124,9 +128,8 @@ const SCREENS = {
   'products': 'Inventory / Products',
   'categories': 'Inventory / Categories',
   'sales-history': 'Sales / History',
-  'customers': 'Sales / Customers',
-  'user-mgmt': 'HR / Staff Management',
   'attendance': 'HR / Attendance',
+  'payroll': 'HR / Payroll',
   'settings': 'System / Settings'
 };
 
@@ -139,10 +142,13 @@ function nav(screenId) {
     if (role === 'Counter' && !['pos', 'dashboard', 'sales-history', 'customers'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
-    if (role === 'HR' && !['user-mgmt', 'attendance'].includes(screenId)) {
+    if (role === 'HR' && !['user-mgmt', 'attendance', 'payroll'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
     if (role === 'Inventory' && !['products', 'categories'].includes(screenId)) {
+      showToast('error', 'Access denied'); return;
+    }
+    if (role === 'Worker' && !['pos'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
   }
@@ -170,6 +176,7 @@ function nav(screenId) {
   if(screenId === 'customers') renderCustomersTable();
   if(screenId === 'user-mgmt') renderUsersTable();
   if(screenId === 'attendance') renderAttendance();
+  if(screenId === 'payroll') renderPayroll();
   if(screenId === 'settings') loadSettingsForm();
 }
 
@@ -737,16 +744,120 @@ window.renderUsersTable = async () => {
   document.getElementById('users-tbody').innerHTML = users.map(u => `<tr><td class="fw-600">${u.username}</td><td>${u.display_name}</td><td>${u.role}</td><td><span class="badge ${u.is_active?'badge-active':'badge-inactive'}">${u.is_active?'Active':'Inactive'}</span></td><td><button class="btn btn-ghost btn-sm btn-icon" onclick="openUserForm(${u.id})">✏️</button></td></tr>`).join('');
 };
 window.openUserForm = async (id = null) => {
-  let u = { username:'', password:'', display_name:'', role:'Counter', is_active:true };
+  let u = { username:'', password:'', display_name:'', role:'Counter', is_active:true, hourly_rate:0, ot_rate:0 };
   if(id) u = await db.users.get(id);
-  const html = `<input type="hidden" id="f-usr-id" value="${id||''}"><div class="form-grid"><div class="form-group"><label class="form-label">Username</label><input class="form-input" id="f-usr-name" value="${u.username}"></div><div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="f-usr-pass" value="${u.password}"></div><div class="form-group"><label class="form-label">Display Name</label><input class="form-input" id="f-usr-disp" value="${u.display_name}"></div><div class="form-group"><label class="form-label">Role</label><select class="form-input" id="f-usr-role"><option ${u.role==='Admin'?'selected':''}>Admin</option><option ${u.role==='Counter'?'selected':''}>Counter</option><option ${u.role==='HR'?'selected':''}>HR</option><option ${u.role==='Inventory'?'selected':''}>Inventory</option></select></div><div class="form-group"><label class="form-label">Status</label><select class="form-input" id="f-usr-active"><option value="true" ${u.is_active?'selected':''}>Active</option><option value="false" ${!u.is_active?'selected':''}>Inactive</option></select></div></div>`;
+  const html = `
+    <input type="hidden" id="f-usr-id" value="${id||''}">
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Username</label><input class="form-input" id="f-usr-name" value="${u.username}"></div>
+      <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="f-usr-pass" value="${u.password}"></div>
+      <div class="form-group"><label class="form-label">Display Name</label><input class="form-input" id="f-usr-disp" value="${u.display_name}"></div>
+      <div class="form-group"><label class="form-label">Role</label><select class="form-input" id="f-usr-role"><option ${u.role==='Admin'?'selected':''}>Admin</option><option ${u.role==='Counter'?'selected':''}>Counter</option><option ${u.role==='HR'?'selected':''}>HR</option><option ${u.role==='Inventory'?'selected':''}>Inventory</option><option ${u.role==='Worker'?'selected':''}>Worker</option></select></div>
+      <div class="form-group"><label class="form-label">Hourly Rate</label><input class="form-input" type="number" step="0.01" id="f-usr-h-rate" value="${u.hourly_rate||0}"></div>
+      <div class="form-group"><label class="form-label">OT Rate (per hr)</label><input class="form-input" type="number" step="0.01" id="f-usr-ot-rate" value="${u.ot_rate||0}"></div>
+      <div class="form-group"><label class="form-label">Status</label><select class="form-input" id="f-usr-active"><option value="true" ${u.is_active?'selected':''}>Active</option><option value="false" ${!u.is_active?'selected':''}>Inactive</option></select></div>
+    </div>`;
   openModal(id?'Edit User':'New User', html, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveUser()">Save</button>`);
 };
 window.saveUser = async () => {
   const id = document.getElementById('f-usr-id').value;
-  const u = { username:document.getElementById('f-usr-name').value, password:document.getElementById('f-usr-pass').value, display_name:document.getElementById('f-usr-disp').value, role:document.getElementById('f-usr-role').value, is_active:document.getElementById('f-usr-active').value==='true' };
+  const u = { 
+    username:document.getElementById('f-usr-name').value, 
+    password:document.getElementById('f-usr-pass').value, 
+    display_name:document.getElementById('f-usr-disp').value, 
+    role:document.getElementById('f-usr-role').value, 
+    is_active:document.getElementById('f-usr-active').value==='true',
+    hourly_rate: parseFloat(document.getElementById('f-usr-h-rate').value)||0,
+    ot_rate: parseFloat(document.getElementById('f-usr-ot-rate').value)||0
+  };
   if(id) await db.users.update(parseInt(id), u); else await db.users.add(u);
   closeModal(); renderUsersTable(); showToast('success', 'User saved');
+};
+
+// --- PAYROLL LOGIC ---
+window.renderPayroll = async () => {
+  const users = await db.users.where('is_active').equals(true).toArray();
+  const tbody = document.getElementById('payroll-tbody');
+  
+  const rows = [];
+  for (const u of users) {
+    if (u.role === 'Admin') continue; // Admins usually don't get paid via hourly
+    
+    // Get attendance since last paid date
+    let q = db.attendance.where('user_id').equals(u.id);
+    const attendance = await q.toArray();
+    
+    // Filter by last_paid_date manually (Dexie/Supabase wrapper limitation)
+    const lastPaid = u.last_paid_date ? new Date(u.last_paid_date) : new Date(0);
+    const pendingAttendance = attendance.filter(a => a.clock_out && new Date(a.clock_out) > lastPaid);
+    
+    let totalHours = 0;
+    pendingAttendance.forEach(a => {
+      const diff = new Date(a.clock_out) - new Date(a.clock_in);
+      totalHours += diff / (1000 * 60 * 60);
+    });
+    
+    // Logic: 8 hours basic, rest is OT
+    // Simplified: Calculate per day
+    let basicHours = 0;
+    let otHours = 0;
+    
+    pendingAttendance.forEach(a => {
+      const dayHours = (new Date(a.clock_out) - new Date(a.clock_in)) / (1000 * 60 * 60);
+      if (dayHours > 8) {
+        basicHours += 8;
+        otHours += (dayHours - 8);
+      } else {
+        basicHours += dayHours;
+      }
+    });
+
+    const basicPay = basicHours * (u.hourly_rate || 0);
+    const otPay = otHours * (u.ot_rate || 0);
+    const totalDue = basicPay + otPay;
+
+    rows.push(`
+      <tr>
+        <td class="fw-600">${u.display_name}</td>
+        <td>${u.last_paid_date || 'Never'}</td>
+        <td class="td-mono">${totalHours.toFixed(2)} hrs</td>
+        <td class="td-mono">${formatMoney(basicPay)}</td>
+        <td class="td-mono">${formatMoney(otPay)}</td>
+        <td class="td-mono fw-600 text-success">${formatMoney(totalDue)}</td>
+        <td>
+          <button class="btn btn-primary btn-sm" onclick="paySalary(${u.id}, ${totalDue}, ${basicHours}, ${otHours}, '${u.display_name}')" ${totalDue <= 0 ? 'disabled' : ''}>Pay Now</button>
+        </td>
+      </tr>
+    `);
+  }
+  
+  tbody.innerHTML = rows.join('') || '<tr><td colspan="7" style="text-align:center">No employees pending payment</td></tr>';
+};
+
+window.paySalary = async (userId, amount, basicHours, otHours, name) => {
+  if (!confirm(`Process payment of ${formatMoney(amount)} to ${name}?`)) return;
+  
+  const today = new Date().toISOString().split('T')[0];
+  
+  // 1. Record in Payroll table
+  await db.payroll.add({
+    user_id: userId,
+    employee_name: name,
+    period_start: 'Last payment', // In a real app, track the actual start date
+    period_end: today,
+    total_hours: basicHours + otHours,
+    ot_hours: otHours,
+    basic_pay: basicHours * (await db.users.get(userId)).hourly_rate,
+    ot_pay: otHours * (await db.users.get(userId)).ot_rate,
+    total_salary: amount,
+    paid_at: new Date().toISOString()
+  });
+  
+  // 2. Update User's last_paid_date
+  await db.users.update(userId, { last_paid_date: today });
+  
+  showToast('success', `Payment processed for ${name}`);
+  renderPayroll();
 };
 
 // --- ATTENDANCE ---
