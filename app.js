@@ -93,7 +93,7 @@ async function doLogin() {
     document.getElementById('nav-hr').style.display = 'block';
     document.getElementById('nav-system').style.display = 'block';
     document.getElementById('nav-payroll-item').style.display = 'block';
-  } else if (user.role === 'Counter') {
+  } else if (user.role === 'Counter' || user.role === 'Cashier') {
     document.getElementById('nav-pos').style.display = 'block';
     document.getElementById('nav-sales').style.display = 'block';
   } else if (user.role === 'HR') {
@@ -122,6 +122,39 @@ function signOut() {
   document.getElementById('login-pass').value = '';
 }
 
+window.openChangePasswordModal = () => {
+  const html = `
+    <div class="form-group">
+      <label class="form-label">Current Password</label>
+      <input class="form-input" type="password" id="pw-current">
+    </div>
+    <div class="form-group">
+      <label class="form-label">New Password</label>
+      <input class="form-input" type="password" id="pw-new">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Confirm New Password</label>
+      <input class="form-input" type="password" id="pw-confirm">
+    </div>
+  `;
+  openModal('Change Password', html, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="updatePassword()">Update Password</button>`);
+};
+
+window.updatePassword = async () => {
+  const current = document.getElementById('pw-current').value;
+  const newPw = document.getElementById('pw-new').value;
+  const confirmPw = document.getElementById('pw-confirm').value;
+  
+  if (current !== currentUser.password) return showToast('error', 'Incorrect current password');
+  if (newPw !== confirmPw) return showToast('error', 'New passwords do not match');
+  if (newPw.length < 3) return showToast('error', 'Password too short');
+  
+  await db.users.update(currentUser.id, { password: newPw });
+  currentUser.password = newPw;
+  closeModal();
+  showToast('success', 'Password updated successfully');
+};
+
 const SCREENS = {
   'pos': 'Point of Sale',
   'dashboard': 'Dashboard',
@@ -139,7 +172,7 @@ function nav(screenId) {
   // Access control
   const role = currentUser.role;
   if (role !== 'Admin') {
-    if (role === 'Counter' && !['pos', 'dashboard', 'sales-history', 'customers'].includes(screenId)) {
+    if ((role === 'Counter' || role === 'Cashier') && !['pos', 'dashboard', 'sales-history', 'customers'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
     if (role === 'HR' && !['user-mgmt', 'attendance', 'payroll'].includes(screenId)) {
@@ -752,12 +785,18 @@ window.openUserForm = async (id = null) => {
       <div class="form-group"><label class="form-label">Username</label><input class="form-input" id="f-usr-name" value="${u.username}"></div>
       <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="f-usr-pass" value="${u.password}"></div>
       <div class="form-group"><label class="form-label">Display Name</label><input class="form-input" id="f-usr-disp" value="${u.display_name}"></div>
-      <div class="form-group"><label class="form-label">Role</label><select class="form-input" id="f-usr-role"><option ${u.role==='Admin'?'selected':''}>Admin</option><option ${u.role==='Counter'?'selected':''}>Counter</option><option ${u.role==='HR'?'selected':''}>HR</option><option ${u.role==='Inventory'?'selected':''}>Inventory</option><option ${u.role==='Worker'?'selected':''}>Worker</option></select></div>
-      <div class="form-group"><label class="form-label">Hourly Rate</label><input class="form-input" type="number" step="0.01" id="f-usr-h-rate" value="${u.hourly_rate||0}"></div>
-      <div class="form-group"><label class="form-label">OT Rate (per hr)</label><input class="form-input" type="number" step="0.01" id="f-usr-ot-rate" value="${u.ot_rate||0}"></div>
+      <div class="form-group"><label class="form-label">Role</label><select class="form-input" id="f-usr-role" onchange="togglePayFields(this.value)"><option ${u.role==='Admin'?'selected':''}>Admin</option><option ${u.role==='Counter'?'selected':''}>Counter</option><option ${u.role==='Cashier'?'selected':''}>Cashier</option><option ${u.role==='HR'?'selected':''}>HR</option><option ${u.role==='Inventory'?'selected':''}>Inventory</option><option ${u.role==='Worker'?'selected':''}>Worker</option></select></div>
+      <div id="pay-fields" style="grid-column: span 2; display: ${u.role==='Worker'?'grid':'none'}; grid-template-columns: 1fr 1fr; gap: 14px;">
+        <div class="form-group"><label class="form-label">Hourly Rate (Basic)</label><input class="form-input" type="number" step="0.01" id="f-usr-h-rate" value="${u.hourly_rate||0}"></div>
+        <div class="form-group"><label class="form-label">OT Rate (per hr)</label><input class="form-input" type="number" step="0.01" id="f-usr-ot-rate" value="${u.ot_rate||0}"></div>
+      </div>
       <div class="form-group"><label class="form-label">Status</label><select class="form-input" id="f-usr-active"><option value="true" ${u.is_active?'selected':''}>Active</option><option value="false" ${!u.is_active?'selected':''}>Inactive</option></select></div>
     </div>`;
   openModal(id?'Edit User':'New User', html, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveUser()">Save</button>`);
+};
+
+window.togglePayFields = (role) => {
+  document.getElementById('pay-fields').style.display = (role === 'Worker') ? 'grid' : 'none';
 };
 window.saveUser = async () => {
   const id = document.getElementById('f-usr-id').value;

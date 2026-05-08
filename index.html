@@ -52,12 +52,18 @@
     <div class="topbar-actions">
       <span id="topbar-clock" style="font-size:13px;color:var(--text-secondary);font-family:var(--mono)"></span>
       <div class="topbar-divider"></div>
-      <div class="user-chip" onclick="nav('user-mgmt')">
+      <div class="user-chip">
         <div class="user-avatar" id="user-avatar">A</div>
-        <span class="user-name" id="user-name">Admin</span>
-        <span class="role-badge" id="role-badge">Admin</span>
+        <div style="display:flex; flex-direction:column; line-height:1.2">
+          <span class="user-name" id="user-name">Admin</span>
+          <span class="role-badge" id="role-badge">Admin</span>
+        </div>
+        <div class="user-dropdown">
+          <div class="user-dropdown-item" onclick="openChangePasswordModal()">🔑 Change Password</div>
+          <div class="user-dropdown-divider"></div>
+          <div class="user-dropdown-item" style="color:var(--danger)" onclick="signOut()">🚪 Sign Out</div>
+        </div>
       </div>
-      <button class="sign-out-btn" onclick="signOut()">Sign Out</button>
     </div>
   </div>
 
