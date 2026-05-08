@@ -47,7 +47,7 @@ async function doLogin() {
   const err = document.getElementById('login-error');
   
   // Query users directly (bypass org filter since we don't know the org yet)
-  const { data: user } = await supa
+  const { data: user, error: dbError } = await supa
     .from('users')
     .select('*')
     .eq('username', u)
@@ -55,6 +55,14 @@ async function doLogin() {
     .eq('is_active', true)
     .limit(1)
     .maybeSingle();
+  
+  // Show detailed error if Supabase returned one (RLS, network, etc.)
+  if(dbError) {
+    console.error('Login DB Error:', dbError);
+    err.textContent = "Database error: " + dbError.message + " (Code: " + dbError.code + ")";
+    err.style.display = 'block';
+    return;
+  }
     
   if(!user) {
     err.textContent = "Invalid username or password";
