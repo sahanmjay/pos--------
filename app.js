@@ -162,6 +162,7 @@ const SCREENS = {
   'categories': 'Inventory / Categories',
   'sales-history': 'Sales / History',
   'attendance': 'HR / Attendance',
+  'advances': 'HR / Advances',
   'payroll': 'HR / Payroll',
   'settings': 'System / Settings'
 };
@@ -175,7 +176,7 @@ function nav(screenId) {
     if ((role === 'Counter' || role === 'Cashier') && !['pos', 'dashboard', 'sales-history', 'customers'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
-    if (role === 'HR' && !['user-mgmt', 'attendance', 'payroll'].includes(screenId)) {
+    if (role === 'HR' && !['user-mgmt', 'attendance', 'advances', 'payroll'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
     if (role === 'Inventory' && !['products', 'categories'].includes(screenId)) {
@@ -209,6 +210,7 @@ function nav(screenId) {
   if(screenId === 'customers') renderCustomersTable();
   if(screenId === 'user-mgmt') renderUsersTable();
   if(screenId === 'attendance') renderAttendance();
+  if(screenId === 'advances') renderAdvances();
   if(screenId === 'payroll') renderPayroll();
   if(screenId === 'settings') loadSettingsForm();
 }
@@ -820,29 +822,19 @@ window.renderPayroll = async () => {
   
   const rows = [];
   for (const u of users) {
-    if (u.role === 'Admin') continue; // Admins usually don't get paid via hourly
+    if (u.role === 'Admin') continue;
     
-    // Get attendance since last paid date
-    let q = db.attendance.where('user_id').equals(u.id);
-    const attendance = await q.toArray();
-    
-    // Filter by last_paid_date manually (Dexie/Supabase wrapper limitation)
+    const attendance = await db.attendance.where('user_id').equals(u.id).toArray();
     const lastPaid = u.last_paid_date ? new Date(u.last_paid_date) : new Date(0);
     const pendingAttendance = attendance.filter(a => a.clock_out && new Date(a.clock_out) > lastPaid);
     
     let totalHours = 0;
-    pendingAttendance.forEach(a => {
-      const diff = new Date(a.clock_out) - new Date(a.clock_in);
-      totalHours += diff / (1000 * 60 * 60);
-    });
-    
-    // Logic: 8 hours basic, rest is OT
-    // Simplified: Calculate per day
     let basicHours = 0;
     let otHours = 0;
     
     pendingAttendance.forEach(a => {
       const dayHours = (new Date(a.clock_out) - new Date(a.clock_in)) / (1000 * 60 * 60);
+      totalHours += dayHours;
       if (dayHours > 8) {
         basicHours += 8;
         otHours += (dayHours - 8);
@@ -851,9 +843,13 @@ window.renderPayroll = async () => {
       }
     });
 
+    // Get pending advances
+    const advances = await db.advances.where({user_id: u.id, status: 'PENDING'}).toArray();
+    const totalAdvances = advances.reduce((sum, a) => sum + a.amount, 0);
+
     const basicPay = basicHours * (u.hourly_rate || 0);
     const otPay = otHours * (u.ot_rate || 0);
-    const totalDue = basicPay + otPay;
+    const totalDue = basicPay + otPay - totalAdvances;
 
     rows.push(`
       <tr>
@@ -862,41 +858,211 @@ window.renderPayroll = async () => {
         <td class="td-mono">${totalHours.toFixed(2)} hrs</td>
         <td class="td-mono">${formatMoney(basicPay)}</td>
         <td class="td-mono">${formatMoney(otPay)}</td>
+        <td class="td-mono text-danger">-${formatMoney(totalAdvances)}</td>
         <td class="td-mono fw-600 text-success">${formatMoney(totalDue)}</td>
         <td>
-          <button class="btn btn-primary btn-sm" onclick="paySalary(${u.id}, ${totalDue}, ${basicHours}, ${otHours}, '${u.display_name}')" ${totalDue <= 0 ? 'disabled' : ''}>Pay Now</button>
+          <button class="btn btn-primary btn-sm" onclick="openPayrollRunModal(${u.id})">Process</button>
         </td>
       </tr>
     `);
   }
   
-  tbody.innerHTML = rows.join('') || '<tr><td colspan="7" style="text-align:center">No employees pending payment</td></tr>';
+  tbody.innerHTML = rows.join('') || '<tr><td colspan="8" style="text-align:center">No employees pending payment</td></tr>';
 };
 
-window.paySalary = async (userId, amount, basicHours, otHours, name) => {
-  if (!confirm(`Process payment of ${formatMoney(amount)} to ${name}?`)) return;
+window.openPayrollRunModal = async (userId = null) => {
+  const users = await db.users.where('is_active').equals(true).toArray();
+  const workers = users.filter(u => u.role !== 'Admin');
   
+  let u = userId ? await db.users.get(userId) : null;
+  
+  const html = `
+    <div class="form-group">
+      <label class="form-label">Employee</label>
+      <select class="form-input" id="p-run-user" onchange="updatePayrollCalc()">
+        <option value="">Select Employee</option>
+        ${workers.map(w => `<option value="${w.id}" ${u && u.id === w.id ? 'selected' : ''}>${w.display_name}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-grid" style="margin-top:15px">
+      <div class="form-group"><label class="form-label">Basic Salary / Rate</label><input type="number" class="form-input" id="p-run-basic-rate" oninput="updatePayrollCalc()"></div>
+      <div class="form-group"><label class="form-label">Basic Hours</label><input type="number" class="form-input" id="p-run-basic-hours" oninput="updatePayrollCalc()"></div>
+      <div class="form-group"><label class="form-label">OT Rate (per hr)</label><input type="number" class="form-input" id="p-run-ot-rate" oninput="updatePayrollCalc()"></div>
+      <div class="form-group"><label class="form-label">OT Hours</label><input type="number" class="form-input" id="p-run-ot-hours" oninput="updatePayrollCalc()"></div>
+      <div class="form-group"><label class="form-label">Advances to Deduct</label><input type="number" class="form-input" id="p-run-advances" oninput="updatePayrollCalc()" readonly></div>
+      <div class="form-group">
+        <label class="form-label">Total Net Pay</label>
+        <div id="p-run-total" style="font-size:24px; font-weight:700; color:var(--success); margin-top:5px">Rs. 0.00</div>
+      </div>
+    </div>
+  `;
+  
+  openModal('Process Payroll Run', html, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitPayrollRun()">Confirm Payment</button>
+  `);
+  
+  if (u) updatePayrollCalc();
+};
+
+window.updatePayrollCalc = async () => {
+  const userId = document.getElementById('p-run-user').value;
+  if (!userId) return;
+  
+  const u = await db.users.get(parseInt(userId));
+  
+  // Auto-fill from attendance if first time or user changed
+  const basicRateInput = document.getElementById('p-run-basic-rate');
+  const basicHoursInput = document.getElementById('p-run-basic-hours');
+  const otRateInput = document.getElementById('p-run-ot-rate');
+  const otHoursInput = document.getElementById('p-run-ot-hours');
+  const advancesInput = document.getElementById('p-run-advances');
+
+  // If inputs are empty, auto-calculate from system
+  const attendance = await db.attendance.where('user_id').equals(u.id).toArray();
+  const lastPaid = u.last_paid_date ? new Date(u.last_paid_date) : new Date(0);
+  const pendingAttendance = attendance.filter(a => a.clock_out && new Date(a.clock_out) > lastPaid);
+  
+  let bHrs = 0;
+  let oHrs = 0;
+  pendingAttendance.forEach(a => {
+    const dayHours = (new Date(a.clock_out) - new Date(a.clock_in)) / (1000 * 60 * 60);
+    if (dayHours > 8) { bHrs += 8; oHrs += (dayHours - 8); }
+    else { bHrs += dayHours; }
+  });
+
+  // Get advances
+  const advances = await db.advances.where({user_id: u.id, status: 'PENDING'}).toArray();
+  const totalAdvances = advances.reduce((sum, a) => sum + a.amount, 0);
+
+  if (basicRateInput.value === "") basicRateInput.value = u.hourly_rate || 0;
+  if (basicHoursInput.value === "") basicHoursInput.value = bHrs.toFixed(2);
+  if (otRateInput.value === "") otRateInput.value = u.ot_rate || 0;
+  if (otHoursInput.value === "") otHoursInput.value = oHrs.toFixed(2);
+  advancesInput.value = totalAdvances;
+
+  const bRate = parseFloat(basicRateInput.value) || 0;
+  const bH = parseFloat(basicHoursInput.value) || 0;
+  const oRate = parseFloat(otRateInput.value) || 0;
+  const oH = parseFloat(otHoursInput.value) || 0;
+  const adv = parseFloat(advancesInput.value) || 0;
+
+  const total = (bRate * bH) + (oRate * oH) - adv;
+  document.getElementById('p-run-total').textContent = formatMoney(total);
+};
+
+window.submitPayrollRun = async () => {
+  const userId = parseInt(document.getElementById('p-run-user').value);
+  const bRate = parseFloat(document.getElementById('p-run-basic-rate').value) || 0;
+  const bH = parseFloat(document.getElementById('p-run-basic-hours').value) || 0;
+  const oRate = parseFloat(document.getElementById('p-run-ot-rate').value) || 0;
+  const oH = parseFloat(document.getElementById('p-run-ot-hours').value) || 0;
+  const adv = parseFloat(document.getElementById('p-run-advances').value) || 0;
+  const total = (bRate * bH) + (oRate * oH) - adv;
+
+  if (!userId) return showToast('error', 'Please select an employee');
+  if (total < 0) return showToast('error', 'Total cannot be negative');
+
+  const u = await db.users.get(userId);
   const today = new Date().toISOString().split('T')[0];
-  
-  // 1. Record in Payroll table
+
   await db.payroll.add({
     user_id: userId,
-    employee_name: name,
-    period_start: 'Last payment', // In a real app, track the actual start date
+    employee_name: u.display_name,
+    period_start: u.last_paid_date || 'Initial',
     period_end: today,
-    total_hours: basicHours + otHours,
-    ot_hours: otHours,
-    basic_pay: basicHours * (await db.users.get(userId)).hourly_rate,
-    ot_pay: otHours * (await db.users.get(userId)).ot_rate,
-    total_salary: amount,
+    total_hours: bH + oH,
+    ot_hours: oH,
+    basic_pay: bRate * bH,
+    ot_pay: oRate * oH,
+    advances_deducted: adv,
+    total_salary: total,
     paid_at: new Date().toISOString()
   });
-  
-  // 2. Update User's last_paid_date
+
+  // Mark advances as deducted
+  const pendingAdvances = await db.advances.where({user_id: userId, status: 'PENDING'}).toArray();
+  for (const a of pendingAdvances) {
+    await db.advances.update(a.id, { status: 'DEDUCTED' });
+  }
+
   await db.users.update(userId, { last_paid_date: today });
-  
-  showToast('success', `Payment processed for ${name}`);
+
+  closeModal();
+  showToast('success', `Salary processed for ${u.display_name}`);
   renderPayroll();
+};
+
+// --- ADVANCES LOGIC ---
+window.renderAdvances = async () => {
+  const advances = await db.advances.toArray();
+  const tbody = document.getElementById('advances-tbody');
+  
+  tbody.innerHTML = advances.reverse().map(a => `
+    <tr>
+      <td class="fw-600">${a.employee_name}</td>
+      <td class="td-mono">${formatMoney(a.amount)}</td>
+      <td>${a.reason || '-'}</td>
+      <td><span class="badge ${a.status==='PENDING'?'badge-pending':'badge-completed'}">${a.status}</span></td>
+      <td>${a.date}</td>
+      <td>
+        ${a.status === 'PENDING' ? `<button class="btn btn-ghost btn-sm" onclick="deleteAdvance(${a.id})">🗑️</button>` : ''}
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="6" style="text-align:center">No advances found</td></tr>';
+};
+
+window.openAdvanceForm = async () => {
+  const users = await db.users.where('role').equals('Worker').toArray();
+  const html = `
+    <div class="form-group">
+      <label class="form-label">Worker</label>
+      <select class="form-input" id="adv-user-id">
+        ${users.map(u => `<option value="${u.id}">${u.display_name}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group" style="margin-top:15px">
+      <label class="form-label">Amount</label>
+      <input type="number" class="form-input" id="adv-amount" placeholder="Enter amount">
+    </div>
+    <div class="form-group" style="margin-top:15px">
+      <label class="form-label">Reason</label>
+      <textarea class="form-input" id="adv-reason" placeholder="Optional reason"></textarea>
+    </div>
+  `;
+  openModal('New Advance', html, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="saveAdvance()">Save Advance</button>
+  `);
+};
+
+window.saveAdvance = async () => {
+  const userId = parseInt(document.getElementById('adv-user-id').value);
+  const amount = parseFloat(document.getElementById('adv-amount').value);
+  const reason = document.getElementById('adv-reason').value;
+
+  if (!userId || !amount) return showToast('error', 'Worker and amount are required');
+
+  const u = await db.users.get(userId);
+  await db.advances.add({
+    user_id: userId,
+    employee_name: u.display_name,
+    amount: amount,
+    reason: reason,
+    status: 'PENDING',
+    date: new Date().toISOString().split('T')[0]
+  });
+
+  closeModal();
+  showToast('success', 'Advance recorded');
+  renderAdvances();
+};
+
+window.deleteAdvance = async (id) => {
+  if (confirm('Delete this advance request?')) {
+    await db.advances.delete(id);
+    renderAdvances();
+  }
 };
 
 // --- ATTENDANCE ---

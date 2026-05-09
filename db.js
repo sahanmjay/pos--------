@@ -131,6 +131,7 @@ const db = {
   attendance:    new SupaTable('attendance'),
   held_carts:    new SupaTable('held_carts'),
   payroll:       new SupaTable('payroll'),
+  advances:      new SupaTable('advances'),
 };
 
 // ─── BUSINESS TEMPLATES ───

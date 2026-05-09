@@ -91,6 +91,7 @@
         <div class="sidebar-label">HR</div>
         <div class="nav-item" onclick="nav('user-mgmt')"><span class="nav-icon">👥</span> Staff Management</div>
         <div class="nav-item" onclick="nav('attendance')"><span class="nav-icon">📅</span> Attendance</div>
+        <div class="nav-item" onclick="nav('advances')"><span class="nav-icon">💸</span> Advances</div>
         <div class="nav-item" onclick="nav('payroll')" id="nav-payroll-item"><span class="nav-icon">💰</span> Payroll</div>
       </div>
       <div class="sidebar-divider"></div>
@@ -263,8 +264,9 @@
           <div class="card-header">
             <div>
               <div class="card-title">Employee Payroll</div>
-              <div class="card-subtitle">Calculate and process salaries based on attendance</div>
+              <div class="card-subtitle">Calculate and process salaries based on attendance and advances</div>
             </div>
+            <div class="page-actions"><button class="btn btn-primary btn-sm" onclick="openPayrollRunModal()">+ New Payroll Run</button></div>
           </div>
           <div class="card-body p-0">
             <table class="data-table">
@@ -275,12 +277,40 @@
                   <th>Hours Worked</th>
                   <th>Basic Pay</th>
                   <th>OT Pay</th>
+                  <th>Advances</th>
                   <th>Total Due</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody id="payroll-tbody"></tbody>
             </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADVANCES SCREEN -->
+      <div class="screen" id="screen-advances">
+        <div class="page">
+          <div class="page-header">
+            <div><div class="page-title">Salary Advances</div><div class="page-subtitle">Manage worker advance requests and deductions</div></div>
+            <div class="page-actions"><button class="btn btn-primary btn-sm" onclick="openAdvanceForm()">+ New Advance</button></div>
+          </div>
+          <div class="card">
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Worker</th>
+                    <th>Amount</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="advances-tbody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>

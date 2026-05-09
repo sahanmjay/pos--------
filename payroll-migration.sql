@@ -18,11 +18,27 @@ CREATE TABLE IF NOT EXISTS public.payroll (
   ot_hours NUMERIC DEFAULT 0,
   basic_pay NUMERIC NOT NULL,
   ot_pay NUMERIC DEFAULT 0,
+  advances_deducted NUMERIC DEFAULT 0,
   total_salary NUMERIC NOT NULL,
   paid_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   organization_id UUID REFERENCES public.organizations(id)
 );
 
--- 3. Enable RLS and Create Policies for Payroll
+-- 3. Create Advances table
+CREATE TABLE IF NOT EXISTS public.advances (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES public.users(id),
+  employee_name TEXT NOT NULL,
+  amount NUMERIC NOT NULL,
+  reason TEXT,
+  status TEXT DEFAULT 'PENDING', -- PENDING, DEDUCTED
+  date DATE DEFAULT CURRENT_DATE,
+  organization_id UUID REFERENCES public.organizations(id)
+);
+
+-- 4. Enable RLS and Create Policies
 ALTER TABLE public.payroll ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "allow_all" ON public.payroll FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all_payroll" ON public.payroll FOR ALL USING (true) WITH CHECK (true);
+
+ALTER TABLE public.advances ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "allow_all_advances" ON public.advances FOR ALL USING (true) WITH CHECK (true);
