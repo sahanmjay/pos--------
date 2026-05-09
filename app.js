@@ -246,6 +246,26 @@ async function renderPosCategories() {
 window.setPosCategory = (cat) => { posCategory = cat; renderPosCategories(); renderPosGrid(); };
 
 document.getElementById('pos-search').addEventListener('input', renderPosGrid);
+document.getElementById('pos-search').addEventListener('keydown', async (e) => {
+  if (e.key === 'Enter') {
+    const term = e.target.value.trim();
+    if (!term) return;
+    
+    const products = await db.products.toArray();
+    const match = products.find(p => p.barcode === term || p.sku === term);
+    
+    if (match) {
+      if (match.stock_qty > 0) {
+        addToCart(match.id);
+        e.target.value = '';
+        renderPosGrid();
+        showToast('success', `Added ${match.name}`);
+      } else {
+        showToast('error', 'Product out of stock!');
+      }
+    }
+  }
+});
 
 function getIcon(cat) {
   return PRODUCT_ICONS[cat] || PRODUCT_ICONS['default'];
@@ -553,7 +573,7 @@ window.renderProductsTable = async () => {
   const term = document.getElementById('product-search').value.toLowerCase();
   
   if(currVal) products = products.filter(p => p.category === currVal);
-  if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term));
+  if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term) || (p.barcode||'').toLowerCase().includes(term));
   
   document.getElementById('products-tbody').innerHTML = products.map(p => `
     <tr>
@@ -597,6 +617,12 @@ window.openProductForm = async (id = null) => {
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
     <button class="btn btn-primary" onclick="saveProduct()">Save</button>
   `);
+  
+  // Auto-focus barcode field for quick scanning if it's a new product
+  setTimeout(() => {
+    const field = document.getElementById(id ? 'f-prod-name' : 'f-prod-barcode');
+    if (field) field.focus();
+  }, 100);
 };
 
 window.saveProduct = async () => {
@@ -797,6 +823,7 @@ window.renderUsersTable = async () => {
       </td>
       <td>
         <button class="btn btn-ghost btn-sm btn-icon" onclick="openUserForm(${u.id})" title="Edit User">✏️</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="deleteUser(${u.id}, '${u.display_name}')" title="Delete User" style="color:var(--danger)">🗑️</button>
       </td>
     </tr>`;
   }).join('') || '<tr><td colspan="5" style="text-align:center">No users found</td></tr>';
@@ -836,6 +863,14 @@ window.saveUser = async () => {
   };
   if(id) await db.users.update(parseInt(id), u); else await db.users.add(u);
   closeModal(); renderUsersTable(); showToast('success', 'User saved');
+};
+window.deleteUser = async (id, name) => {
+  if (id === currentUser.id) return showToast('error', 'You cannot delete yourself!');
+  if (confirm(`Are you sure you want to remove ${name}? This will permanently delete their account and history.`)) {
+    await db.users.delete(id);
+    renderUsersTable();
+    showToast('success', 'User removed successfully');
+  }
 };
 
 // --- PAYROLL LOGIC ---
