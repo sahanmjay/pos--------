@@ -165,7 +165,7 @@ const SCREENS = {
   'advances': 'HR / Advances',
   'payroll': 'HR / Payroll',
   'user-mgmt': 'HR / Staff Management',
-  'ai-reports': 'HR / AI Business Reports',
+  'ai-reports': 'System / Reports',
   'settings': 'System / Settings'
 };
 
@@ -663,7 +663,15 @@ window.loadSettingsForm = async () => {
   document.getElementById('set-tax').value = s.tax_rate || '0';
   document.getElementById('set-phone').value = s.phone || '';
   document.getElementById('set-address').value = s.address || '';
-  document.getElementById('set-anthropic_key').value = s.anthropic_key || '';
+  
+  // Only show AI settings for the master admin (developer)
+  if (currentUser && currentUser.username === 'admin') {
+    document.getElementById('ai-settings-section').style.display = 'block';
+    document.getElementById('set-ai_provider').value = s.ai_provider || 'anthropic';
+    document.getElementById('set-ai_api_key').value = s.ai_api_key || '';
+  } else {
+    document.getElementById('ai-settings-section').style.display = 'none';
+  }
   
   document.getElementById('biz-templates').innerHTML = Object.keys(BUSINESS_TEMPLATES).map(k => `
     <div class="quick-action" onclick="applyTemplate('${k}')"><div class="qa-icon">${BUSINESS_TEMPLATES[k].icon}</div><div><div class="qa-text">${k}</div><div class="qa-sub">${BUSINESS_TEMPLATES[k].products.length} items</div></div></div>
@@ -671,7 +679,7 @@ window.loadSettingsForm = async () => {
 };
 
 window.saveSettings = async () => {
-  const keys = ['biz_name','biz_type','currency','tax_rate','phone','address','anthropic_key'];
+  const keys = ['biz_name','biz_type','currency','tax_rate','phone','address','ai_provider','ai_api_key'];
   for(let k of keys) {
     const val = document.getElementById('set-'+k).value;
     const existing = await db.settings.where('key').equals(k).first();
@@ -1395,40 +1403,66 @@ window.generateAIInsight = async () => {
   btn.disabled = true;
 
   try {
+    const provider = currentSettings.ai_provider || 'anthropic';
+    const apiKey = currentSettings.ai_api_key;
+    
+    if (!apiKey) {
+        throw new Error('Please add your AI API Key in Settings first.');
+    }
+
     const bizName = currentSettings.biz_name || 'My Shop';
     const topProds = currentReportData.topProducts.map(p => `${p.name} (${p.qty} units)`).join(', ');
     const range = `${currentReportData.start.split('T')[0]} to ${currentReportData.end.split('T')[0]}`;
-
-    // IMPORTANT: In a production app, the API key should never be in the frontend.
-    // We are looking for it in Settings or using a placeholder.
-    const apiKey = currentSettings.anthropic_key || 'YOUR_CLAUDE_API_KEY';
     
-    if (apiKey === 'YOUR_CLAUDE_API_KEY') {
-        throw new Error('Please add your Anthropic API Key in Settings first.');
+    const sysPrompt = "You are a business analyst AI for a small retail business in Sri Lanka. You are given sales, payroll, and inventory data for a specific time period. Write a concise, friendly, and actionable business performance report in 3 sections: (1) Performance Summary — how the business did this period vs what the numbers mean, (2) Key Insights — 3 specific observations about what is working or not working, (3) Recommendations — 3 concrete actions the owner should take. Write in plain English. Keep total response under 300 words. End with one motivational sentence.";
+    
+    const userPrompt = `Business: ${bizName}. Period: ${range}. Revenue: ${formatMoney(currentReportData.revenue)}. Transactions: ${currentReportData.transactions}. Avg transaction: ${formatMoney(currentReportData.revenue / (currentReportData.transactions || 1))}. Top products: ${topProds}. Payment breakdown: Cash ${formatMoney(currentReportData.payments.cash)}, Card ${formatMoney(currentReportData.payments.card)}, Credit ${formatMoney(currentReportData.payments.credit)}. Payroll cost: ${formatMoney(currentReportData.payrollTotal)}. Gross profit estimate: ${formatMoney(currentReportData.grossProfit)}. Discount given: ${formatMoney(currentReportData.discount)}.`;
+
+    let aiText = '';
+
+    if (provider === 'anthropic') {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'dangerously-allow-browser': 'true' },
+        body: JSON.stringify({
+          model: 'claude-3-sonnet-20240229', max_tokens: 1000, system: sysPrompt,
+          messages: [{ role: 'user', content: userPrompt }]
+        })
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
+      aiText = data.content[0].text;
+
+    } else if (provider === 'openai') {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'gpt-4-turbo-preview',
+          messages: [
+            { role: 'system', content: sysPrompt },
+            { role: 'user', content: userPrompt }
+          ]
+        })
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
+      aiText = data.choices[0].message.content;
+
+    } else if (provider === 'google') {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: sysPrompt + "\n\n" + userPrompt }] }]
+        })
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
+      aiText = data.candidates[0].content.parts[0].text;
     }
 
-    const prompt = `Business: ${bizName}. Period: ${range}. Revenue: ${formatMoney(currentReportData.revenue)}. Transactions: ${currentReportData.transactions}. Avg transaction: ${formatMoney(currentReportData.revenue / (currentReportData.transactions || 1))}. Top products: ${topProds}. Payment breakdown: Cash ${formatMoney(currentReportData.payments.cash)}, Card ${formatMoney(currentReportData.payments.card)}, Credit ${formatMoney(currentReportData.payments.credit)}. Payroll cost: ${formatMoney(currentReportData.payrollTotal)}. Gross profit estimate: ${formatMoney(currentReportData.grossProfit)}. Discount given: ${formatMoney(currentReportData.discount)}.`;
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'dangerously-allow-browser': 'true'
-      },
-      body: JSON.stringify({
-        model: 'claude-3-sonnet-20240229',
-        max_tokens: 500,
-        system: "You are a business analyst AI for a small retail business in Sri Lanka. You are given sales, payroll, and inventory data for a specific time period. Write a concise, friendly, and actionable business performance report in 3 sections: (1) Performance Summary — how the business did this period vs what the numbers mean, (2) Key Insights — 3 specific observations about what is working or not working, (3) Recommendations — 3 concrete actions the owner should take. Write in plain English. Keep total response under 300 words. End with one motivational sentence.",
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-
-    const resData = await response.json();
-    if (resData.error) throw new Error(resData.error.message);
-    
-    content.innerHTML = resData.content[0].text.replace(/\n/g, '<br>');
+    content.innerHTML = aiText.replace(/\n/g, '<br>');
     footer.style.display = 'block';
   } catch (err) {
     content.innerHTML = `<div style="color:var(--danger)">Error: ${err.message}</div>`;
