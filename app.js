@@ -1387,10 +1387,11 @@ window.generateAIInsight = async () => {
   const content = document.getElementById('ai-content');
   const loading = document.getElementById('ai-loading');
   const empty = document.getElementById('ai-empty');
-  const footer = document.getElementById('ai-footer');
+  const ready = document.getElementById('ai-ready');
 
   content.style.display = 'none';
   empty.style.display = 'none';
+  ready.style.display = 'none';
   loading.style.display = 'block';
   btn.disabled = true;
 
@@ -1406,7 +1407,7 @@ window.generateAIInsight = async () => {
     const topProds = currentReportData.topProducts.map(p => `${p.name} (${p.qty} units)`).join(', ');
     const range = `${currentReportData.start.split('T')[0]} to ${currentReportData.end.split('T')[0]}`;
     
-    const sysPrompt = "You are a business analyst AI for a small retail business in Sri Lanka. You are given sales, payroll, and inventory data for a specific time period. Write a concise, friendly, and actionable business performance report in 3 sections: (1) Performance Summary — how the business did this period vs what the numbers mean, (2) Key Insights — 3 specific observations about what is working or not working, (3) Recommendations — 3 concrete actions the owner should take. Write in plain English. Keep total response under 300 words. End with one motivational sentence.";
+    const sysPrompt = "You are a specialized business analyst AI for the NexPOS system in Sri Lanka. You are given sales, payroll, and inventory data for a specific time period. Write a concise, friendly, and actionable business performance report in 3 sections: (1) Performance Summary — how the business did this period vs what the numbers mean, (2) Key Insights — 3 specific observations about what is working or not working, (3) Recommendations — 3 concrete actions the owner should take. Write in plain English. Keep total response under 300 words. End with one motivational sentence. Do not mention your own name or that you are an AI model.";
     
     const userPrompt = `Business: ${bizName}. Period: ${range}. Revenue: ${formatMoney(currentReportData.revenue)}. Transactions: ${currentReportData.transactions}. Avg transaction: ${formatMoney(currentReportData.revenue / (currentReportData.transactions || 1))}. Top products: ${topProds}. Payment breakdown: Cash ${formatMoney(currentReportData.payments.cash)}, Card ${formatMoney(currentReportData.payments.card)}, Credit ${formatMoney(currentReportData.payments.credit)}. Payroll cost: ${formatMoney(currentReportData.payrollTotal)}. Gross profit estimate: ${formatMoney(currentReportData.grossProfit)}. Discount given: ${formatMoney(currentReportData.discount)}.`;
 
@@ -1475,13 +1476,14 @@ window.generateAIInsight = async () => {
       aiText = data.choices[0].message.content;
     }
 
-    content.innerHTML = aiText.replace(/\n/g, '<br>');
-    footer.style.display = 'block';
-  } catch (err) {
-    content.innerHTML = `<div style="color:var(--danger)">Error: ${err.message}</div>`;
-  } finally {
+    content.innerText = aiText;
     loading.style.display = 'none';
-    content.style.display = 'block';
+    ready.style.display = 'block';
+  } catch (err) {
+    ready.style.display = 'none';
+    empty.style.display = 'block';
+    showToast('error', err.message);
+  } finally {
     btn.disabled = false;
   }
 };
@@ -1502,7 +1504,7 @@ window.downloadPDFReport = async () => {
   const aiText = document.getElementById('ai-content').innerText;
   if (!aiText || aiText.includes('Click "Generate Insight"')) return showToast('error', 'Please generate AI Insight first');
 
-  const btn = document.getElementById('btn-download-pdf');
+  const btn = document.getElementById('btn-download-pdf-big');
   const originalText = btn.innerText;
   btn.innerText = "Generating PDF...";
   btn.disabled = true;
@@ -1559,7 +1561,7 @@ window.downloadPDFReport = async () => {
     doc.text(`Generated on: ${timestamp}`, pageWidth/2, 160, { align: 'center' });
 
     doc.setFontSize(9);
-    doc.text("Powered by Claude AI", pageWidth/2, pageHeight - 20, { align: 'center' });
+    doc.text("Powered by NexPOS AI", pageWidth/2, pageHeight - 20, { align: 'center' });
 
     // --- PAGE 2: DASHBOARD ---
     doc.addPage();
@@ -1694,7 +1696,7 @@ window.downloadPDFReport = async () => {
     doc.setFontSize(9);
     doc.setFont('helvetica', 'italic');
     doc.setTextColor(...rgbMuted);
-    doc.text(`Powered by Claude AI (Model: claude-3-sonnet)`, margin, 46);
+    doc.text(`Powered by NexPOS Intelligence`, margin, 46);
 
     y = 60;
     const sections = [
@@ -1704,16 +1706,29 @@ window.downloadPDFReport = async () => {
     ];
 
     sections.forEach(sec => {
-      // Find section in text
-      let sectionBody = "Analysis pending...";
-      const regex = new RegExp(`${sec.key}\\*\\*:(.*?)(?=\\*\\*|$)`, 's');
-      const match = aiText.match(regex);
-      if (match) sectionBody = match[1].trim();
-      else {
-          // fallback if headers are different
-          const regex2 = new RegExp(`### ${sec.title}(.*?)(?=###|$)`, 's');
-          const match2 = aiText.match(regex2);
-          if (match2) sectionBody = match2[1].trim();
+      // Robust Parsing: Look for the section title in various formats (**Title**, (1) Title, ### Title)
+      let sectionBody = "";
+      
+      // Try to find text between this header and the next header
+      const escapedTitle = sec.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Look for patterns like **Title**, (1) Title, 1. Title, or just Title
+      const patterns = [
+        new RegExp(`(?:\\*\\*)?\\d?\\.?\\s?${escapedTitle}(?:\\*\\*)?:?\\s*(.*?)(?=(?:\\*\\*)?\\d?\\.?\\s?(?:Performance Summary|Key Insights|Recommendations)|$)`, 'si'),
+        new RegExp(`###\\s?${escapedTitle}\\s*(.*?)(?=###|$)`, 'si')
+      ];
+
+      for (const pattern of patterns) {
+        const match = aiText.match(pattern);
+        if (match && match[1].trim().length > 10) {
+          sectionBody = match[1].trim();
+          break;
+        }
+      }
+
+      // Final fallback: if first section and nothing found, take first 300 chars
+      if (!sectionBody) {
+        if (sec.key === 'Performance Summary') sectionBody = aiText.substring(0, 300) + "...";
+        else sectionBody = "Check the main dashboard for more details on this section.";
       }
 
       doc.setFillColor(248, 249, 250);
