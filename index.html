@@ -7,6 +7,10 @@
 <meta name="description" content="Customizable POS system for retail shops, bookshops, meat shops, grocery stores and more">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<meta name="theme-color" content="#5B5FC7">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -112,42 +116,48 @@
         <div class="pos-layout">
           <div class="pos-products-panel">
             <div class="pos-search-bar">
-              <div class="search-input-wrap" style="flex:1"><span class="search-icon">🔍</span><input class="search-input" id="pos-search" placeholder="Search products by name, SKU, or barcode..." style="width:100%"></div>
+              <div class="search-input-wrap" style="flex:1; position:relative">
+                <span class="search-icon">🔍</span>
+                <input class="search-input" id="pos-search" placeholder="Search products by name, SKU, or barcode..." style="width:100%">
+                <button id="scan-btn" onclick="openBarcodeScanner()" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:18px" title="Scan Barcode">📷</button>
+              </div>
               <div id="pos-cat-filters" class="pos-cat-filters"></div>
             </div>
             <div id="pos-grid" class="pos-grid"></div>
           </div>
-          <div class="pos-cart-panel">
-            <div class="cart-header">
-              <h3>🛒 Current Order</h3>
-              <button class="btn btn-ghost btn-sm" onclick="clearCart()" title="Clear Cart">🗑️ Clear</button>
-            </div>
-            <div class="cart-customer">
-              <button class="btn btn-secondary btn-full btn-sm" onclick="openCustomerSelect()">
-                <span>👤</span> <span id="cart-customer-name">Walk-in Customer</span> <span style="margin-left:auto">▾</span>
-              </button>
-            </div>
-            <div id="cart-items" class="cart-items"></div>
-            <div class="cart-totals">
-              <div class="cart-line"><span>Subtotal</span><span id="cart-subtotal" class="fw-600">0.00</span></div>
-              <div class="cart-line"><span>Discount</span><span id="cart-discount" class="text-success">- 0.00</span></div>
-              <div class="cart-line"><span>Tax (<span id="tax-rate-display">0</span>%)</span><span id="cart-tax">0.00</span></div>
-              <div class="cart-line cart-total"><span>TOTAL</span><span id="cart-total">0.00</span></div>
-              <div class="cart-actions">
-                <button class="btn btn-secondary" onclick="holdCart()">⏸ Hold</button>
-                <button class="btn btn-secondary" onclick="applyDiscount()">🏷️ Discount</button>
+          <div class="pos-cart-wrap" id="pos-cart-wrap">
+            <div class="pos-cart-panel">
+              <div class="cart-header">
+                <h3>🛒 Current Order</h3>
+                <button class="btn btn-ghost btn-sm" onclick="clearCart()" title="Clear Cart">🗑️ Clear</button>
               </div>
-              <div class="payment-btns">
-                <button class="btn btn-primary btn-full" onclick="payNow('cash')" style="padding:14px;font-size:16px">💵 Cash Payment</button>
-                <div style="display:flex;gap:8px">
-                  <button class="btn btn-secondary" style="flex:1" onclick="payNow('card')">💳 Card</button>
-                  <button class="btn btn-secondary" style="flex:1" onclick="payNow('credit')">📝 Credit</button>
+              <div class="cart-customer">
+                <button class="btn btn-secondary btn-full btn-sm" onclick="openCustomerSelect()">
+                  <span>👤</span> <span id="cart-customer-name">Walk-in Customer</span> <span style="margin-left:auto">▾</span>
+                </button>
+              </div>
+              <div id="cart-items" class="cart-items"></div>
+              <div class="cart-totals">
+                <div class="cart-line"><span>Subtotal</span><span id="cart-subtotal" class="fw-600">0.00</span></div>
+                <div class="cart-line"><span>Discount</span><span id="cart-discount" class="text-success">- 0.00</span></div>
+                <div class="cart-line"><span>Tax (<span id="tax-rate-display">0</span>%)</span><span id="cart-tax">0.00</span></div>
+                <div class="cart-line cart-total"><span>TOTAL</span><span id="cart-total">0.00</span></div>
+                <div class="cart-actions">
+                  <button class="btn btn-secondary" onclick="holdCart()">⏸ Hold</button>
+                  <button class="btn btn-secondary" onclick="applyDiscount()">🏷️ Discount</button>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+                <div class="payment-btns">
+                  <button class="btn btn-primary btn-full" onclick="payNow('cash')" style="padding:14px;font-size:16px">💵 Cash Payment</button>
+                  <div style="display:flex;gap:8px">
+                    <button class="btn btn-secondary" style="flex:1" onclick="payNow('card')">💳 Card</button>
+                    <button class="btn btn-secondary" style="flex:1" onclick="payNow('credit')">📝 Credit</button>
+                  </div>
+                </div>
+              </div> <!-- /cart-totals -->
+            </div> <!-- /pos-cart-panel -->
+          </div> <!-- /pos-cart-wrap -->
+        </div> <!-- /pos-layout -->
+      </div> <!-- /screen-pos -->
 
       <!-- DASHBOARD SCREEN -->
       <div class="screen" id="screen-dashboard">
@@ -482,6 +492,23 @@
 
     </div><!-- /main -->
   </div><!-- /app-body -->
+  <div class="mobile-nav" style="display:none">
+    <a href="#" class="mobile-tab active" id="tab-pos" onclick="nav('pos')"><i>🛒</i><span>POS</span></a>
+    <a href="#" class="mobile-tab" id="tab-products" onclick="nav('products')"><i>📦</i><span>Products</span></a>
+    <a href="#" class="mobile-tab" id="tab-sales" onclick="nav('sales-history')"><i>📋</i><span>Sales</span></a>
+    <a href="#" class="mobile-tab" id="tab-reports" onclick="nav('ai-reports')"><i>📊</i><span>Reports</span></a>
+    <a href="#" class="mobile-tab" onclick="toggleMobileMenu()"><i>☰</i><span>Menu</span></a>
+  </div>
+
+  <button class="cart-fab" id="cart-fab" style="display:none" onclick="toggleMobileCart()">
+    🛒 <span class="cart-badge" id="mobile-cart-badge">0</span>
+  </button>
+
+  <div id="scanner-container">
+    <video id="scanner-video"></video>
+    <div class="scanner-reticle"></div>
+    <button class="btn btn-secondary btn-sm" onclick="closeBarcodeScanner()" style="position:absolute;bottom:30px;left:50%;transform:translateX(-50%);z-index:2001">Cancel Scan</button>
+  </div>
 </div><!-- /app -->
 
 <!-- ═══ MODALS ═══ -->
@@ -498,13 +525,19 @@
   <div class="modal" onclick="event.stopPropagation()" style="width:380px;max-height:90vh;overflow-y:auto">
     <div class="modal-header"><span class="modal-title">Receipt</span><button class="modal-close" onclick="closeReceipt()">✕</button></div>
     <div class="modal-body" id="receipt-body" style="font-family:var(--mono);font-size:12px"></div>
-    <div class="modal-footer"><button class="btn btn-primary btn-sm" onclick="printReceipt()">🖨️ Print</button><button class="btn btn-secondary btn-sm" onclick="closeReceipt()">Close</button></div>
+    <div class="modal-footer" style="flex-wrap:wrap; gap:8px">
+      <button class="btn btn-primary btn-sm" onclick="printReceipt()">🖨️ Print</button>
+      <button class="btn btn-secondary btn-sm" onclick="shareReceiptWhatsApp()">💬 WhatsApp</button>
+      <button class="btn btn-secondary btn-sm" onclick="printViaRawBT()">🔌 Bluetooth</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeReceipt()">Close</button>
+    </div>
   </div>
 </div>
 
 <!-- TOAST -->
 <div class="toast-container" id="toast-container"></div>
 
+<script src="https://unpkg.com/@zxing/browser@latest/umd/index.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="db.js"></script>
