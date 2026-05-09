@@ -1245,6 +1245,7 @@ window.setReportPeriod = (period) => {
 window.refreshReport = () => renderAIReports();
 
 window.renderAIReports = async () => {
+  await loadSettings(); // Refresh settings to get latest API keys
   const period = document.querySelector('.btn-group .btn.active').id.replace('btn-period-', '');
   let start, end;
   const now = new Date();
