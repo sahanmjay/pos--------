@@ -1495,3 +1495,277 @@ window.copyAIReport = () => {
 window.exportReportPDF = () => {
   window.print();
 };
+
+// --- PDF REPORT GENERATION ---
+window.downloadPDFReport = async () => {
+  if (!currentReportData) return showToast('error', 'No data available to generate report');
+  const aiText = document.getElementById('ai-content').innerText;
+  if (!aiText || aiText.includes('Click "Generate Insight"')) return showToast('error', 'Please generate AI Insight first');
+
+  const btn = document.getElementById('btn-download-pdf');
+  const originalText = btn.innerText;
+  btn.innerText = "Generating PDF...";
+  btn.disabled = true;
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = 210;
+    const pageHeight = 297;
+    const margin = 20;
+    const contentWidth = pageWidth - (margin * 2);
+
+    // Prepare Data
+    const bizName = currentSettings.biz_name || 'NexPOS Shop';
+    const periodType = document.querySelector('.btn-group .btn.active').innerText;
+    const dateRange = `${new Date(currentReportData.start).toLocaleDateString()} – ${new Date(currentReportData.end).toLocaleDateString()}`;
+    const timestamp = new Date().toLocaleString();
+
+    // COLORS
+    const rgbPrimary = [91, 95, 199];
+    const rgbDark = [27, 29, 42];
+    const rgbWhite = [255, 255, 255];
+    const rgbGrey = [248, 249, 250];
+    const rgbText = [50, 50, 50];
+    const rgbMuted = [120, 120, 120];
+
+    // --- PAGE 1: COVER ---
+    doc.setFillColor(...rgbDark);
+    doc.rect(0, 0, pageWidth, pageHeight, 'F');
+    
+    // Logo text "NP"
+    doc.setFillColor(...rgbPrimary);
+    doc.circle(pageWidth/2, 80, 15, 'F');
+    doc.setTextColor(...rgbWhite);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text("NP", pageWidth/2, 82, { align: 'center' });
+
+    doc.setFontSize(28);
+    doc.text(bizName, pageWidth/2, 110, { align: 'center' });
+    
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'normal');
+    doc.text("Business Performance Report", pageWidth/2, 125, { align: 'center' });
+
+    doc.setDrawColor(...rgbPrimary);
+    doc.setLineWidth(1);
+    doc.line(pageWidth/2 - 40, 135, pageWidth/2 + 40, 135);
+
+    doc.setFontSize(12);
+    doc.text(`${periodType} Report: ${dateRange}`, pageWidth/2, 150, { align: 'center' });
+    doc.setFontSize(10);
+    doc.setTextColor(180, 180, 180);
+    doc.text(`Generated on: ${timestamp}`, pageWidth/2, 160, { align: 'center' });
+
+    doc.setFontSize(9);
+    doc.text("Powered by Claude AI", pageWidth/2, pageHeight - 20, { align: 'center' });
+
+    // --- PAGE 2: DASHBOARD ---
+    doc.addPage();
+    addPDFHeaderFooter(doc, bizName, 2, 4);
+    
+    doc.setTextColor(...rgbText);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text("Performance Overview", margin, 40);
+
+    // 2x2 Grid for KPIs
+    const kpis = [
+      { label: 'Total Revenue', value: formatMoney(currentReportData.revenue), sub: `from ${currentReportData.transactions} transactions`, color: [16, 185, 129] },
+      { label: 'Transactions', value: currentReportData.transactions.toString(), sub: 'completed sales', color: [59, 130, 246] },
+      { label: 'Avg Transaction', value: formatMoney(currentReportData.revenue / (currentReportData.transactions || 1)), sub: 'revenue per customer', color: [168, 85, 247] },
+      { label: 'Gross Profit (Est.)', value: formatMoney(currentReportData.grossProfit), sub: 'estimated margin', color: [245, 158, 11] }
+    ];
+
+    let x = margin, y = 50, boxW = (contentWidth - 10) / 2, boxH = 35;
+    kpis.forEach((k, i) => {
+      doc.setFillColor(255, 255, 255);
+      doc.setDrawColor(230, 230, 230);
+      doc.rect(x, y, boxW, boxH, 'FD');
+      
+      doc.setFillColor(...k.color);
+      doc.rect(x, y, 3, boxH, 'F'); // Left border
+
+      doc.setTextColor(...rgbMuted);
+      doc.setFontSize(9);
+      doc.text(k.label, x + 8, y + 10);
+      
+      doc.setTextColor(...rgbText);
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text(k.value, x + 8, y + 20);
+      
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...rgbMuted);
+      doc.text(k.sub, x + 8, y + 28);
+
+      if (i % 2 === 0) x += boxW + 10; else { x = margin; y += boxH + 10; }
+    });
+
+    // Summary Stats Row
+    y += 5;
+    doc.setFontSize(9);
+    doc.setTextColor(...rgbMuted);
+    const summaryText = `Total Discount: ${formatMoney(currentReportData.discount)}   |   Tax Collected: ${formatMoney(currentReportData.tax)}   |   Payroll Cost: ${formatMoney(currentReportData.payrollTotal)}   |   Advances: ${formatMoney(currentReportData.advancesTotal)}`;
+    doc.text(summaryText, pageWidth/2, y, { align: 'center' });
+
+    // --- PAGE 2 CONTINUED: CHARTS ---
+    y += 20;
+    doc.setTextColor(...rgbText);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text("Daily Revenue Trend", margin, y);
+    
+    const trendCanvas = await html2canvas(document.getElementById('chart-revenue-trend').parentElement);
+    doc.addImage(trendCanvas.toDataURL('image/png'), 'PNG', margin, y + 5, contentWidth, 60);
+    
+    y += 85;
+    doc.text("Revenue by Payment Type", margin, y);
+    const paymentCanvas = await html2canvas(document.getElementById('chart-payments').parentElement);
+    doc.addImage(paymentCanvas.toDataURL('image/png'), 'PNG', margin, y + 5, 60, 60);
+
+    const payTextX = margin + 70;
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Cash: ${formatMoney(currentReportData.payments.cash)}`, payTextX, y + 20);
+    doc.text(`Card: ${formatMoney(currentReportData.payments.card)}`, payTextX, y + 30);
+    doc.text(`Credit: ${formatMoney(currentReportData.payments.credit)}`, payTextX, y + 40);
+
+    // --- PAGE 3: PRODUCTS ---
+    doc.addPage();
+    addPDFHeaderFooter(doc, bizName, 3, 4);
+
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text("Top 5 Best-Selling Products", margin, 40);
+
+    const headers = ['RANK', 'PRODUCT NAME', 'UNITS SOLD', 'REVENUE', '% TOTAL'];
+    const colWidths = [15, 75, 25, 35, 20];
+    y = 55;
+
+    // Header row
+    doc.setFillColor(...rgbPrimary);
+    doc.rect(margin, y - 5, contentWidth, 10, 'F');
+    doc.setTextColor(...rgbWhite);
+    doc.setFontSize(9);
+    let curX = margin;
+    headers.forEach((h, i) => {
+      doc.text(h, curX + 2, y + 1);
+      curX += colWidths[i];
+    });
+
+    y += 10;
+    currentReportData.topProducts.forEach((p, i) => {
+      if (i % 2 !== 0) {
+        doc.setFillColor(248, 249, 250);
+        doc.rect(margin, y - 5, contentWidth, 10, 'F');
+      }
+      if (i === 0) {
+        doc.setFillColor(255, 215, 0);
+        doc.rect(margin, y - 5, 2, 10, 'F');
+      }
+
+      doc.setTextColor(...rgbText);
+      doc.setFont('helvetica', i === 0 ? 'bold' : 'normal');
+      
+      let rowX = margin;
+      doc.text(`#${i+1}`, rowX + 2, y + 1);
+      rowX += colWidths[0];
+      doc.text(p.name, rowX + 2, y + 1);
+      rowX += colWidths[1];
+      doc.text(p.qty.toString(), rowX + 2, y + 1);
+      rowX += colWidths[2];
+      doc.text(formatMoney(p.revenue), rowX + 2, y + 1);
+      rowX += colWidths[3];
+      doc.text(`${(p.revenue / (currentReportData.revenue || 1) * 100).toFixed(1)}%`, rowX + 2, y + 1);
+      
+      y += 10;
+    });
+
+    // --- PAGE 4: AI INSIGHTS ---
+    doc.addPage();
+    addPDFHeaderFooter(doc, bizName, 4, 4);
+
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text("AI Business Analysis", margin, 40);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'italic');
+    doc.setTextColor(...rgbMuted);
+    doc.text(`Powered by Claude AI (Model: claude-3-sonnet)`, margin, 46);
+
+    y = 60;
+    const sections = [
+      { title: 'Performance Summary', color: [91, 95, 199], key: 'Performance Summary' },
+      { title: 'Key Insights', color: [29, 158, 117], key: 'Key Insights' },
+      { title: 'Recommendations', color: [245, 158, 11], key: 'Recommendations' }
+    ];
+
+    sections.forEach(sec => {
+      // Find section in text
+      let sectionBody = "Analysis pending...";
+      const regex = new RegExp(`${sec.key}\\*\\*:(.*?)(?=\\*\\*|$)`, 's');
+      const match = aiText.match(regex);
+      if (match) sectionBody = match[1].trim();
+      else {
+          // fallback if headers are different
+          const regex2 = new RegExp(`### ${sec.title}(.*?)(?=###|$)`, 's');
+          const match2 = aiText.match(regex2);
+          if (match2) sectionBody = match2[1].trim();
+      }
+
+      doc.setFillColor(248, 249, 250);
+      doc.rect(margin, y, contentWidth, 5, 'F'); // Spacing top
+
+      const wrappedText = doc.splitTextToSize(sectionBody, contentWidth - 15);
+      const boxH = wrappedText.length * 5 + 20;
+
+      doc.setFillColor(248, 249, 250);
+      doc.rect(margin, y, contentWidth, boxH, 'F');
+      doc.setFillColor(...sec.color);
+      doc.rect(margin, y, 3, boxH, 'F');
+
+      doc.setTextColor(...rgbText);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text(sec.title, margin + 8, y + 10);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.text(wrappedText, margin + 8, y + 20);
+
+      y += boxH + 10;
+    });
+
+    const fileName = `NexPOS-Report-${bizName.replace(/\s+/g, '-')}-${periodType}-${new Date().toISOString().split('T')[0]}.pdf`;
+    doc.save(fileName);
+    showToast('success', 'PDF Report downloaded successfully');
+
+  } catch (err) {
+    console.error(err);
+    showToast('error', 'Failed to generate PDF: ' + err.message);
+  } finally {
+    btn.innerText = originalText;
+    btn.disabled = false;
+  }
+};
+
+function addPDFHeaderFooter(doc, bizName, page, total) {
+  const margin = 20;
+  const pageWidth = 210;
+  const pageHeight = 297;
+  
+  // Footer
+  doc.setDrawColor(91, 95, 199);
+  doc.setLineWidth(0.5);
+  doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
+  
+  doc.setFontSize(8);
+  doc.setTextColor(150, 150, 150);
+  doc.setFont('helvetica', 'normal');
+  doc.text("NexPOS — Confidential Business Report", margin, pageHeight - 10);
+  doc.text(`Page ${page} of ${total}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+  doc.text(bizName, pageWidth - margin, pageHeight - 10, { align: 'right' });
+}
