@@ -664,22 +664,13 @@ window.loadSettingsForm = async () => {
   document.getElementById('set-phone').value = s.phone || '';
   document.getElementById('set-address').value = s.address || '';
   
-  // Only show AI settings for the master admin (developer)
-  if (currentUser && currentUser.username === 'admin') {
-    document.getElementById('ai-settings-section').style.display = 'block';
-    document.getElementById('set-ai_provider').value = s.ai_provider || 'anthropic';
-    document.getElementById('set-ai_api_key').value = s.ai_api_key || '';
-  } else {
-    document.getElementById('ai-settings-section').style.display = 'none';
-  }
-  
   document.getElementById('biz-templates').innerHTML = Object.keys(BUSINESS_TEMPLATES).map(k => `
     <div class="quick-action" onclick="applyTemplate('${k}')"><div class="qa-icon">${BUSINESS_TEMPLATES[k].icon}</div><div><div class="qa-text">${k}</div><div class="qa-sub">${BUSINESS_TEMPLATES[k].products.length} items</div></div></div>
   `).join('');
 };
 
 window.saveSettings = async () => {
-  const keys = ['biz_name','biz_type','currency','tax_rate','phone','address','ai_provider','ai_api_key'];
+  const keys = ['biz_name','biz_type','currency','tax_rate','phone','address'];
   for(let k of keys) {
     const val = document.getElementById('set-'+k).value;
     const existing = await db.settings.where('key').equals(k).first();
@@ -1460,6 +1451,27 @@ window.generateAIInsight = async () => {
       const data = await response.json();
       if (data.error) throw new Error(data.error.message);
       aiText = data.candidates[0].content.parts[0].text;
+      
+    } else if (provider === 'openrouter') {
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': window.location.origin, // Optional for OpenRouter
+          'X-Title': 'NexPOS' // Optional for OpenRouter
+        },
+        body: JSON.stringify({
+          model: 'openai/gpt-3.5-turbo', // Default model for OpenRouter
+          messages: [
+            { role: 'system', content: sysPrompt },
+            { role: 'user', content: userPrompt }
+          ]
+        })
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
+      aiText = data.choices[0].message.content;
     }
 
     content.innerHTML = aiText.replace(/\n/g, '<br>');
