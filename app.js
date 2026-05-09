@@ -165,6 +165,7 @@ const SCREENS = {
   'advances': 'HR / Advances',
   'payroll': 'HR / Payroll',
   'user-mgmt': 'HR / Staff Management',
+  'ai-reports': 'HR / AI Business Reports',
   'settings': 'System / Settings'
 };
 
@@ -179,6 +180,9 @@ function nav(screenId) {
     }
     if (role === 'HR' && !['user-mgmt', 'attendance', 'advances', 'payroll'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
+    }
+    if (screenId === 'ai-reports' && role !== 'Admin') {
+      showToast('error', 'Only Admins can access AI Reports'); return;
     }
     if (role === 'Inventory' && !['products', 'categories'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
@@ -213,6 +217,7 @@ function nav(screenId) {
   if(screenId === 'attendance') renderAttendance();
   if(screenId === 'advances') renderAdvances();
   if(screenId === 'payroll') renderPayroll();
+  if(screenId === 'ai-reports') renderAIReports();
   if(screenId === 'settings') loadSettingsForm();
 }
 
@@ -658,6 +663,7 @@ window.loadSettingsForm = async () => {
   document.getElementById('set-tax').value = s.tax_rate || '0';
   document.getElementById('set-phone').value = s.phone || '';
   document.getElementById('set-address').value = s.address || '';
+  document.getElementById('set-anthropic_key').value = s.anthropic_key || '';
   
   document.getElementById('biz-templates').innerHTML = Object.keys(BUSINESS_TEMPLATES).map(k => `
     <div class="quick-action" onclick="applyTemplate('${k}')"><div class="qa-icon">${BUSINESS_TEMPLATES[k].icon}</div><div><div class="qa-text">${k}</div><div class="qa-sub">${BUSINESS_TEMPLATES[k].products.length} items</div></div></div>
@@ -665,7 +671,7 @@ window.loadSettingsForm = async () => {
 };
 
 window.saveSettings = async () => {
-  const keys = ['biz_name','biz_type','currency','tax_rate','phone','address'];
+  const keys = ['biz_name','biz_type','currency','tax_rate','phone','address','anthropic_key'];
   for(let k of keys) {
     const val = document.getElementById('set-'+k).value;
     const existing = await db.settings.where('key').equals(k).first();
@@ -1223,4 +1229,222 @@ window.submitClockIn = async (isClockIn) => {
   
   closeModal();
   renderAttendance();
+};
+
+// --- AI REPORTS LOGIC ---
+let reportCharts = {};
+let currentReportData = null;
+
+window.setReportPeriod = (period) => {
+  document.querySelectorAll('.btn-group .btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`btn-period-${period}`).classList.add('active');
+  document.getElementById('custom-range-inputs').style.display = (period === 'custom') ? 'flex' : 'none';
+  
+  if (period !== 'custom') renderAIReports();
+};
+
+window.refreshReport = () => renderAIReports();
+
+window.renderAIReports = async () => {
+  const period = document.querySelector('.btn-group .btn.active').id.replace('btn-period-', '');
+  let start, end;
+  const now = new Date();
+  
+  if (period === 'today') {
+    start = new Date(now.setHours(0,0,0,0)).toISOString();
+    end = new Date(now.setHours(23,59,59,999)).toISOString();
+  } else if (period === 'week') {
+    const day = now.getDay() || 7;
+    start = new Date(now.setHours(0,0,0,0) - (day-1)*24*60*60*1000).toISOString();
+    end = new Date().toISOString();
+  } else if (period === 'month') {
+    start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    end = new Date().toISOString();
+  } else {
+    start = document.getElementById('report-start-date').value;
+    end = document.getElementById('report-end-date').value;
+    if (!start || !end) return;
+    start = new Date(start).toISOString();
+    end = new Date(end).toISOString();
+  }
+
+  const data = await fetchReportData(start, end);
+  currentReportData = data;
+  
+  // Update KPIs
+  document.getElementById('kpi-revenue').textContent = formatMoney(data.revenue);
+  document.getElementById('kpi-transactions').textContent = data.transactions;
+  document.getElementById('kpi-avg-value').textContent = formatMoney(data.revenue / (data.transactions || 1));
+  document.getElementById('kpi-profit').textContent = formatMoney(data.grossProfit);
+  
+  // Update Top Products
+  document.getElementById('report-top-products-tbody').innerHTML = data.topProducts.map((p, i) => `
+    <tr>
+      <td>#${i+1}</td>
+      <td class="fw-600">${p.name}</td>
+      <td>${p.qty}</td>
+      <td class="td-mono">${formatMoney(p.revenue)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" style="text-align:center">No sales data</td></tr>';
+
+  // Render Charts
+  renderReportCharts(data);
+  
+  // Reset AI box
+  document.getElementById('ai-content').innerHTML = 'Click "Generate Insight" to analyze this data.';
+  document.getElementById('ai-footer').style.display = 'none';
+  document.getElementById('ai-empty').style.display = 'block';
+};
+
+async function fetchReportData(start, end) {
+  // 1. Sales Data
+  const sales = await db.sales.toArray();
+  const periodSales = sales.filter(s => s.date >= start && s.date <= end);
+  
+  const revenue = periodSales.reduce((sum, s) => sum + s.total_amount, 0);
+  const transactions = periodSales.length;
+  const discount = periodSales.reduce((sum, s) => sum + (s.discount || 0), 0);
+  const tax = periodSales.reduce((sum, s) => sum + (s.tax || 0), 0);
+  
+  // 2. Revenue by Payment Type
+  const payments = { cash: 0, card: 0, credit: 0 };
+  periodSales.forEach(s => { if (payments[s.payment_type] !== undefined) payments[s.payment_type] += s.total_amount; });
+  
+  // 3. Daily Revenue
+  const dailyRev = {};
+  periodSales.forEach(s => {
+    const day = s.date.split('T')[0];
+    dailyRev[day] = (dailyRev[day] || 0) + s.total_amount;
+  });
+  
+  // 4. Top Products (approximate from sale_items)
+  const items = await db.sale_items.toArray();
+  const saleIds = periodSales.map(s => s.id);
+  const periodItems = items.filter(i => saleIds.includes(i.sale_id));
+  
+  const productStats = {};
+  periodItems.forEach(i => {
+    if (!productStats[i.product_name]) productStats[i.product_name] = { qty: 0, revenue: 0, product_id: i.product_id };
+    productStats[i.product_name].qty += i.quantity;
+    productStats[i.product_name].revenue += i.line_total;
+  });
+  
+  const topProducts = Object.entries(productStats)
+    .map(([name, stat]) => ({ name, ...stat }))
+    .sort((a, b) => b.qty - a.qty)
+    .slice(0, 5);
+    
+  // 5. Gross Profit Estimate
+  let totalCost = 0;
+  const allProducts = await db.products.toArray();
+  const prodMap = {}; allProducts.forEach(p => prodMap[p.id] = p.cost_price || 0);
+  periodItems.forEach(i => { totalCost += i.quantity * (prodMap[i.product_id] || 0); });
+  const grossProfit = revenue - totalCost;
+  
+  // 6. Payroll & Advances
+  const payrolls = await db.payroll.toArray();
+  const periodPayroll = payrolls.filter(p => p.paid_at >= start && p.paid_at <= end);
+  const payrollTotal = periodPayroll.reduce((sum, p) => sum + p.total_salary, 0);
+  
+  const advances = await db.advances.toArray();
+  const periodAdvances = advances.filter(a => a.date >= start.split('T')[0] && a.date <= end.split('T')[0]);
+  const advancesTotal = periodAdvances.reduce((sum, a) => sum + a.amount, 0);
+
+  return {
+    revenue, transactions, discount, tax, payments, dailyRev, topProducts, grossProfit, payrollTotal, advancesTotal, start, end
+  };
+}
+
+function renderReportCharts(data) {
+  // Revenue Trend
+  if (reportCharts.trend) reportCharts.trend.destroy();
+  const trendLabels = Object.keys(data.dailyRev).sort();
+  reportCharts.trend = new Chart(document.getElementById('chart-revenue-trend'), {
+    type: 'bar',
+    data: {
+      labels: trendLabels,
+      datasets: [{ label: 'Daily Revenue', data: trendLabels.map(l => data.dailyRev[l]), backgroundColor: '#6366f1' }]
+    },
+    options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+  });
+
+  // Payment Types
+  if (reportCharts.payments) reportCharts.payments.destroy();
+  reportCharts.payments = new Chart(document.getElementById('chart-payments'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Cash', 'Card', 'Credit'],
+      datasets: [{ data: [data.payments.cash, data.payments.card, data.payments.credit], backgroundColor: ['#10b981', '#3b82f6', '#f59e0b'] }]
+    },
+    options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+  });
+}
+
+window.generateAIInsight = async () => {
+  if (!currentReportData) return;
+  
+  const btn = document.getElementById('btn-regen-ai');
+  const content = document.getElementById('ai-content');
+  const loading = document.getElementById('ai-loading');
+  const empty = document.getElementById('ai-empty');
+  const footer = document.getElementById('ai-footer');
+
+  content.style.display = 'none';
+  empty.style.display = 'none';
+  loading.style.display = 'block';
+  btn.disabled = true;
+
+  try {
+    const bizName = currentSettings.biz_name || 'My Shop';
+    const topProds = currentReportData.topProducts.map(p => `${p.name} (${p.qty} units)`).join(', ');
+    const range = `${currentReportData.start.split('T')[0]} to ${currentReportData.end.split('T')[0]}`;
+
+    // IMPORTANT: In a production app, the API key should never be in the frontend.
+    // We are looking for it in Settings or using a placeholder.
+    const apiKey = currentSettings.anthropic_key || 'YOUR_CLAUDE_API_KEY';
+    
+    if (apiKey === 'YOUR_CLAUDE_API_KEY') {
+        throw new Error('Please add your Anthropic API Key in Settings first.');
+    }
+
+    const prompt = `Business: ${bizName}. Period: ${range}. Revenue: ${formatMoney(currentReportData.revenue)}. Transactions: ${currentReportData.transactions}. Avg transaction: ${formatMoney(currentReportData.revenue / (currentReportData.transactions || 1))}. Top products: ${topProds}. Payment breakdown: Cash ${formatMoney(currentReportData.payments.cash)}, Card ${formatMoney(currentReportData.payments.card)}, Credit ${formatMoney(currentReportData.payments.credit)}. Payroll cost: ${formatMoney(currentReportData.payrollTotal)}. Gross profit estimate: ${formatMoney(currentReportData.grossProfit)}. Discount given: ${formatMoney(currentReportData.discount)}.`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'dangerously-allow-browser': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-3-sonnet-20240229',
+        max_tokens: 500,
+        system: "You are a business analyst AI for a small retail business in Sri Lanka. You are given sales, payroll, and inventory data for a specific time period. Write a concise, friendly, and actionable business performance report in 3 sections: (1) Performance Summary — how the business did this period vs what the numbers mean, (2) Key Insights — 3 specific observations about what is working or not working, (3) Recommendations — 3 concrete actions the owner should take. Write in plain English. Keep total response under 300 words. End with one motivational sentence.",
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    const resData = await response.json();
+    if (resData.error) throw new Error(resData.error.message);
+    
+    content.innerHTML = resData.content[0].text.replace(/\n/g, '<br>');
+    footer.style.display = 'block';
+  } catch (err) {
+    content.innerHTML = `<div style="color:var(--danger)">Error: ${err.message}</div>`;
+  } finally {
+    loading.style.display = 'none';
+    content.style.display = 'block';
+    btn.disabled = false;
+  }
+};
+
+window.copyAIReport = () => {
+  const text = document.getElementById('ai-content').innerText;
+  navigator.clipboard.writeText(text);
+  showToast('success', 'Report copied to clipboard');
+};
+
+window.exportReportPDF = () => {
+  window.print();
 };

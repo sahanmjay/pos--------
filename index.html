@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -93,6 +94,7 @@
         <div class="nav-item" onclick="nav('attendance')"><span class="nav-icon">📅</span> Attendance</div>
         <div class="nav-item" onclick="nav('advances')"><span class="nav-icon">💸</span> Advances</div>
         <div class="nav-item" onclick="nav('payroll')" id="nav-payroll-item"><span class="nav-icon">💰</span> Payroll</div>
+        <div class="nav-item" onclick="nav('ai-reports')" id="nav-ai-reports-item"><span class="nav-icon">✨</span> AI Reports</div>
       </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section" id="nav-system">
@@ -347,6 +349,16 @@
               <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="set-phone" placeholder="+94 77 123 4567"></div>
               <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="set-address" placeholder="123 Main Street"></div>
             </div>
+            
+            <div class="form-section-title" style="margin-top:20px">AI & Integration</div>
+            <div class="form-grid">
+              <div class="form-group" style="grid-column:span 2">
+                <label class="form-label">Anthropic (Claude) API Key</label>
+                <input class="form-input" id="set-anthropic_key" type="password" placeholder="sk-ant-api03-...">
+                <div class="page-subtitle" style="font-size:11px">Used for generating AI business insights in the Reports screen.</div>
+              </div>
+            </div>
+
             <div style="margin-top:20px;display:flex;gap:8px">
               <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
               <button class="btn btn-secondary" onclick="loadSettingsForm()">Reset</button>
@@ -357,6 +369,121 @@
             <div class="page-subtitle" style="margin-bottom:16px">Load sample products and categories for your business type</div>
             <div class="quick-actions" id="biz-templates"></div>
           </div></div>
+        </div>
+      </div>
+
+      <!-- AI REPORTS SCREEN -->
+      <div class="screen" id="screen-ai-reports">
+        <div class="page">
+          <div class="page-header">
+            <div>
+              <div class="page-title">AI Business Intelligence</div>
+              <div class="page-subtitle">Advanced analytics and AI-powered performance insights</div>
+            </div>
+            <div class="page-actions">
+              <button class="btn btn-secondary btn-sm" onclick="exportReportPDF()">⬇ Download PDF</button>
+            </div>
+          </div>
+
+          <!-- Period Selector -->
+          <div class="card" style="margin-bottom:20px">
+            <div class="filter-bar">
+              <div class="btn-group">
+                <button class="btn btn-ghost btn-sm active" id="btn-period-today" onclick="setReportPeriod('today')">Today</button>
+                <button class="btn btn-ghost btn-sm" id="btn-period-week" onclick="setReportPeriod('week')">This Week</button>
+                <button class="btn btn-ghost btn-sm" id="btn-period-month" onclick="setReportPeriod('month')">This Month</button>
+                <button class="btn btn-ghost btn-sm" id="btn-period-custom" onclick="setReportPeriod('custom')">Custom Range</button>
+              </div>
+              <div id="custom-range-inputs" style="display:none; gap:10px; align-items:center; margin-left:15px">
+                <input type="date" class="filter-select" id="report-start-date">
+                <span class="text-muted">to</span>
+                <input type="date" class="filter-select" id="report-end-date">
+                <button class="btn btn-primary btn-sm" onclick="setReportPeriod('custom')">Apply</button>
+              </div>
+              <div class="filter-spacer"></div>
+              <button class="btn btn-primary btn-sm" onclick="refreshReport()">🔄 Refresh Data</button>
+            </div>
+          </div>
+
+          <!-- KPI Cards -->
+          <div class="summary-grid" id="report-kpi-grid">
+            <div class="summary-card">
+              <div class="summary-label">Total Revenue</div>
+              <div class="summary-value" id="kpi-revenue">Rs. 0.00</div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-label">Transactions</div>
+              <div class="summary-value" id="kpi-transactions">0</div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-label">Avg Transaction</div>
+              <div class="summary-value" id="kpi-avg-value">Rs. 0.00</div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-label">Gross Profit (Est.)</div>
+              <div class="summary-value" id="kpi-profit" style="color:var(--success)">Rs. 0.00</div>
+            </div>
+          </div>
+
+          <!-- Charts Row -->
+          <div class="dash-grid" style="margin-bottom:20px">
+            <div class="card">
+              <div class="card-body">
+                <div class="section-header">Revenue Trend</div>
+                <div style="height:250px"><canvas id="chart-revenue-trend"></canvas></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-body">
+                <div class="section-header">Payment Methods</div>
+                <div style="height:250px"><canvas id="chart-payments"></canvas></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Products & AI Insight Row -->
+          <div class="dash-grid">
+            <div class="card">
+              <div class="card-body">
+                <div class="section-header">Top 5 Best-Selling Products</div>
+                <div class="data-table-wrap">
+                  <table class="data-table">
+                    <thead>
+                      <tr><th>Rank</th><th>Product</th><th>Units</th><th>Revenue</th></tr>
+                    </thead>
+                    <tbody id="report-top-products-tbody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div class="card" id="ai-insight-card" style="border: 1px solid var(--brand);">
+              <div class="card-body">
+                <div class="section-header" style="display:flex; justify-content:space-between">
+                  <span>✨ AI Business Insight</span>
+                  <button class="btn btn-ghost btn-sm" onclick="generateAIInsight()" id="btn-regen-ai" style="padding:0">🔄</button>
+                </div>
+                <div id="ai-loading" style="display:none; text-align:center; padding:40px">
+                  <div class="spinner" style="margin-bottom:10px"></div>
+                  <div class="text-muted">Claude is analyzing your data...</div>
+                </div>
+                <div id="ai-content" style="font-size:14px; line-height:1.6; color:var(--text-secondary)">
+                  Click "Generate Insight" to get an AI analysis of your business performance.
+                </div>
+                <div id="ai-footer" style="margin-top:20px; display:none; border-top:1px solid var(--border); padding-top:10px">
+                  <div style="display:flex; justify-content:space-between; align-items:center">
+                    <span style="font-size:11px; color:var(--text-muted)">Generated by Claude AI</span>
+                    <div style="display:flex; gap:8px">
+                      <button class="btn btn-ghost btn-sm" onclick="copyAIReport()">📋 Copy</button>
+                    </div>
+                  </div>
+                </div>
+                <div id="ai-empty" style="margin-top:15px">
+                  <button class="btn btn-primary btn-full btn-sm" onclick="generateAIInsight()">Generate AI Report</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
 
