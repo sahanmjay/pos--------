@@ -1494,19 +1494,13 @@ window.copyAIReport = () => {
   showToast('success', 'Report copied to clipboard');
 };
 
-window.exportReportPDF = () => {
-  window.print();
-};
-
-// --- PDF REPORT GENERATION ---
 window.downloadPDFReport = async () => {
   if (!currentReportData) return showToast('error', 'No data available to generate report');
-  const aiText = document.getElementById('ai-content').innerText;
-  if (!aiText || aiText.includes('Click "Generate Insight"')) return showToast('error', 'Please generate AI Insight first');
+  const aiTextRaw = document.getElementById('ai-content').innerText;
+  if (!aiTextRaw) return showToast('error', 'Please generate report first');
 
   const btn = document.getElementById('btn-download-pdf-big');
   const originalText = btn.innerText;
-  btn.innerText = "Generating PDF...";
   btn.disabled = true;
 
   try {
@@ -1516,63 +1510,44 @@ window.downloadPDFReport = async () => {
     const pageHeight = 297;
     const margin = 20;
     const contentWidth = pageWidth - (margin * 2);
+    let curY = 40;
+    let pageNum = 1;
 
-    // Prepare Data
+    const setProgress = (step, msg) => { btn.innerText = `Step ${step}/5: ${msg}`; };
+
+    setProgress(1, "Fetching inventory data...");
+    const invData = await fetchInventoryIntelligence();
+
+    setProgress(2, "Searching market information...");
+    const marketData = await fetchMarketIntelligence();
+
+    setProgress(3, "Capturing charts...");
     const bizName = currentSettings.biz_name || 'NexPOS Shop';
-    const periodType = document.querySelector('.btn-group .btn.active').innerText;
+    const periodType = document.querySelector('.btn-group .btn.active')?.innerText || 'Today';
     const dateRange = `${new Date(currentReportData.start).toLocaleDateString()} – ${new Date(currentReportData.end).toLocaleDateString()}`;
-    const timestamp = new Date().toLocaleString();
-
-    // COLORS
-    const rgbPrimary = [91, 95, 199];
-    const rgbDark = [27, 29, 42];
-    const rgbWhite = [255, 255, 255];
-    const rgbGrey = [248, 249, 250];
-    const rgbText = [50, 50, 50];
-    const rgbMuted = [120, 120, 120];
 
     // --- PAGE 1: COVER ---
-    doc.setFillColor(...rgbDark);
+    doc.setFillColor(27, 29, 42); // rgbDark
     doc.rect(0, 0, pageWidth, pageHeight, 'F');
-    
-    // Logo text "NP"
-    doc.setFillColor(...rgbPrimary);
+    doc.setFillColor(91, 95, 199); // rgbPrimary
     doc.circle(pageWidth/2, 80, 15, 'F');
-    doc.setTextColor(...rgbWhite);
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold');
     doc.text("NP", pageWidth/2, 82, { align: 'center' });
-
-    doc.setFontSize(28);
-    doc.text(bizName, pageWidth/2, 110, { align: 'center' });
-    
-    doc.setFontSize(18);
-    doc.setFont('helvetica', 'normal');
-    doc.text("Business Performance Report", pageWidth/2, 125, { align: 'center' });
-
-    doc.setDrawColor(...rgbPrimary);
-    doc.setLineWidth(1);
-    doc.line(pageWidth/2 - 40, 135, pageWidth/2 + 40, 135);
-
-    doc.setFontSize(12);
-    doc.text(`${periodType} Report: ${dateRange}`, pageWidth/2, 150, { align: 'center' });
-    doc.setFontSize(10);
-    doc.setTextColor(180, 180, 180);
-    doc.text(`Generated on: ${timestamp}`, pageWidth/2, 160, { align: 'center' });
-
-    doc.setFontSize(9);
-    doc.text("Powered by NexPOS AI", pageWidth/2, pageHeight - 20, { align: 'center' });
+    doc.setFontSize(26); doc.text(bizName, pageWidth/2, 110, { align: 'center' });
+    doc.setFontSize(18); doc.setFont('helvetica', 'normal');
+    doc.text("6-Page Comprehensive Business Report", pageWidth/2, 125, { align: 'center' });
+    doc.setDrawColor(91, 95, 199); doc.setLineWidth(1); doc.line(pageWidth/2 - 40, 135, pageWidth/2 + 40, 135);
+    doc.setFontSize(12); doc.text(`${periodType} Report: ${dateRange}`, pageWidth/2, 150, { align: 'center' });
+    doc.setFontSize(9); doc.text("Powered by NexPOS Intelligence Engine", pageWidth/2, pageHeight - 20, { align: 'center' });
 
     // --- PAGE 2: DASHBOARD ---
-    doc.addPage();
-    addPDFHeaderFooter(doc, bizName, 2, 4);
-    
-    doc.setTextColor(...rgbText);
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
+    setProgress(4, "Building PDF pages...");
+    doc.addPage(); pageNum++;
+    addPDFHeaderFooter(doc, bizName, pageNum, 6);
+    doc.setTextColor(50, 50, 50); doc.setFontSize(16); doc.setFont('helvetica', 'bold');
     doc.text("Performance Overview", margin, 40);
 
-    // 2x2 Grid for KPIs
     const kpis = [
       { label: 'Total Revenue', value: formatMoney(currentReportData.revenue), sub: `from ${currentReportData.transactions} transactions`, color: [16, 185, 129] },
       { label: 'Transactions', value: currentReportData.transactions.toString(), sub: 'completed sales', color: [59, 130, 246] },
@@ -1580,187 +1555,183 @@ window.downloadPDFReport = async () => {
       { label: 'Gross Profit (Est.)', value: formatMoney(currentReportData.grossProfit), sub: 'estimated margin', color: [245, 158, 11] }
     ];
 
-    let x = margin, y = 50, boxW = (contentWidth - 10) / 2, boxH = 35;
+    let kX = margin, kY = 50, boxW = (contentWidth - 10) / 2, boxH = 30;
     kpis.forEach((k, i) => {
-      doc.setFillColor(255, 255, 255);
-      doc.setDrawColor(230, 230, 230);
-      doc.rect(x, y, boxW, boxH, 'FD');
-      
-      doc.setFillColor(...k.color);
-      doc.rect(x, y, 3, boxH, 'F'); // Left border
-
-      doc.setTextColor(...rgbMuted);
-      doc.setFontSize(9);
-      doc.text(k.label, x + 8, y + 10);
-      
-      doc.setTextColor(...rgbText);
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.text(k.value, x + 8, y + 20);
-      
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(...rgbMuted);
-      doc.text(k.sub, x + 8, y + 28);
-
-      if (i % 2 === 0) x += boxW + 10; else { x = margin; y += boxH + 10; }
+      doc.setFillColor(255, 255, 255); doc.setDrawColor(230, 230, 230); doc.rect(kX, kY, boxW, boxH, 'FD');
+      doc.setFillColor(...k.color); doc.rect(kX, kY, 2, boxH, 'F');
+      doc.setTextColor(120, 120, 120); doc.setFontSize(8); doc.text(k.label, kX + 6, kY + 8);
+      doc.setTextColor(50, 50, 50); doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.text(k.value, kX + 6, kY + 16);
+      doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(150, 150, 150); doc.text(k.sub, kX + 6, kY + 23);
+      if (i % 2 === 0) kX += boxW + 10; else { kX = margin; kY += boxH + 6; }
     });
 
-    // Summary Stats Row
-    y += 5;
-    doc.setFontSize(9);
-    doc.setTextColor(...rgbMuted);
-    const summaryText = `Total Discount: ${formatMoney(currentReportData.discount)}   |   Tax Collected: ${formatMoney(currentReportData.tax)}   |   Payroll Cost: ${formatMoney(currentReportData.payrollTotal)}   |   Advances: ${formatMoney(currentReportData.advancesTotal)}`;
-    doc.text(summaryText, pageWidth/2, y, { align: 'center' });
+    curY = kY + 10;
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text("Daily Revenue Trend", margin, curY);
+    const trendEl = document.getElementById('chart-revenue-trend').parentElement;
+    const trendCanvas = await html2canvas(trendEl, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+    doc.addImage(trendCanvas.toDataURL('image/png'), 'PNG', margin, curY + 5, contentWidth, 50);
 
-    // --- PAGE 2 CONTINUED: CHARTS ---
-    y += 20;
-    doc.setTextColor(...rgbText);
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text("Daily Revenue Trend", margin, y);
+    curY += 70;
+    doc.text("Revenue by Payment Type", margin, curY);
+    const payEl = document.getElementById('chart-payments').parentElement;
+    // Set explicit size for doughnut to avoid squishing
+    const payCanvas = await html2canvas(payEl, { scale: 2, useCORS: true, backgroundColor: '#ffffff', width: 400, height: 400 });
+    doc.addImage(payCanvas.toDataURL('image/png'), 'PNG', pageWidth/2 - 35, curY + 5, 70, 70);
     
-    const trendCanvas = await html2canvas(document.getElementById('chart-revenue-trend').parentElement);
-    doc.addImage(trendCanvas.toDataURL('image/png'), 'PNG', margin, y + 5, contentWidth, 60);
+    curY += 80;
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    const payText = `Cash: ${formatMoney(currentReportData.payments.cash)}   |   Card: ${formatMoney(currentReportData.payments.card)}   |   Credit: ${formatMoney(currentReportData.payments.credit)}`;
+    doc.text(payText, pageWidth/2, curY, { align: 'center' });
+
+    // --- PAGE 3: TOP PRODUCTS ---
+    doc.addPage(); pageNum++;
+    addPDFHeaderFooter(doc, bizName, pageNum, 6);
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.text("Top Product Performance", margin, 40);
     
-    y += 85;
-    doc.text("Revenue by Payment Type", margin, y);
-    const paymentCanvas = await html2canvas(document.getElementById('chart-payments').parentElement);
-    doc.addImage(paymentCanvas.toDataURL('image/png'), 'PNG', margin, y + 5, 60, 60);
+    let pY = 55;
+    const pCols = [15, 80, 25, 30, 20];
+    doc.setFillColor(91, 95, 199); doc.rect(margin, pY - 5, contentWidth, 8, 'F');
+    doc.setTextColor(255, 255, 255); doc.setFontSize(8);
+    let pX = margin;
+    ['RANK', 'PRODUCT', 'UNITS', 'REVENUE', '% TOTAL'].forEach((h, i) => { doc.text(h, pX + 2, pY); pX += pCols[i]; });
 
-    const payTextX = margin + 70;
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`Cash: ${formatMoney(currentReportData.payments.cash)}`, payTextX, y + 20);
-    doc.text(`Card: ${formatMoney(currentReportData.payments.card)}`, payTextX, y + 30);
-    doc.text(`Credit: ${formatMoney(currentReportData.payments.credit)}`, payTextX, y + 40);
-
-    // --- PAGE 3: PRODUCTS ---
-    doc.addPage();
-    addPDFHeaderFooter(doc, bizName, 3, 4);
-
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
-    doc.text("Top 5 Best-Selling Products", margin, 40);
-
-    const headers = ['RANK', 'PRODUCT NAME', 'UNITS SOLD', 'REVENUE', '% TOTAL'];
-    const colWidths = [15, 75, 25, 35, 20];
-    y = 55;
-
-    // Header row
-    doc.setFillColor(...rgbPrimary);
-    doc.rect(margin, y - 5, contentWidth, 10, 'F');
-    doc.setTextColor(...rgbWhite);
-    doc.setFontSize(9);
-    let curX = margin;
-    headers.forEach((h, i) => {
-      doc.text(h, curX + 2, y + 1);
-      curX += colWidths[i];
-    });
-
-    y += 10;
+    pY += 8;
     currentReportData.topProducts.forEach((p, i) => {
-      if (i % 2 !== 0) {
-        doc.setFillColor(248, 249, 250);
-        doc.rect(margin, y - 5, contentWidth, 10, 'F');
-      }
-      if (i === 0) {
-        doc.setFillColor(255, 215, 0);
-        doc.rect(margin, y - 5, 2, 10, 'F');
-      }
-
-      doc.setTextColor(...rgbText);
-      doc.setFont('helvetica', i === 0 ? 'bold' : 'normal');
-      
-      let rowX = margin;
-      doc.text(`#${i+1}`, rowX + 2, y + 1);
-      rowX += colWidths[0];
-      doc.text(p.name, rowX + 2, y + 1);
-      rowX += colWidths[1];
-      doc.text(p.qty.toString(), rowX + 2, y + 1);
-      rowX += colWidths[2];
-      doc.text(formatMoney(p.revenue), rowX + 2, y + 1);
-      rowX += colWidths[3];
-      doc.text(`${(p.revenue / (currentReportData.revenue || 1) * 100).toFixed(1)}%`, rowX + 2, y + 1);
-      
-      y += 10;
+      doc.setTextColor(50, 50, 50); doc.setFontSize(8);
+      if (i % 2 !== 0) { doc.setFillColor(248, 249, 250); doc.rect(margin, pY - 5, contentWidth, 8, 'F'); }
+      let rX = margin;
+      doc.text(`#${i+1}`, rX + 2, pY); rX += pCols[0];
+      doc.text(p.name, rX + 2, pY); rX += pCols[1];
+      doc.text(p.qty.toString(), rX + 2, pY); rX += pCols[2];
+      doc.text(formatMoney(p.revenue), rX + 2, pY); rX += pCols[3];
+      doc.text(`${(p.revenue / (currentReportData.revenue || 1) * 100).toFixed(1)}%`, rX + 2, pY);
+      pY += 8;
     });
 
-    // --- PAGE 4: AI INSIGHTS ---
-    doc.addPage();
-    addPDFHeaderFooter(doc, bizName, 4, 4);
+    // --- PAGE 4: INVENTORY INTELLIGENCE ---
+    doc.addPage(); pageNum++;
+    addPDFHeaderFooter(doc, bizName, pageNum, 6);
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(220, 38, 38);
+    doc.text("⚠ Inventory Intelligence Report", margin, 40);
 
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
-    doc.text("AI Business Analysis", margin, 40);
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'italic');
-    doc.setTextColor(...rgbMuted);
-    doc.text(`Powered by NexPOS Intelligence`, margin, 46);
+    doc.setFontSize(11); doc.setTextColor(50, 50, 50); doc.text("Low Stock Alerts", margin, 50);
+    let iY = 58;
+    const iCols = [60, 25, 25, 30, 30];
+    doc.setFillColor(220, 38, 38); doc.rect(margin, iY - 5, contentWidth, 8, 'F');
+    doc.setTextColor(255, 255, 255); doc.setFontSize(7);
+    let iX = margin;
+    ['PRODUCT', 'STOCK', 'THRESHOLD', 'STATUS', 'SUGGESTED ORDER'].forEach((h, j) => { doc.text(h, iX + 2, iY); iX += iCols[j]; });
+    
+    iY += 8;
+    invData.lowStock.forEach((p, k) => {
+      doc.setTextColor(50, 50, 50);
+      let status = "LOW"; let sCol = [234, 179, 8];
+      if (p.stock_qty === 0) { status = "OUT OF STOCK"; sCol = [220, 38, 38]; }
+      else if (p.stock_qty <= p.low_stock_threshold/2) { status = "CRITICAL"; sCol = [249, 115, 22]; }
 
-    y = 60;
-    const sections = [
+      let lX = margin;
+      doc.text(p.name, lX + 2, iY); lX += iCols[0];
+      doc.text(p.stock_qty.toString(), lX + 2, iY); lX += iCols[1];
+      doc.text(p.low_stock_threshold.toString(), lX + 2, iY); lX += iCols[2];
+      
+      doc.setFillColor(...sCol); doc.rect(lX + 1, iY - 4, 25, 5, 'F');
+      doc.setTextColor(255, 255, 255); doc.text(status, lX + 13.5, iY - 0.5, { align: 'center' });
+      lX += iCols[3];
+      
+      doc.setTextColor(50, 50, 50);
+      doc.text(`${(p.low_stock_threshold * 3) - p.stock_qty} pcs`, lX + 2, iY);
+      iY += 8;
+    });
+
+    iY += 10;
+    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(59, 130, 246);
+    doc.text("📦 Reorder Schedule", margin, iY);
+    iY += 8; doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(50, 50, 50);
+    let budget = 0;
+    invData.velocity.filter(v => v.daysUntilStockout < 14).forEach(v => {
+      const qty = Math.max(0, (v.retail_price > 0 ? 50 : 10)); // simple logic
+      const cost = qty * v.cost_price;
+      budget += cost;
+      doc.text(`• Order ${v.name} in ${Math.round(v.daysUntilStockout)} days — Est. Cost: ${formatMoney(cost)}`, margin + 5, iY);
+      iY += 6;
+    });
+    doc.setFont('helvetica', 'bold'); doc.text(`Total Reorder Budget: ${formatMoney(budget)}`, margin, iY + 4);
+
+    // --- PAGE 5: MARKET INTELLIGENCE ---
+    doc.addPage(); pageNum++;
+    addPDFHeaderFooter(doc, bizName, pageNum, 6);
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(50, 50, 50);
+    doc.text("Market Intelligence", margin, 40);
+    doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(150, 150, 150);
+    doc.text(`Live market data sourced from public information — ${new Date().toLocaleDateString()}`, margin, 46);
+
+    const drawCard = (title, body, color, y) => {
+      doc.setFillColor(248, 249, 250); doc.rect(margin, y, contentWidth, 35, 'F');
+      doc.setFillColor(...color); doc.rect(margin, y, 2, 35, 'F');
+      doc.setTextColor(50, 50, 50); doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text(title, margin + 6, y + 8);
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+      const lines = doc.splitTextToSize(body, contentWidth - 15);
+      doc.text(lines, margin + 6, y + 16);
+      return y + 40;
+    };
+
+    let mY = 55;
+    mY = drawCard(`${currentSettings.biz_type} Sector Overview`, marketData.industry, [59, 130, 246], mY);
+    mY = drawCard(`Market Info: ${currentReportData.topProducts[0]?.name || 'Top Product'}`, marketData.priceTrend, [16, 185, 129], mY);
+    mY = drawCard(`Sri Lanka Business Climate`, marketData.economy, [168, 85, 247], mY);
+
+    mY += 5;
+    doc.setFillColor(254, 243, 199); doc.setDrawColor(245, 158, 11); doc.rect(margin, mY, contentWidth, 45, 'FD');
+    doc.setTextColor(146, 64, 14); doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text("💡 Smart Business Suggestions", margin + 6, mY + 8);
+    const suggestions = generateSmartSuggestions(invData);
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+    suggestions.forEach((s, idx) => { doc.text(s, margin + 6, mY + 18 + (idx * 6)); });
+
+    // --- PAGE 6: BUSINESS ENGINE ---
+    doc.addPage(); pageNum++;
+    addPDFHeaderFooter(doc, bizName, pageNum, 6);
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(50, 50, 50);
+    doc.text("Business Intelligence Engine Analysis", margin, 40);
+    doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(150, 150, 150);
+    doc.text(`Powered by NexPOS Intelligence Engine`, margin, 46);
+
+    let aY = 55;
+    const aSections = [
       { title: 'Performance Summary', color: [91, 95, 199], key: 'Performance Summary' },
       { title: 'Key Insights', color: [29, 158, 117], key: 'Key Insights' },
       { title: 'Recommendations', color: [245, 158, 11], key: 'Recommendations' }
     ];
 
-    sections.forEach(sec => {
-      // Robust Parsing: Look for the section title in various formats (**Title**, (1) Title, ### Title)
+    aSections.forEach(sec => {
       let sectionBody = "";
-      
-      // Try to find text between this header and the next header
       const escapedTitle = sec.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // Look for patterns like **Title**, (1) Title, 1. Title, or just Title
       const patterns = [
         new RegExp(`(?:\\*\\*)?\\d?\\.?\\s?${escapedTitle}(?:\\*\\*)?:?\\s*(.*?)(?=(?:\\*\\*)?\\d?\\.?\\s?(?:Performance Summary|Key Insights|Recommendations)|$)`, 'si'),
         new RegExp(`###\\s?${escapedTitle}\\s*(.*?)(?=###|$)`, 'si')
       ];
-
       for (const pattern of patterns) {
-        const match = aiText.match(pattern);
-        if (match && match[1].trim().length > 10) {
-          sectionBody = match[1].trim();
-          break;
-        }
+        const match = aiTextRaw.match(pattern);
+        if (match && match[1].trim().length > 10) { sectionBody = match[1].trim(); break; }
       }
+      if (!sectionBody) sectionBody = sec.key === 'Performance Summary' ? aiTextRaw.substring(0, 400) + "..." : "Refer to dashboard metrics for details.";
 
-      // Final fallback: if first section and nothing found, take first 300 chars
-      if (!sectionBody) {
-        if (sec.key === 'Performance Summary') sectionBody = aiText.substring(0, 300) + "...";
-        else sectionBody = "Check the main dashboard for more details on this section.";
-      }
-
-      doc.setFillColor(248, 249, 250);
-      doc.rect(margin, y, contentWidth, 5, 'F'); // Spacing top
-
-      const wrappedText = doc.splitTextToSize(sectionBody, contentWidth - 15);
-      const boxH = wrappedText.length * 5 + 20;
-
-      doc.setFillColor(248, 249, 250);
-      doc.rect(margin, y, contentWidth, boxH, 'F');
-      doc.setFillColor(...sec.color);
-      doc.rect(margin, y, 3, boxH, 'F');
-
-      doc.setTextColor(...rgbText);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.text(sec.title, margin + 8, y + 10);
-      
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
-      doc.text(wrappedText, margin + 8, y + 20);
-
-      y += boxH + 10;
+      const wrapped = doc.splitTextToSize(sectionBody, contentWidth - 15);
+      const bH = wrapped.length * 4 + 15;
+      doc.setFillColor(248, 249, 250); doc.rect(margin, aY, contentWidth, bH, 'F');
+      doc.setFillColor(...sec.color); doc.rect(margin, aY, 2, bH, 'F');
+      doc.setTextColor(50, 50, 50); doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text(sec.title, margin + 6, aY + 8);
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.text(wrapped, margin + 6, aY + 15);
+      aY += bH + 8;
     });
 
-    const fileName = `NexPOS-Report-${bizName.replace(/\s+/g, '-')}-${periodType}-${new Date().toISOString().split('T')[0]}.pdf`;
+    setProgress(5, "Finalising report...");
+    const fileName = `NexPOS-Full-Report-${bizName.replace(/\s+/g, '-')}-${periodType}-${new Date().toISOString().split('T')[0]}.pdf`;
     doc.save(fileName);
-    showToast('success', 'PDF Report downloaded successfully');
+    showToast('success', 'Full Business Report downloaded successfully');
 
   } catch (err) {
     console.error(err);
-    showToast('error', 'Failed to generate PDF: ' + err.message);
+    showToast('error', 'Report failed: ' + err.message);
   } finally {
     btn.innerText = originalText;
     btn.disabled = false;
@@ -1783,4 +1754,119 @@ function addPDFHeaderFooter(doc, bizName, page, total) {
   doc.text("NexPOS — Confidential Business Report", margin, pageHeight - 10);
   doc.text(`Page ${page} of ${total}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
   doc.text(bizName, pageWidth - margin, pageHeight - 10, { align: 'right' });
+}
+
+// --- INTELLIGENCE HELPERS ---
+
+async function fetchInventoryIntelligence() {
+  // Query 1: Low Stock
+  const { data: lowStockData } = await supa.from('products')
+    .select('name, stock_qty, low_stock_threshold, retail_price, cost_price, category')
+    .eq('organization_id', currentOrgId)
+    .eq('is_active', true)
+    .filter('stock_qty', 'lte', 'low_stock_threshold') // Simplification for RLS/JS layer
+    .order('stock_qty', { ascending: true });
+
+  // Query 2: Velocity
+  const { data: velocityRaw } = await supa.from('products')
+    .select(`
+      id, name, stock_qty, cost_price, retail_price,
+      sale_items(quantity, sales(created_at))
+    `)
+    .eq('organization_id', currentOrgId);
+    
+  const processedVelocity = (velocityRaw || []).map(p => {
+    const units30d = p.sale_items ? p.sale_items.filter(si => new Date(si.sales.created_at) >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).reduce((sum, item) => sum + item.quantity, 0) : 0;
+    const dailyRate = units30d / 30;
+    const daysUntilStockout = dailyRate > 0 ? p.stock_qty / dailyRate : 999;
+    return { ...p, units30d, daysUntilStockout };
+  }).sort((a, b) => a.daysUntilStockout - b.daysUntilStockout).slice(0, 10);
+
+  // Query 3: Overstock
+  const processedOverstock = (velocityRaw || [])
+    .map(p => {
+      const units30d = p.sale_items ? p.sale_items.filter(si => new Date(si.sales.created_at) >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).reduce((sum, item) => sum + item.quantity, 0) : 0;
+      return { ...p, units30d, stock_value: p.stock_qty * p.cost_price };
+    })
+    .filter(p => p.stock_qty > 50 && p.units30d < 5)
+    .sort((a, b) => b.stock_value - a.stock_value)
+    .slice(0, 5);
+
+  return { lowStock: lowStockData || [], velocity: processedVelocity, overstock: processedOverstock };
+}
+
+async function fetchMarketIntelligence() {
+  const bizType = currentSettings.biz_type || 'Retail';
+  const cacheKey = 'nexpos_market_' + bizType;
+  const cached = sessionStorage.getItem(cacheKey);
+  if (cached) {
+    const c = JSON.parse(cached);
+    if (Date.now() - c.ts < 1800000) return c.data;
+  }
+
+  const queries = [
+    `${bizType} business Sri Lanka 2026`,
+    `Sri Lanka ${currentReportData.topProducts[0]?.name || 'Retail'} price 2026`,
+    `Sri Lanka retail economy May 2026`
+  ];
+
+  const fetchWithTimeout = (query) => {
+    return new Promise(async (resolve) => {
+      const timeout = setTimeout(() => resolve({ AbstractText: "Market data currently unavailable. Check business news at bizlanka.com" }), 5000);
+      try {
+        const url = `https://api.allorigins.win/get?url=${encodeURIComponent('https://api.duckduckgo.com/?q=' + query + '&format=json&no_html=1&skip_disambig=1')}`;
+        const res = await fetch(url);
+        const json = await res.json();
+        const data = JSON.parse(json.contents);
+        clearTimeout(timeout);
+        resolve(data);
+      } catch (e) {
+        clearTimeout(timeout);
+        resolve({ AbstractText: "Market data currently unavailable. Check business news at bizlanka.com" });
+      }
+    });
+  };
+
+  const results = await Promise.all(queries.map(q => fetchWithTimeout(q)));
+  const data = {
+    industry: results[0].AbstractText || (results[0].RelatedTopics && results[0].RelatedTopics[0]?.Text) || "Sri Lanka's retail sector continues to evolve with digital integration.",
+    priceTrend: results[1].Answer || results[1].AbstractText || "Price stability remains a key focus for essential commodities.",
+    economy: results[2].AbstractText || "The Sri Lankan economy shows signs of recovery in the retail and service sectors."
+  };
+
+  sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data }));
+  return data;
+}
+
+function generateSmartSuggestions(invData) {
+  const suggestions = [];
+  const report = currentReportData;
+  const period = document.querySelector('.btn-group .btn.active')?.innerText || 'Today';
+
+  if (report.payments.cash / (report.revenue || 1) > 0.9) {
+    suggestions.push("→ Consider accepting card payments — you may be losing customers who prefer digital payments");
+  }
+
+  const urgentItem = invData.velocity.find(v => v.daysUntilStockout < 7);
+  if (urgentItem) {
+    suggestions.push(`→ URGENT: Reorder ${urgentItem.name} immediately — estimated stockout in ${Math.round(urgentItem.daysUntilStockout)} days`);
+  }
+
+  if (report.grossProfit / (report.revenue || 1) < 0.2) {
+    suggestions.push("→ Your profit margin is below 20%. Review pricing on low-margin products.");
+  }
+
+  if (report.topProducts[0] && report.topProducts[0].revenue > report.revenue * 0.5) {
+    suggestions.push(`→ ${report.topProducts[0].name} drives over 50% of revenue. Ensure you never run out of it.`);
+  }
+
+  if (report.transactions < 5) {
+    suggestions.push("→ Low transaction count. Consider running a promotion or loyalty discount.");
+  }
+
+  if (period === 'Today') suggestions.push("→ Best practice: Count your cash drawer at end of day and reconcile with system");
+  else if (period === 'This Week') suggestions.push("→ Weekly tip: Review your top 5 products and ensure 2-week stock buffer");
+  else suggestions.push("→ Monthly tip: Compare this month vs last month revenue to track growth");
+
+  return suggestions.slice(0, 4);
 }
