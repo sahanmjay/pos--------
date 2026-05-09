@@ -164,6 +164,7 @@ const SCREENS = {
   'attendance': 'HR / Attendance',
   'advances': 'HR / Advances',
   'payroll': 'HR / Payroll',
+  'user-mgmt': 'HR / Staff Management',
   'settings': 'System / Settings'
 };
 
@@ -776,7 +777,29 @@ window.saveCategory = async () => {
 };
 window.renderUsersTable = async () => {
   const users = await db.users.toArray();
-  document.getElementById('users-tbody').innerHTML = users.map(u => `<tr><td class="fw-600">${u.username}</td><td>${u.display_name}</td><td>${u.role}</td><td><span class="badge ${u.is_active?'badge-active':'badge-inactive'}">${u.is_active?'Active':'Inactive'}</span></td><td><button class="btn btn-ghost btn-sm btn-icon" onclick="openUserForm(${u.id})">✏️</button></td></tr>`).join('');
+  const today = new Date().toISOString().split('T')[0];
+  const attendance = await db.attendance.where('date').equals(today).toArray();
+  const attMap = {};
+  attendance.forEach(a => attMap[a.user_id] = a.status);
+
+  document.getElementById('users-tbody').innerHTML = users.map(u => {
+    const workStatus = attMap[u.id] || 'Clocked Out';
+    const statusClass = workStatus === 'Clocked In' ? 'badge-active' : 'badge-inactive';
+    
+    return `
+    <tr>
+      <td class="fw-600">${u.username}</td>
+      <td>${u.display_name}</td>
+      <td>${u.role}</td>
+      <td>
+        <span class="badge ${u.is_active?'badge-active':'badge-inactive'}" style="margin-right:5px">${u.is_active?'Active':'Inactive'}</span>
+        <span class="badge ${statusClass}">${workStatus}</span>
+      </td>
+      <td>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="openUserForm(${u.id})" title="Edit User">✏️</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5" style="text-align:center">No users found</td></tr>';
 };
 window.openUserForm = async (id = null) => {
   let u = { username:'', password:'', display_name:'', role:'Counter', is_active:true, hourly_rate:0, ot_rate:0 };
