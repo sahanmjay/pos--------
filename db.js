@@ -120,6 +120,8 @@ class SupaTable {
 }
 
 const db = {
+  get currentOrgId() { return currentOrgId; },
+  set currentOrgId(val) { currentOrgId = val; },
   organizations: new SupaTable('organizations'),
   products:      new SupaTable('products'),
   categories:    new SupaTable('categories'),

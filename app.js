@@ -110,7 +110,7 @@ async function doLogin() {
   }
   
   currentUser = user;
-  currentOrgId = user.organization_id;
+  db.currentOrgId = user.organization_id;
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').classList.add('visible');
   
@@ -1997,21 +1997,55 @@ window.loadSettingsForm = () => {
 };
 
 window.saveSettings = async () => {
-  const settings = {
-    biz_name: document.getElementById('set-biz-name').value,
-    biz_type: document.getElementById('set-biz-type').value,
-    currency: document.getElementById('set-currency').value,
-    tax_rate: document.getElementById('set-tax').value,
-    phone: document.getElementById('set-phone').value,
-    address: document.getElementById('set-address').value
-  };
-
-  for (const [key, value] of Object.entries(settings)) {
-    await db.settings.put({ key, value });
+  const btn = event?.target;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
   }
 
-  showToast('success', 'Settings saved successfully');
-  await loadSettings(); // Refresh UI and global currentSettings
+  try {
+    const settings = {
+      biz_name: document.getElementById('set-biz-name').value,
+      biz_type: document.getElementById('set-biz-type').value,
+      currency: document.getElementById('set-currency').value,
+      tax_rate: document.getElementById('set-tax').value,
+      phone: document.getElementById('set-phone').value,
+      address: document.getElementById('set-address').value
+    };
+
+    const existing = await db.settings.toArray();
+    for (const [key, value] of Object.entries(settings)) {
+      const row = existing.find(s => s.key === key);
+      if (row) {
+        await db.settings.update(row.id, { value });
+      } else {
+        await db.settings.add({ key, value });
+      }
+    }
+
+    // Also update the organization record if it exists
+    if (db.currentOrgId) {
+      await db.organizations.update(db.currentOrgId, {
+        name: settings.biz_name,
+        business_type: settings.biz_type,
+        currency: settings.currency,
+        tax_rate: parseFloat(settings.tax_rate) || 0,
+        phone: settings.phone,
+        address: settings.address
+      });
+    }
+
+    await loadSettings(); // Refresh UI and global currentSettings
+    showToast('success', 'Settings saved successfully');
+  } catch (err) {
+    console.error('Save Settings Error:', err);
+    showToast('error', 'Failed to save settings: ' + err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Save Settings';
+    }
+  }
 };
 
 function renderBizTemplates() {
