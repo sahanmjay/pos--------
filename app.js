@@ -3,6 +3,7 @@ let cart = [];
 let cartCustomerId = 1;
 let currentSettings = {};
 let posCategory = '';
+let currentReceiptData = null;
 
 // --- INIT & UTILS ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -573,6 +574,7 @@ function showReceipt(sale, items, change, tendered) {
     <div style="text-align:center;margin-top:15px;border-top:1px dashed #ccc;padding-top:10px">Thank you for your business!</div>
   `;
   
+  currentReceiptData = { sale, items };
   document.getElementById('receipt-body').innerHTML = html;
   document.getElementById('receipt-overlay').classList.add('open');
 }
@@ -583,7 +585,11 @@ window.printReceipt = () => {
   window.print();
 };
 
-window.shareReceiptWhatsApp = (sale, items) => {
+window.shareReceiptWhatsApp = (sale = null, items = null) => {
+  if (!sale) sale = currentReceiptData?.sale;
+  if (!items) items = currentReceiptData?.items;
+  if (!sale || !items) return showToast('error', 'No receipt data found');
+
   let text = `*${currentSettings.biz_name || 'NexPOS Shop'}*\n`;
   text += '--------------------------------\n';
   text += `Receipt: #${sale.id}\n`;
@@ -599,9 +605,21 @@ window.shareReceiptWhatsApp = (sale, items) => {
   text += '--------------------------------\n';
   text += 'Thank you for shopping with us!';
 
-  const phone = '94'; // Default SL prefix
-  const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
-  window.open(url, '_blank');
+  // Try to find customer phone
+  let phone = '';
+  db.customers.get(sale.customer_id).then(customer => {
+    if (customer && customer.phone) {
+      phone = customer.phone.replace(/\D/g, '');
+      // Ensure local format for SL if no country code
+      if (phone.length === 9 && phone.startsWith('7')) phone = '94' + phone;
+      else if (phone.length === 10 && phone.startsWith('0')) phone = '94' + phone.substring(1);
+    }
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+  }).catch(() => {
+    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+  });
 };
 
 window.printViaRawBT = (sale, items) => {
