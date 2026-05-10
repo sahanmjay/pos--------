@@ -21,6 +21,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Physical Barcode Scanner Listener
   initPhysicalScanner();
+  
+  await loadSettings();
 });
 
 async function syncOfflineSales() {
@@ -55,8 +57,12 @@ async function loadSettings() {
   
   const bName = document.getElementById('topbar-biz-name');
   const bType = document.getElementById('topbar-biz-type');
-  if(bName) bName.textContent = currentSettings.biz_name || 'NexPOS';
+  const bizTitle = currentSettings.biz_name || 'NexPOS';
+  
+  if(bName) bName.textContent = bizTitle;
   if(bType) bType.textContent = currentSettings.biz_type || 'Point of Sale';
+  
+  document.title = `${bizTitle} — Universal Point of Sale`;
 }
 
 function formatMoney(num) {
@@ -1978,6 +1984,95 @@ function generateSmartSuggestions(invData) {
 
   return suggestions.slice(0, 4);
 }
+
+// --- SETTINGS LOGIC ---
+window.loadSettingsForm = () => {
+  document.getElementById('set-biz-name').value = currentSettings.biz_name || '';
+  document.getElementById('set-biz-type').value = currentSettings.biz_type || 'Retail Shop';
+  document.getElementById('set-currency').value = currentSettings.currency || 'Rs.';
+  document.getElementById('set-tax').value = currentSettings.tax_rate || '0';
+  document.getElementById('set-phone').value = currentSettings.phone || '';
+  document.getElementById('set-address').value = currentSettings.address || '';
+  renderBizTemplates();
+};
+
+window.saveSettings = async () => {
+  const settings = {
+    biz_name: document.getElementById('set-biz-name').value,
+    biz_type: document.getElementById('set-biz-type').value,
+    currency: document.getElementById('set-currency').value,
+    tax_rate: document.getElementById('set-tax').value,
+    phone: document.getElementById('set-phone').value,
+    address: document.getElementById('set-address').value
+  };
+
+  for (const [key, value] of Object.entries(settings)) {
+    await db.settings.put({ key, value });
+  }
+
+  showToast('success', 'Settings saved successfully');
+  await loadSettings(); // Refresh UI and global currentSettings
+};
+
+function renderBizTemplates() {
+  const templates = [
+    { name: 'Grocery', icon: '🛒', products: ['Fresh Milk 1L', 'Cheddar Cheese', 'Basmati Rice 5kg', 'Red Lentils 1kg', 'Chili Powder 250g', 'Turmeric Powder', 'Sugar 1kg', 'Tea Leaves 250g'] },
+    { name: 'Bookshop', icon: '📚', products: ['A4 Paper Bundle', 'Blue Pen (Box)', 'Pencil Pack', 'Exercise Book', 'Geometry Box', 'Calculator'] },
+    { name: 'Meat Shop', icon: '🥩', products: ['Fresh Chicken 1kg', 'Beef Curry Cut', 'Pork Ribs', 'Mutton', 'Chicken Sausages', 'Beef Meatballs'] },
+    { name: 'Retail', icon: '👕', products: ['Cotton T-Shirt', 'Denim Jeans', 'Leather Belt', 'Socks (Pair)', 'Baseball Cap', 'Canvas Shoes'] }
+  ];
+
+  document.getElementById('biz-templates').innerHTML = templates.map(t => `
+    <div class="quick-action" onclick="applyTemplate('${t.name}')">
+      <div class="qa-icon">${t.icon}</div>
+      <div>
+        <div class="qa-text">${t.name} Template</div>
+        <div class="qa-sub">Load sample products</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+window.applyTemplate = async (name) => {
+  if (!confirm(`Apply ${name} template? This will add sample products to your inventory.`)) return;
+  
+  const templates = {
+    'Grocery': [
+      { name: 'Fresh Milk 1L', category: 'Dairy', price: 320, cost: 280, barcode: '880123' },
+      { name: 'Cheddar Cheese', category: 'Dairy', price: 850, cost: 720, barcode: '880124' },
+      { name: 'Basmati Rice 5kg', category: 'Grains', price: 1250, cost: 1100, barcode: '880125' },
+      { name: 'Red Lentils 1kg', category: 'Grains', price: 480, cost: 420, barcode: '880126' },
+      { name: 'Chili Powder 250g', category: 'Spices', price: 280, cost: 210, barcode: '880127' }
+    ],
+    'Bookshop': [
+      { name: 'A4 Paper Bundle', category: 'Stationery', price: 1450, cost: 1200, barcode: '770123' },
+      { name: 'Blue Pen (Box)', category: 'Stationery', price: 450, cost: 350, barcode: '770124' },
+      { name: 'Exercise Book', category: 'Stationery', price: 120, cost: 90, barcode: '770125' }
+    ],
+    'Meat Shop': [
+      { name: 'Fresh Chicken 1kg', category: 'Poultry', price: 1150, cost: 950, barcode: '660123' },
+      { name: 'Beef Curry Cut', category: 'Meat', price: 2400, cost: 2100, barcode: '660124' }
+    ]
+  };
+
+  const prods = templates[name] || templates['Grocery'];
+  
+  // Add category if not exists
+  const existingCats = await db.categories.toArray();
+  for (const p of prods) {
+    if (!existingCats.find(c => c.name === p.category)) {
+      await db.categories.add({ name: p.category });
+      existingCats.push({ name: p.category });
+    }
+    await db.products.add({
+      name: p.name, sku: p.barcode, barcode: p.barcode, category: p.category,
+      retail_price: p.price, cost_price: p.cost, stock_qty: 100,
+      low_stock_threshold: 10, is_active: true, created_at: new Date().toISOString()
+    });
+  }
+
+  showToast('success', `${name} template applied! Check your inventory.`);
+};
 
 // --- MOBILE & SCANNING HELPERS ---
 
