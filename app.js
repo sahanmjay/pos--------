@@ -734,9 +734,9 @@ window.shareReceiptPDF = async () => {
 
     if (signError) throw signError;
 
-    // 7. Redirect to WhatsApp with Secure Link
+    // 7. Redirect to WhatsApp with Secure Link and Deletion Warning
     showToast('success', 'Secure Bill Created! Opening WhatsApp...');
-    const message = encodeURIComponent(`*${bizName} - Digital Receipt*\n\nHello! Thank you for your purchase. You can view your official bill securely using the link below (valid for 24 hours):\n\n🔗 ${signedData.signedUrl}`);
+    const message = encodeURIComponent(`*${bizName} - Digital Receipt*\n\nHello! Thank you for your purchase. You can view your official bill securely using the link below (valid for 24 hours):\n\n🔗 ${signedData.signedUrl}\n\n⚠️ *Important:* Please download or save this bill now. For your privacy, this link and the file will be automatically deleted from our system in 7 days.\n\nHave a great day!`);
     
     setTimeout(() => {
         window.open(`https://wa.me/${finalPhone}?text=${message}`, '_blank');
