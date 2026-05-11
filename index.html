@@ -442,30 +442,43 @@
             </div>
           </div>
 
-          <!-- Products & AI Insight Row -->
-          <div class="dash-grid">
+            <!-- HR & Operations -->
             <div class="card">
               <div class="card-body">
-                <div class="section-header">Top 5 Best-Selling Products</div>
-                <div class="data-table-wrap">
-                  <table class="data-table">
-                    <thead>
-                      <tr><th>Rank</th><th>Product</th><th>Units</th><th>Revenue</th></tr>
-                    </thead>
-                    <tbody id="report-top-products-tbody"></tbody>
-                  </table>
+                <div class="section-header">👥 HR & Operations Insight</div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px">
+                  <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
+                    <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Hours Worked</div>
+                    <div style="font-size:18px; font-weight:700" id="kpi-hr-hours">0h</div>
+                  </div>
+                  <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
+                    <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Payroll Cost</div>
+                    <div style="font-size:18px; font-weight:700" id="kpi-hr-cost">0.00</div>
+                  </div>
+                </div>
+                <div id="hr-insight-text" style="margin-top:12px; font-size:13px; color:var(--text-secondary)"></div>
+              </div>
+            </div>
+
+            <!-- Inventory Intelligence -->
+            <div class="card">
+              <div class="card-body">
+                <div class="section-header">📦 Inventory Intelligence</div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px">
+                  <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
+                    <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Total Stock Value</div>
+                    <div style="font-size:18px; font-weight:700" id="kpi-inv-value">0.00</div>
+                  </div>
+                  <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
+                    <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Low Stock Items</div>
+                    <div style="font-size:18px; font-weight:700; color:var(--danger)" id="kpi-inv-low">0</div>
+                  </div>
                 </div>
               </div>
             </div>
-            <div class="card" id="ai-insight-card" style="border: 1px solid var(--brand);">
-              <div class="card-body">
-                <div class="section-header" style="display:flex; justify-content:space-between">
-                  <span>✨ AI Business Insight</span>
-                  <button class="btn btn-ghost btn-sm" onclick="generateAIInsight()" id="btn-regen-ai" style="padding:0">🔄</button>
-                </div>
-                <div id="ai-loading" style="display:none; text-align:center; padding:40px">
-                  <div class="spinner" style="margin-bottom:10px"></div>
-                  <div class="text-muted">AI is analyzing your data...</div>
+          </div>
+
+          <div class="dash-grid">
                 </div>
                 <!-- Hidden div for PDF generation -->
                 <div id="ai-content" style="display:none"></div>

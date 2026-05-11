@@ -1510,13 +1510,24 @@ window.renderAIReports = async () => {
   const data = await fetchReportData(start, end);
   currentReportData = data;
   
-  // Update KPIs
+  // 1. Update Sales KPIs
   document.getElementById('kpi-revenue').textContent = formatMoney(data.revenue);
   document.getElementById('kpi-transactions').textContent = data.transactions;
   document.getElementById('kpi-avg-value').textContent = formatMoney(data.revenue / (data.transactions || 1));
   document.getElementById('kpi-profit').textContent = formatMoney(data.grossProfit);
   
-  // Update Top Products
+  // 2. Update HR & Operations
+  document.getElementById('kpi-hr-hours').textContent = `${data.totalHours.toFixed(1)}h`;
+  document.getElementById('kpi-hr-cost').textContent = formatMoney(data.payrollTotal + data.advancesTotal);
+  document.getElementById('hr-insight-text').textContent = data.totalHours > 0 
+    ? `Active operations detected with ${data.totalHours.toFixed(0)} labor hours recorded.`
+    : "No attendance data recorded for this period.";
+
+  // 3. Update Inventory Intelligence
+  document.getElementById('kpi-inv-value').textContent = formatMoney(data.totalInventoryValue);
+  document.getElementById('kpi-inv-low').textContent = data.lowStockCount;
+
+  // 4. Update Top Products
   document.getElementById('report-top-products-tbody').innerHTML = data.topProducts.map((p, i) => `
     <tr>
       <td>#${i+1}</td>
@@ -1526,13 +1537,13 @@ window.renderAIReports = async () => {
     </tr>
   `).join('') || '<tr><td colspan="4" style="text-align:center">No sales data</td></tr>';
 
-  // Render Charts
+  // 5. Render Charts
   renderReportCharts(data);
   
   // Reset AI box
-  document.getElementById('ai-content').innerHTML = 'Click "Generate Insight" to analyze this data.';
-  document.getElementById('ai-footer').style.display = 'none';
   document.getElementById('ai-empty').style.display = 'block';
+  document.getElementById('ai-content').style.display = 'none';
+  document.getElementById('ai-footer').style.display = 'none';
 };
 
 async function fetchReportData(start, end) {
@@ -1589,8 +1600,27 @@ async function fetchReportData(start, end) {
   const periodAdvances = advances.filter(a => a.date >= start.split('T')[0] && a.date <= end.split('T')[0]);
   const advancesTotal = periodAdvances.reduce((sum, a) => sum + a.amount, 0);
 
+  // 7. HR Attendance (Total Hours)
+  const attendance = await db.attendance.toArray();
+  const periodAtt = attendance.filter(a => a.date >= start.split('T')[0] && a.date <= end.split('T')[0]);
+  let totalHours = 0;
+  periodAtt.forEach(a => {
+    if (a.clock_in && a.clock_out) {
+      totalHours += (new Date(a.clock_out) - new Date(a.clock_in)) / (1000 * 60 * 60);
+    }
+  });
+
+  // 8. Full Inventory Valuation
+  let totalInventoryValue = 0;
+  let lowStockCount = 0;
+  allProducts.forEach(p => {
+    totalInventoryValue += (p.stock_qty || 0) * (p.retail_price || 0);
+    if ((p.stock_qty || 0) <= (p.low_stock_threshold || 0)) lowStockCount++;
+  });
+
   return {
-    revenue, transactions, discount, tax, payments, dailyRev, topProducts, grossProfit, payrollTotal, advancesTotal, start, end
+    revenue, transactions, discount, tax, payments, dailyRev, topProducts, grossProfit, 
+    payrollTotal, advancesTotal, totalHours, totalInventoryValue, lowStockCount, start, end
   };
 }
 
@@ -1850,13 +1880,19 @@ window.downloadPDFReport = async () => {
     // --- PAGE 4: INVENTORY INTELLIGENCE ---
     doc.addPage(); pageNum++;
     addPDFHeaderFooter(doc, bizName, pageNum, 6);
-    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(220, 38, 38);
-    doc.text("⚠ Inventory Intelligence Report", margin, 40);
+    
+    // Branding Header
+    doc.setFillColor(59, 130, 246); doc.rect(margin, 35, 2, 10, 'F');
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(31, 41, 55);
+    doc.text("Inventory Intelligence Report", margin + 6, 42);
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(107, 114, 128);
+    doc.text(`Proprietary Analysis for ${bizName}`, margin + 6, 47);
 
-    doc.setFontSize(11); doc.setTextColor(50, 50, 50); doc.text("Low Stock Alerts", margin, 50);
-    let iY = 58;
+    doc.setFontSize(11); doc.setTextColor(55, 65, 81); doc.setFont('helvetica', 'bold');
+    doc.text("Low Stock Alerts", margin, 58);
+    let iY = 66;
     const iCols = [60, 25, 25, 30, 30];
-    doc.setFillColor(220, 38, 38); doc.rect(margin, iY - 5, contentWidth, 8, 'F');
+    doc.setFillColor(71, 85, 105); doc.rect(margin, iY - 5, contentWidth, 8, 'F');
     doc.setTextColor(255, 255, 255); doc.setFontSize(7);
     let iX = margin;
     ['PRODUCT', 'STOCK', 'THRESHOLD', 'STATUS', 'SUGGESTED ORDER'].forEach((h, j) => { doc.text(h, iX + 2, iY); iX += iCols[j]; });
@@ -1884,14 +1920,14 @@ window.downloadPDFReport = async () => {
 
     iY += 10;
     doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(59, 130, 246);
-    doc.text("📦 Reorder Schedule", margin, iY);
+    doc.text("Reorder Schedule", margin, iY);
     iY += 8; doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(50, 50, 50);
     let budget = 0;
     invData.velocity.filter(v => v.daysUntilStockout < 14).forEach(v => {
       const qty = Math.max(0, (v.retail_price > 0 ? 50 : 10)); // simple logic
       const cost = qty * v.cost_price;
       budget += cost;
-      doc.text(`• Order ${v.name} in ${Math.round(v.daysUntilStockout)} days — Est. Cost: ${formatMoney(cost)}`, margin + 5, iY);
+      doc.text(`[ ] Order ${v.name} in ${Math.round(v.daysUntilStockout)} days - Est. Cost: ${formatMoney(cost)}`, margin + 5, iY);
       iY += 6;
     });
     doc.setFont('helvetica', 'bold'); doc.text(`Total Reorder Budget: ${formatMoney(budget)}`, margin, iY + 4);
@@ -1899,10 +1935,10 @@ window.downloadPDFReport = async () => {
     // --- PAGE 5: MARKET INTELLIGENCE ---
     doc.addPage(); pageNum++;
     addPDFHeaderFooter(doc, bizName, pageNum, 6);
-    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(50, 50, 50);
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold'); doc.setTextColor(31, 41, 55);
     doc.text("Market Intelligence", margin, 40);
     doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(150, 150, 150);
-    doc.text(`Live market data sourced from public information — ${new Date().toLocaleDateString()}`, margin, 46);
+    doc.text(`Live market data sourced from public information - ${new Date().toLocaleDateString()}`, margin, 46);
 
     const drawCard = (title, body, color, y) => {
       doc.setFillColor(248, 249, 250); doc.rect(margin, y, contentWidth, 35, 'F');
@@ -1921,10 +1957,10 @@ window.downloadPDFReport = async () => {
 
     mY += 5;
     doc.setFillColor(254, 243, 199); doc.setDrawColor(245, 158, 11); doc.rect(margin, mY, contentWidth, 45, 'FD');
-    doc.setTextColor(146, 64, 14); doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text("💡 Smart Business Suggestions", margin + 6, mY + 8);
+    doc.setTextColor(146, 64, 14); doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text("Smart Business Suggestions", margin + 6, mY + 8);
     const suggestions = generateSmartSuggestions(invData);
     doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-    suggestions.forEach((s, idx) => { doc.text(s, margin + 6, mY + 18 + (idx * 6)); });
+    suggestions.forEach((s, idx) => { doc.text("- " + s, margin + 6, mY + 18 + (idx * 6)); });
 
     // --- PAGE 6: BUSINESS ENGINE ---
     doc.addPage(); pageNum++;
