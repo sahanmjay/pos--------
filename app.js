@@ -656,45 +656,88 @@ window.printReceipt = () => {
   window.print();
 };
 
-window.shareReceiptWhatsApp = async (sale = null, items = null) => {
-  if (!sale) sale = currentReceiptData?.sale;
-  if (!items) items = currentReceiptData?.items;
-  if (!sale || !items) return showToast('error', 'No receipt data found');
+window.shareReceiptPDF = async () => {
+  const receiptBody = document.getElementById('receipt-body');
+  if (!receiptBody || !currentReceiptData) return showToast('error', 'No receipt data found');
 
-  let text = `*${currentSettings.biz_name || 'NexPOS Shop'}*\n`;
-  text += '--------------------------------\n';
-  text += `Receipt: #${sale.id}\n`;
-  text += `Date: ${new Date(sale.date).toLocaleString()}\n`;
-  text += '--------------------------------\n';
-  items.forEach(i => {
-    text += `${i.product_name}\n`;
-    text += `  ${i.quantity} x ${formatMoney(i.unit_price)} = ${formatMoney(i.line_total)}\n`;
-  });
-  text += '--------------------------------\n';
-  text += `*TOTAL: ${formatMoney(sale.total_amount)}*\n`;
-  text += `Payment: ${sale.payment_type.toUpperCase()}\n`;
-  text += '--------------------------------\n';
-  text += 'Thank you for shopping with us!';
+  showToast('info', 'Generating PDF receipt...');
 
-  let phone = '';
   try {
-    const customer = await db.customers.get(sale.customer_id);
-    if (customer && customer.phone) {
-      phone = customer.phone.replace(/\D/g, '');
-      if (phone.length === 9 && phone.startsWith('7')) phone = '94' + phone;
-      else if (phone.length === 10 && phone.startsWith('0')) phone = '94' + phone.substring(1);
+    const { jsPDF } = window.jspdf;
+    
+    // 1. Create a high-quality capture container
+    const tempDiv = document.createElement('div');
+    tempDiv.style.position = 'absolute';
+    tempDiv.style.left = '-9999px';
+    tempDiv.style.width = '350px'; // standard receipt width
+    tempDiv.style.background = 'white';
+    tempDiv.style.padding = '30px';
+    tempDiv.style.color = 'black';
+    tempDiv.style.fontFamily = '"DM Mono", monospace';
+    tempDiv.style.lineHeight = '1.4';
+    tempDiv.innerHTML = receiptBody.innerHTML;
+    document.body.appendChild(tempDiv);
+
+    // 2. Capture to Canvas
+    const canvas = await html2canvas(tempDiv, {
+      scale: 3, // Very high quality
+      logging: false,
+      useCORS: true,
+      backgroundColor: '#ffffff'
+    });
+    document.body.removeChild(tempDiv);
+
+    // 3. Create PDF
+    const imgData = canvas.toDataURL('image/jpeg', 0.9);
+    const pdfW = 80; // 80mm width
+    const pdfH = (canvas.height * pdfW) / canvas.width;
+    
+    const pdf = new jsPDF({
+      orientation: 'p',
+      unit: 'mm',
+      format: [pdfW, pdfH]
+    });
+    
+    pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH);
+    const pdfBlob = pdf.output('blob');
+    const fileName = `Receipt_${currentReceiptData.sale.id}.pdf`;
+    const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+
+    // 4. Share File
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({
+        files: [file],
+        title: 'Receipt #' + currentReceiptData.sale.id,
+        text: 'Thank you for your business!'
+      });
+      showToast('success', 'Receipt shared successfully');
+    } else {
+      // Fallback for Desktop: Download + Open WhatsApp
+      pdf.save(fileName);
+      showToast('info', 'PDF downloaded. Opening WhatsApp...');
+      
+      let phone = '';
+      try {
+        const customer = await db.customers.get(currentReceiptData.sale.customer_id);
+        if (customer && customer.phone) {
+          phone = customer.phone.replace(/\D/g, '');
+          if (phone.length === 9 && phone.startsWith('7')) phone = '94' + phone;
+          else if (phone.length === 10 && phone.startsWith('0')) phone = '94' + phone.substring(1);
+        }
+      } catch(e) {}
+      
+      const inputPhone = prompt("PDF saved. Enter WhatsApp number to send to:", phone);
+      if (inputPhone) {
+        let finalPhone = inputPhone.replace(/\D/g, '');
+        if (finalPhone.length === 9 && finalPhone.startsWith('7')) finalPhone = '94' + finalPhone;
+        else if (finalPhone.length === 10 && finalPhone.startsWith('0')) finalPhone = '94' + finalPhone.substring(1);
+        window.open(`https://wa.me/${finalPhone}`, '_blank');
+      }
     }
-  } catch(e) {}
-
-  const inputPhone = prompt("Enter WhatsApp number (e.g. 0771234567):", phone);
-  if (inputPhone === null) return; // Cancelled
-
-  let finalPhone = inputPhone.replace(/\D/g, '');
-  if (finalPhone.length === 9 && finalPhone.startsWith('7')) finalPhone = '94' + finalPhone;
-  else if (finalPhone.length === 10 && finalPhone.startsWith('0')) finalPhone = '94' + finalPhone.substring(1);
-
-  const url = `https://wa.me/${finalPhone}?text=${encodeURIComponent(text)}`;
-  window.open(url, '_blank');
+  } catch (err) {
+    console.error('PDF Generation Error:', err);
+    showToast('error', 'Could not generate PDF. Try printing instead.');
+  }
 };
 
 window.printViaRawBT = (sale, items) => {
