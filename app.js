@@ -1485,22 +1485,7 @@ window.refreshReport = () => renderAIReports();
 
 window.renderAIReports = async () => {
   await loadSettings(); 
-  
-  // Populate Customer Filter if empty
-  const custFilter = document.getElementById('report-customer-filter');
-  if (custFilter.options.length <= 1) {
-    const allCusts = await db.customers.toArray();
-    allCusts.sort((a,b) => a.name.localeCompare(b.name)).forEach(c => {
-        const opt = document.createElement('option');
-        opt.value = c.id;
-        opt.textContent = `${c.name} (${c.phone})`;
-        custFilter.appendChild(opt);
-    });
-  }
-
   const period = document.querySelector('.btn-group .btn.active').id.replace('btn-period-', '');
-  const customerId = document.getElementById('report-customer-filter').value;
-  
   let start, end;
   const now = new Date();
   
@@ -1522,7 +1507,7 @@ window.renderAIReports = async () => {
     end = new Date(end).toISOString();
   }
 
-  const data = await fetchReportData(start, end, customerId);
+  const data = await fetchReportData(start, end);
   currentReportData = data;
   
   // 1. Update Sales KPIs
@@ -1561,16 +1546,10 @@ window.renderAIReports = async () => {
   document.getElementById('ai-footer').style.display = 'none';
 };
 
-async function fetchReportData(start, end, customerId = null) {
+async function fetchReportData(start, end) {
   // 1. Sales Data
   let sales = await db.sales.toArray();
-  sales = sales.filter(s => s.date >= start && s.date <= end);
-  
-  if (customerId) {
-    sales = sales.filter(s => s.customer_id == customerId);
-  }
-  
-  const periodSales = sales;
+  const periodSales = sales.filter(s => s.date >= start && s.date <= end);
   
   const revenue = periodSales.reduce((sum, s) => sum + s.total_amount, 0);
   const transactions = periodSales.length;
@@ -1786,11 +1765,10 @@ window.copyAIReport = () => {
 
 window.downloadPDFReport = async () => {
   if (!currentReportData) return showToast('error', 'No data available to generate report');
-  const aiTextRaw = document.getElementById('ai-content').innerText;
-  if (!aiTextRaw) return showToast('error', 'Please generate report first');
+  const aiTextRaw = document.getElementById('ai-content').innerText || "AI analysis not generated for this report. Please use the 'Generate AI Report' button for deep insights.";
 
-  const btn = document.getElementById('btn-download-pdf-big');
-  const originalText = btn.innerText;
+  const btn = document.getElementById('btn-download-pdf');
+  const originalText = btn.innerHTML;
   btn.disabled = true;
 
   try {
