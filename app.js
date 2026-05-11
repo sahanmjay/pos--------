@@ -678,7 +678,7 @@ window.shareReceiptPDF = async () => {
   if (finalPhone.length === 9 && finalPhone.startsWith('7')) finalPhone = '94' + finalPhone;
   else if (finalPhone.length === 10 && finalPhone.startsWith('0')) finalPhone = '94' + finalPhone.substring(1);
 
-  showToast('info', 'Generating PDF...');
+  showToast('info', 'Generating and uploading digital receipt...');
 
   try {
     const { jsPDF } = window.jspdf;
@@ -698,25 +698,41 @@ window.shareReceiptPDF = async () => {
     const canvas = await html2canvas(tempDiv, { scale: 3, useCORS: true, backgroundColor: '#ffffff' });
     document.body.removeChild(tempDiv);
 
-    // 3. Create and Download PDF
+    // 3. Create PDF Blob
     const imgData = canvas.toDataURL('image/jpeg', 0.9);
     const pdfW = 80;
     const pdfH = (canvas.height * pdfW) / canvas.width;
     const pdf = new jsPDF({ unit: 'mm', format: [pdfW, pdfH] });
     pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH);
-    
-    const fileName = `Receipt_${currentReceiptData.sale.id}.pdf`;
-    pdf.save(fileName); // Download file
+    const pdfBlob = pdf.output('blob');
 
-    // 4. Go directly to Chat
-    showToast('success', 'PDF Saved! Opening WhatsApp...');
+    // 4. Upload to Supabase Storage (Bucket must be 'receipts' and PUBLIC)
+    const fileName = `receipt_${currentReceiptData.sale.id}_${Date.now()}.pdf`;
+    const { data: uploadData, error: uploadError } = await supa.storage
+      .from('receipts')
+      .upload(fileName, pdfBlob, { contentType: 'application/pdf', upsert: true });
+
+    if (uploadError) throw uploadError;
+
+    // 5. Get Public URL
+    const { data: { publicUrl } } = supa.storage.from('receipts').getPublicUrl(fileName);
+
+    // 6. Redirect to WhatsApp with Link
+    showToast('success', 'Bill Link Created! Opening WhatsApp...');
+    const bizName = currentSettings.biz_name || 'Our Shop';
+    const message = encodeURIComponent(`*${bizName} - Digital Receipt*\n\nHello! Thank you for your purchase. You can view and download your official PDF bill using the link below:\n\n🔗 ${publicUrl}\n\nHave a great day!`);
+    
     setTimeout(() => {
-        window.open(`https://wa.me/${finalPhone}?text=Hello, please find your receipt #${currentReceiptData.sale.id} attached below.`, '_blank');
-    }, 800);
+        window.open(`https://wa.me/${finalPhone}?text=${message}`, '_blank');
+    }, 500);
 
   } catch (err) {
-    console.error('PDF Error:', err);
-    showToast('error', 'Failed to generate PDF');
+    console.error('PDF/Upload Error:', err);
+    showToast('error', 'Cloud upload failed. Downloading PDF locally instead.');
+    // Fallback: Just download the file if cloud upload fails (e.g. bucket not created)
+    const fileName = `Receipt_${currentReceiptData.sale.id}.pdf`;
+    const pdf = new jsPDF(); // Simple fallback
+    pdf.save(fileName);
   }
 };
 
