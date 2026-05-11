@@ -678,7 +678,7 @@ window.shareReceiptPDF = async () => {
   if (finalPhone.length === 9 && finalPhone.startsWith('7')) finalPhone = '94' + finalPhone;
   else if (finalPhone.length === 10 && finalPhone.startsWith('0')) finalPhone = '94' + finalPhone.substring(1);
 
-  showToast('info', 'Generating and uploading digital receipt...');
+  showToast('info', 'Processing digital receipt...');
 
   try {
     const { jsPDF } = window.jspdf;
@@ -706,33 +706,40 @@ window.shareReceiptPDF = async () => {
     pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH);
     const pdfBlob = pdf.output('blob');
 
-    // 4. Upload to Supabase Storage (Bucket must be 'receipts' and PUBLIC)
+    // 4. Try Upload to Supabase Storage
     const fileName = `receipt_${currentReceiptData.sale.id}_${Date.now()}.pdf`;
     const { data: uploadData, error: uploadError } = await supa.storage
       .from('receipts')
       .upload(fileName, pdfBlob, { contentType: 'application/pdf', upsert: true });
 
-    if (uploadError) throw uploadError;
-
-    // 5. Get Public URL
-    const { data: { publicUrl } } = supa.storage.from('receipts').getPublicUrl(fileName);
-
-    // 6. Redirect to WhatsApp with Link
-    showToast('success', 'Bill Link Created! Opening WhatsApp...');
     const bizName = currentSettings.biz_name || 'Our Shop';
-    const message = encodeURIComponent(`*${bizName} - Digital Receipt*\n\nHello! Thank you for your purchase. You can view and download your official PDF bill using the link below:\n\n🔗 ${publicUrl}\n\nHave a great day!`);
+
+    if (uploadError) {
+        console.warn('Storage Upload Failed:', uploadError.message);
+        // FALLBACK: Download PDF + Open WhatsApp anyway
+        const downloadName = `Receipt_${currentReceiptData.sale.id}.pdf`;
+        pdf.save(downloadName);
+        showToast('info', 'Cloud full/missing. PDF downloaded. Opening WhatsApp...');
+        
+        const message = encodeURIComponent(`*${bizName}*\nHello! Please find your digital receipt for Order #${currentReceiptData.sale.id} attached below.`);
+        setTimeout(() => {
+            window.open(`https://wa.me/${finalPhone}?text=${message}`, '_blank');
+        }, 1000);
+        return;
+    }
+
+    // 5. Get Public URL and Share Link
+    const { data: { publicUrl } } = supa.storage.from('receipts').getPublicUrl(fileName);
+    showToast('success', 'Receipt Link Created! Opening WhatsApp...');
+    const message = encodeURIComponent(`*${bizName} - Digital Receipt*\n\nHello! Thank you for your purchase. You can view your official bill here:\n\n🔗 ${publicUrl}`);
     
     setTimeout(() => {
         window.open(`https://wa.me/${finalPhone}?text=${message}`, '_blank');
     }, 500);
 
   } catch (err) {
-    console.error('PDF/Upload Error:', err);
-    showToast('error', 'Cloud upload failed. Downloading PDF locally instead.');
-    // Fallback: Just download the file if cloud upload fails (e.g. bucket not created)
-    const fileName = `Receipt_${currentReceiptData.sale.id}.pdf`;
-    const pdf = new jsPDF(); // Simple fallback
-    pdf.save(fileName);
+    console.error('PDF Error:', err);
+    showToast('error', 'Critical error generating receipt.');
   }
 };
 
