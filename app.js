@@ -77,6 +77,32 @@ function showToast(type, msg) {
   t.innerHTML = `<span style="font-size:16px">${icons[type]}</span><span>${msg}</span>`;
   c.appendChild(t);
   setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateX(20px)'; t.style.transition='all 300ms'; setTimeout(()=>t.remove(),300); }, 3000);
+// --- SECURITY & AUDIT ---
+async function logSecurityEvent(type, details = {}) {
+  try {
+    const event = {
+      event_type: type,
+      user_id: currentUser?.id || null,
+      username: currentUser?.username || 'anonymous',
+      details: JSON.stringify(details),
+      timestamp: new Date().toISOString(),
+      organization_id: db.currentOrgId || null,
+      ip: 'browser-client' // Client-side tracking limitation
+    };
+    await db.audit_log.add(event);
+  } catch (err) {
+    console.warn('Audit Log Failed:', err);
+  }
+}
+
+let loginAttempts = JSON.parse(localStorage.getItem('pos_login_attempts') || '{"count":0, "lockoutUntil":0}');
+
+function checkLoginLockout() {
+  if (loginAttempts.lockoutUntil > Date.now()) {
+    const mins = Math.ceil((loginAttempts.lockoutUntil - Date.now()) / 60000);
+    return `Account locked. Try again in ${mins} minute(s).`;
+  }
+  return null;
 }
 
 // --- NAVIGATION & AUTH ---
@@ -85,7 +111,15 @@ async function doLogin() {
   const p = document.getElementById('login-pass').value;
   const err = document.getElementById('login-error');
   
-  // Query users directly (bypass org filter since we don't know the org yet)
+  // 1. Check Lockout
+  const lockoutMsg = checkLoginLockout();
+  if (lockoutMsg) {
+    err.textContent = lockoutMsg;
+    err.style.display = 'block';
+    return;
+  }
+
+  // 2. Query users
   const { data: user, error: dbError } = await supa
     .from('users')
     .select('*')
@@ -95,22 +129,35 @@ async function doLogin() {
     .limit(1)
     .maybeSingle();
   
-  // Show detailed error if Supabase returned one (RLS, network, etc.)
   if(dbError) {
-    console.error('Login DB Error:', dbError);
-    err.textContent = "Database error: " + dbError.message + " (Code: " + dbError.code + ")";
+    console.error('Login Error'); // Sanitized log
+    err.textContent = "Security verification failed. Please try again.";
     err.style.display = 'block';
     return;
   }
     
   if(!user) {
+    loginAttempts.count++;
+    if (loginAttempts.count >= 5) {
+      loginAttempts.lockoutUntil = Date.now() + (15 * 60 * 1000); // 15 min lock
+      loginAttempts.count = 0;
+    }
+    localStorage.setItem('pos_login_attempts', JSON.stringify(loginAttempts));
+    
+    await logSecurityEvent('LOGIN_FAILURE', { username: u });
     err.textContent = "Invalid username or password";
     err.style.display = 'block';
     return;
   }
+
+  // Reset on success
+  loginAttempts = { count: 0, lockoutUntil: 0 };
+  localStorage.setItem('pos_login_attempts', JSON.stringify(loginAttempts));
   
   currentUser = user;
   db.currentOrgId = user.organization_id;
+  await logSecurityEvent('LOGIN_SUCCESS');
+  
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').classList.add('visible');
   
@@ -333,14 +380,18 @@ async function renderPosGrid() {
   if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term) || (p.barcode||'').toLowerCase().includes(term));
   
   const grid = document.getElementById('pos-grid');
-  grid.innerHTML = products.map(p => `
-    <div class="pos-product-card ${p.stock_qty<=0?'out-of-stock':''}" onclick="addToCart(${p.id})">
-      <div class="pos-prod-icon">${getIcon(p.category)}</div>
-      <div class="pos-prod-name" title="${p.name}">${p.name}</div>
-      <div class="pos-prod-price">${formatMoney(p.retail_price)}</div>
-      <div class="pos-prod-stock">${p.stock_qty>0 ? p.stock_qty+' '+p.unit : 'Out of stock'}</div>
-    </div>
-  `).join('');
+  grid.innerHTML = products.map(p => {
+    const isLowStock = p.stock_qty > 0 && p.stock_qty <= (p.low_stock_threshold || 5);
+    return `
+      <div class="pos-product-card ${p.stock_qty<=0?'out-of-stock':''}" onclick="addToCart(${p.id})" style="position:relative">
+        ${isLowStock ? '<div style="position:absolute; top:5px; right:5px; background:var(--warning); color:white; font-size:9px; font-weight:800; padding:2px 6px; border-radius:10px; letter-spacing:0.5px">LOW STOCK</div>' : ''}
+        <div class="pos-prod-icon">${getIcon(p.category)}</div>
+        <div class="pos-prod-name" title="${p.name}">${p.name}</div>
+        <div class="pos-prod-price">${formatMoney(p.retail_price)}</div>
+        <div class="pos-prod-stock" style="${isLowStock?'color:var(--warning);font-weight:700':''}">${p.stock_qty>0 ? p.stock_qty+' '+p.unit : 'Out of stock'}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 async function addToCart(id) {
@@ -535,6 +586,8 @@ window.payNow = async (paymentType) => {
     renderCart(); updateCartCustomer(); renderPosGrid();
     showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?parseFloat(total+change):total);
     
+    await logSecurityEvent('SALE_COMPLETED', { sale_id: saleId, total: total, type: paymentType });
+
     // Close mobile cart
     document.querySelector('.pos-cart-wrap')?.classList.remove('active');
 
@@ -582,6 +635,16 @@ function showReceipt(sale, items, change, tendered) {
   
   currentReceiptData = { sale, items };
   document.getElementById('receipt-body').innerHTML = html;
+  
+  // Show "LOCKED" banner for past sales, hide for new ones
+  const banner = document.getElementById('receipt-status-banner');
+  if (banner) {
+    // If sale.id exists and was recently created, it might be the same sale.
+    // But usually history view is where we want the banner.
+    // Let's show it if sale.status === 'completed' or if we are viewing from history
+    banner.style.display = (sale.id) ? 'block' : 'none';
+  }
+
   document.getElementById('receipt-overlay').classList.add('open');
 }
 
@@ -2036,6 +2099,7 @@ window.saveSettings = async () => {
     }
 
     await loadSettings(); // Refresh UI and global currentSettings
+    await logSecurityEvent('SETTINGS_CHANGED', { settings });
     showToast('success', 'Settings saved successfully');
   } catch (err) {
     console.error('Save Settings Error:', err);
@@ -2217,3 +2281,97 @@ function initPhysicalScanner() {
     barcodeTimer = setTimeout(() => { barcodeBuffer = ''; }, 100);
   });
 }
+// --- SHIFT MANAGEMENT ---
+window.openShiftClose = async () => {
+  const denominations = [5000, 1000, 500, 100, 50, 20, 10, 5, 2, 1];
+  
+  // Calculate expected cash
+  const today = new Date().toISOString().split('T')[0];
+  const sales = await db.sales.toArray();
+  const todaySales = sales.filter(s => s.date.startsWith(today) && s.payment_type === 'cash');
+  const expectedCash = todaySales.reduce((sum, s) => sum + s.total_amount, 0);
+
+  let html = `
+    <div style="margin-bottom:20px; padding:15px; background:var(--brand-light); border-radius:var(--radius); border:1.5px solid var(--brand)">
+      <div style="display:flex; justify-content:space-between; align-items:center">
+        <span style="font-weight:700; color:var(--brand)">Expected Cash in Drawer:</span>
+        <span style="font-size:18px; font-weight:800; color:var(--brand)">${formatMoney(expectedCash)}</span>
+      </div>
+    </div>
+    
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px">
+      <div>
+        <div class="form-section-title">Denominations</div>
+        ${denominations.map(d => `
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px">
+            <span style="width:50px; font-weight:700">${d} x</span>
+            <input type="number" class="form-input denom-input" data-value="${d}" placeholder="0" oninput="updateDenomTotal()" style="width:80px">
+            <span class="denom-row-total" style="flex:1; text-align:right; color:var(--text-muted)">0.00</span>
+          </div>
+        `).join('')}
+      </div>
+      <div>
+        <div class="form-section-title">Summary</div>
+        <div style="background:var(--surface-2); padding:15px; border-radius:var(--radius)">
+          <div style="margin-bottom:10px">Total Counted: <span id="denom-total-counted" style="font-weight:700; float:right">0.00</span></div>
+          <div style="margin-bottom:10px">Expected: <span style="font-weight:700; float:right">${formatMoney(expectedCash)}</span></div>
+          <hr style="border:none; border-top:1px solid var(--border); margin:10px 0">
+          <div style="font-size:16px; font-weight:700">Variance: <span id="denom-variance" style="float:right">0.00</span></div>
+        </div>
+        <div class="form-group" style="margin-top:20px">
+          <label class="form-label">Notes / Discrepancy Reason</label>
+          <textarea class="form-textarea" id="shift-notes" placeholder="Optional notes..."></textarea>
+        </div>
+      </div>
+    </div>
+  `;
+
+  openModal('Shift Closure — Cash Reconciliation', html, `
+    <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitShiftClose(${expectedCash})">Complete Shift Close</button>
+  `, '800px');
+};
+
+window.updateDenomTotal = () => {
+  let total = 0;
+  document.querySelectorAll('.denom-input').forEach(input => {
+    const val = parseFloat(input.value) || 0;
+    const denom = parseFloat(input.dataset.value);
+    const rowTotal = val * denom;
+    total += rowTotal;
+    input.nextElementSibling.textContent = formatMoney(rowTotal);
+  });
+  
+  document.getElementById('denom-total-counted').textContent = formatMoney(total);
+  const expected = parseFloat(document.getElementById('denom-total-counted').parentElement.nextElementSibling.querySelector('span').textContent.replace(/[^\d.-]/g, '')) || 0;
+  const variance = total - expected;
+  const varEl = document.getElementById('denom-variance');
+  varEl.textContent = formatMoney(variance);
+  varEl.style.color = variance < 0 ? 'var(--danger)' : (variance > 0 ? 'var(--warning)' : 'var(--success)');
+};
+
+window.submitShiftClose = async (expected) => {
+  const counted = parseFloat(document.getElementById('denom-total-counted').textContent.replace(/[^\d.-]/g, ''));
+  const notes = document.getElementById('shift-notes').value;
+  
+  if (!confirm('Are you sure you want to finalize and close this shift?')) return;
+
+  try {
+    await db.pos_shifts.add({
+      cashier: currentUser.display_name,
+      expected_cash: expected,
+      actual_cash: counted,
+      variance: counted - expected,
+      notes: notes,
+      closed_at: new Date().toISOString(),
+      organization_id: db.currentOrgId
+    });
+
+    showToast('success', 'Shift closed and reconciled successfully');
+    closeModal();
+    // In a real app, we might force logout here or clear the session
+  } catch (err) {
+    showToast('error', 'Failed to save shift data');
+    console.error(err);
+  }
+};

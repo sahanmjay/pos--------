@@ -98,6 +98,7 @@
         <div class="nav-item" onclick="nav('attendance')"><span class="nav-icon">📅</span> Attendance</div>
         <div class="nav-item" onclick="nav('advances')"><span class="nav-icon">💸</span> Advances</div>
         <div class="nav-item" onclick="nav('payroll')" id="nav-payroll-item"><span class="nav-icon">💰</span> Payroll</div>
+        <div class="nav-item" onclick="openShiftClose()" id="nav-shift-close"><span class="nav-icon">🏁</span> Close Shift</div>
       </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section" id="nav-system">
@@ -521,11 +522,17 @@
 </div>
 
 <!-- RECEIPT MODAL -->
-<div class="modal-overlay" id="receipt-overlay" onclick="closeReceipt()">
-  <div class="modal" onclick="event.stopPropagation()" style="width:380px;max-height:90vh;overflow-y:auto">
-    <div class="modal-header"><span class="modal-title">Receipt</span><button class="modal-close" onclick="closeReceipt()">✕</button></div>
-    <div class="modal-body" id="receipt-body" style="font-family:var(--mono);font-size:12px"></div>
-    <div class="modal-footer" style="flex-wrap:wrap; gap:8px">
+  <div class="modal-overlay" id="receipt-overlay">
+    <div class="modal" style="width:420px">
+      <div class="modal-header">
+        <div class="modal-title">Receipt</div>
+        <button class="modal-close" onclick="closeReceipt()">✕</button>
+      </div>
+      <div id="receipt-status-banner" style="display:none; background:var(--surface-3); padding:8px; text-align:center; font-size:12px; font-weight:700; color:var(--text-secondary); border-bottom:1px solid var(--border)">
+        🔒 TRANSACTION LOCKED — RECORD FINALIZED
+      </div>
+      <div class="modal-body" id="receipt-body" style="font-family:var(--mono); font-size:13px; color:#333; line-height:1.4"></div>
+      <div class="modal-footer" style="flex-wrap:wrap; gap:8px">
       <button class="btn btn-primary btn-sm" onclick="printReceipt()">🖨️ Print</button>
       <button class="btn btn-secondary btn-sm" onclick="shareReceiptWhatsApp()">💬 WhatsApp</button>
       <button class="btn btn-secondary btn-sm" onclick="printViaRawBT()">🔌 Bluetooth</button>
