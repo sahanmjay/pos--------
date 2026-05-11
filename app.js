@@ -656,7 +656,7 @@ window.printReceipt = () => {
   window.print();
 };
 
-window.shareReceiptWhatsApp = (sale = null, items = null) => {
+window.shareReceiptWhatsApp = async (sale = null, items = null) => {
   if (!sale) sale = currentReceiptData?.sale;
   if (!items) items = currentReceiptData?.items;
   if (!sale || !items) return showToast('error', 'No receipt data found');
@@ -676,21 +676,25 @@ window.shareReceiptWhatsApp = (sale = null, items = null) => {
   text += '--------------------------------\n';
   text += 'Thank you for shopping with us!';
 
-  // Try to find customer phone
   let phone = '';
-  db.customers.get(sale.customer_id).then(customer => {
+  try {
+    const customer = await db.customers.get(sale.customer_id);
     if (customer && customer.phone) {
       phone = customer.phone.replace(/\D/g, '');
-      // Ensure local format for SL if no country code
       if (phone.length === 9 && phone.startsWith('7')) phone = '94' + phone;
       else if (phone.length === 10 && phone.startsWith('0')) phone = '94' + phone.substring(1);
     }
-    const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
-    window.open(url, '_blank');
-  }).catch(() => {
-    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
-    window.open(url, '_blank');
-  });
+  } catch(e) {}
+
+  const inputPhone = prompt("Enter WhatsApp number (e.g. 0771234567):", phone);
+  if (inputPhone === null) return; // Cancelled
+
+  let finalPhone = inputPhone.replace(/\D/g, '');
+  if (finalPhone.length === 9 && finalPhone.startsWith('7')) finalPhone = '94' + finalPhone;
+  else if (finalPhone.length === 10 && finalPhone.startsWith('0')) finalPhone = '94' + finalPhone.substring(1);
+
+  const url = `https://wa.me/${finalPhone}?text=${encodeURIComponent(text)}`;
+  window.open(url, '_blank');
 };
 
 window.printViaRawBT = (sale, items) => {
