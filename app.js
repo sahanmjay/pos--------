@@ -1484,8 +1484,23 @@ window.setReportPeriod = (period) => {
 window.refreshReport = () => renderAIReports();
 
 window.renderAIReports = async () => {
-  await loadSettings(); // Refresh settings to get latest API keys
+  await loadSettings(); 
+  
+  // Populate Customer Filter if empty
+  const custFilter = document.getElementById('report-customer-filter');
+  if (custFilter.options.length <= 1) {
+    const allCusts = await db.customers.toArray();
+    allCusts.sort((a,b) => a.name.localeCompare(b.name)).forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = `${c.name} (${c.phone})`;
+        custFilter.appendChild(opt);
+    });
+  }
+
   const period = document.querySelector('.btn-group .btn.active').id.replace('btn-period-', '');
+  const customerId = document.getElementById('report-customer-filter').value;
+  
   let start, end;
   const now = new Date();
   
@@ -1507,7 +1522,7 @@ window.renderAIReports = async () => {
     end = new Date(end).toISOString();
   }
 
-  const data = await fetchReportData(start, end);
+  const data = await fetchReportData(start, end, customerId);
   currentReportData = data;
   
   // 1. Update Sales KPIs
@@ -1546,10 +1561,16 @@ window.renderAIReports = async () => {
   document.getElementById('ai-footer').style.display = 'none';
 };
 
-async function fetchReportData(start, end) {
+async function fetchReportData(start, end, customerId = null) {
   // 1. Sales Data
-  const sales = await db.sales.toArray();
-  const periodSales = sales.filter(s => s.date >= start && s.date <= end);
+  let sales = await db.sales.toArray();
+  sales = sales.filter(s => s.date >= start && s.date <= end);
+  
+  if (customerId) {
+    sales = sales.filter(s => s.customer_id == customerId);
+  }
+  
+  const periodSales = sales;
   
   const revenue = periodSales.reduce((sum, s) => sum + s.total_amount, 0);
   const transactions = periodSales.length;

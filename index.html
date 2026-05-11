@@ -386,23 +386,34 @@
             </div>
           </div>
 
-          <!-- Period Selector -->
+          <!-- Period & Filter Selector -->
           <div class="card" style="margin-bottom:20px">
-            <div class="filter-bar">
+            <div class="filter-bar" style="flex-wrap:wrap; gap:15px">
               <div class="btn-group">
                 <button class="btn btn-ghost btn-sm active" id="btn-period-today" onclick="setReportPeriod('today')">Today</button>
                 <button class="btn btn-ghost btn-sm" id="btn-period-week" onclick="setReportPeriod('week')">This Week</button>
                 <button class="btn btn-ghost btn-sm" id="btn-period-month" onclick="setReportPeriod('month')">This Month</button>
-                <button class="btn btn-ghost btn-sm" id="btn-period-custom" onclick="setReportPeriod('custom')">Custom Range</button>
+                <button class="btn btn-ghost btn-sm" id="btn-period-custom" onclick="setReportPeriod('custom')">Custom</button>
               </div>
-              <div id="custom-range-inputs" style="display:none; gap:10px; align-items:center; margin-left:15px">
+              
+              <div class="topbar-divider"></div>
+              
+              <div style="display:flex; align-items:center; gap:8px">
+                <span class="text-muted" style="font-size:12px">Client:</span>
+                <select class="filter-select" id="report-customer-filter" onchange="renderAIReports()" style="min-width:180px">
+                  <option value="">All Clients</option>
+                </select>
+              </div>
+
+              <div id="custom-range-inputs" style="display:none; gap:10px; align-items:center;">
                 <input type="date" class="filter-select" id="report-start-date">
                 <span class="text-muted">to</span>
                 <input type="date" class="filter-select" id="report-end-date">
-                <button class="btn btn-primary btn-sm" onclick="setReportPeriod('custom')">Apply</button>
               </div>
+
               <div class="filter-spacer"></div>
-              <button class="btn btn-primary btn-sm" onclick="refreshReport()">🔄 Refresh Data</button>
+              <button class="btn btn-primary btn-sm" onclick="downloadReportPDF()">📄 Download PDF</button>
+              <button class="btn btn-secondary btn-sm" onclick="refreshReport()">🔄 Refresh</button>
             </div>
           </div>
 
