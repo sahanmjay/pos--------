@@ -727,16 +727,21 @@ window.shareReceiptPDF = async () => {
         return;
     }
 
-    // 6. Generate Signed URL (Expires in 24 hours)
-    const { data: signedData, error: signError } = await supa.storage
-      .from('receipts')
-      .createSignedUrl(fileName, 86400); // 24 Hours
+    // 6. Generate the "Clean" Redirect Link
+    // We use the current website origin + bill.html
+    const cleanLink = `${window.location.origin}/bill.html?id=${fileId}`;
 
-    if (signError) throw signError;
-
-    // 7. Redirect to WhatsApp with Secure Link and Deletion Warning
+    // 7. Redirect to WhatsApp with Premium Template
     showToast('success', 'Secure Bill Created! Opening WhatsApp...');
-    const message = encodeURIComponent(`*${bizName} - Digital Receipt*\n\nHello! Thank you for your purchase. You can view your official bill securely using the link below (valid for 24 hours):\n\n🔗 ${signedData.signedUrl}\n\n⚠️ *Important:* Please download or save this bill now. For your privacy, this link and the file will be automatically deleted from our system in 7 days.\n\nHave a great day!`);
+    const bizNameDisplay = currentSettings.biz_name || 'thilakawardhana shop';
+    
+    const message = encodeURIComponent(
+        `✨ *Receipt from ${bizNameDisplay}* ✨\n\n` +
+        `Hello! Thank you for your purchase. You can view and download your official bill here:\n\n` +
+        `🔗 ${cleanLink}\n\n` +
+        `🛡️ _For your privacy, this link is only active for 24 hours._\n` +
+        `Have a great day!`
+    );
     
     setTimeout(() => {
         window.open(`https://wa.me/${finalPhone}?text=${message}`, '_blank');

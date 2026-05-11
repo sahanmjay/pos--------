@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>thilakawardhana shop - Secure Bill Access</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #5B5FC7;
+            --bg: #f8f9fa;
+        }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background-color: var(--bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            color: #1a1d23;
+        }
+        .card {
+            background: white;
+            padding: 40px;
+            border-radius: 24px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+        }
+        .logo {
+            background: var(--primary);
+            color: white;
+            width: 60px;
+            height: 60px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 24px;
+            margin: 0 auto 20px;
+        }
+        .title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            font-size: 14px;
+            color: #6c757d;
+            margin-bottom: 30px;
+        }
+        .loader {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .badge {
+            background: #e9ecef;
+            padding: 6px 12px;
+            border-radius: 100px;
+            font-size: 12px;
+            font-weight: 500;
+            color: #495057;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">NP</div>
+        <div class="title">thilakawardhana shop</div>
+        <div class="subtitle">Secure Receipt Delivery Service</div>
+        
+        <div id="status-icon" class="loader"></div>
+        <div id="status-text" style="font-weight: 500;">Verifying Security...</div>
+        
+        <div style="margin-top: 40px;">
+            <div class="badge">
+                <span style="font-size: 14px;">🛡️</span> Protected by Univerz Digital
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://rakklmxpukcehbyjuxjy.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJha2tsbXhwdWtjZWhieWp1eGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNjY0MjgsImV4cCI6MjA5Mzc0MjQyOH0.05GCQVOXhH1CGWjgQkpu9mMKipT4wcPht4u3nf6c8Rc';
+        
+        const supa = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        async function handleRedirect() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const fileId = urlParams.get('id');
+            const statusText = document.getElementById('status-text');
+            const statusIcon = document.getElementById('status-icon');
+
+            if (!fileId) {
+                statusText.innerText = "Invalid Bill Link";
+                statusIcon.innerHTML = "❌";
+                statusIcon.classList.remove('loader');
+                return;
+            }
+
+            try {
+                // Generate a fresh signed URL (valid for 1 hour for this specific view)
+                const fileName = `receipt_${fileId}.pdf`;
+                const { data, error } = await supa.storage
+                    .from('receipts')
+                    .createSignedUrl(fileName, 3600);
+
+                if (error) throw error;
+
+                statusText.innerText = "Redirecting to Bill...";
+                statusIcon.innerHTML = "✅";
+                statusIcon.classList.remove('loader');
+                
+                setTimeout(() => {
+                    window.location.href = data.signedUrl;
+                }, 1000);
+
+            } catch (err) {
+                console.error(err);
+                statusText.innerText = "Link Expired or Invalid";
+                statusIcon.innerHTML = "⚠️";
+                statusIcon.classList.remove('loader');
+            }
+        }
+
+        handleRedirect();
+    </script>
+</body>
+</html>
