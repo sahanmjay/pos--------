@@ -678,7 +678,7 @@ window.shareReceiptPDF = async () => {
   if (finalPhone.length === 9 && finalPhone.startsWith('7')) finalPhone = '94' + finalPhone;
   else if (finalPhone.length === 10 && finalPhone.startsWith('0')) finalPhone = '94' + finalPhone.substring(1);
 
-  showToast('info', 'Processing digital receipt...');
+  showToast('info', 'Generating secure digital receipt...');
 
   try {
     const { jsPDF } = window.jspdf;
@@ -706,9 +706,12 @@ window.shareReceiptPDF = async () => {
     pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH);
     const pdfBlob = pdf.output('blob');
 
-    // 4. Try Upload to Supabase Storage
-    const fileName = `receipt_${currentReceiptData.sale.id}_${Date.now()}.pdf`;
-    const { data: uploadData, error: uploadError } = await supa.storage
+    // 4. Secure File Naming (UUID to prevent guessing)
+    const fileId = self.crypto.randomUUID();
+    const fileName = `receipt_${fileId}.pdf`;
+    
+    // 5. Upload to Private Storage
+    const { error: uploadError } = await supa.storage
       .from('receipts')
       .upload(fileName, pdfBlob, { contentType: 'application/pdf', upsert: true });
 
@@ -716,30 +719,32 @@ window.shareReceiptPDF = async () => {
 
     if (uploadError) {
         console.warn('Storage Upload Failed:', uploadError.message);
-        // FALLBACK: Download PDF + Open WhatsApp anyway
         const downloadName = `Receipt_${currentReceiptData.sale.id}.pdf`;
         pdf.save(downloadName);
         showToast('info', 'Cloud full/missing. PDF downloaded. Opening WhatsApp...');
-        
         const message = encodeURIComponent(`*${bizName}*\nHello! Please find your digital receipt for Order #${currentReceiptData.sale.id} attached below.`);
-        setTimeout(() => {
-            window.open(`https://wa.me/${finalPhone}?text=${message}`, '_blank');
-        }, 1000);
+        setTimeout(() => { window.open(`https://wa.me/${finalPhone}?text=${message}`, '_blank'); }, 1000);
         return;
     }
 
-    // 5. Get Public URL and Share Link
-    const { data: { publicUrl } } = supa.storage.from('receipts').getPublicUrl(fileName);
-    showToast('success', 'Receipt Link Created! Opening WhatsApp...');
-    const message = encodeURIComponent(`*${bizName} - Digital Receipt*\n\nHello! Thank you for your purchase. You can view your official bill here:\n\n🔗 ${publicUrl}`);
+    // 6. Generate Signed URL (Expires in 24 hours)
+    const { data: signedData, error: signError } = await supa.storage
+      .from('receipts')
+      .createSignedUrl(fileName, 86400); // 24 Hours
+
+    if (signError) throw signError;
+
+    // 7. Redirect to WhatsApp with Secure Link
+    showToast('success', 'Secure Bill Created! Opening WhatsApp...');
+    const message = encodeURIComponent(`*${bizName} - Digital Receipt*\n\nHello! Thank you for your purchase. You can view your official bill securely using the link below (valid for 24 hours):\n\n🔗 ${signedData.signedUrl}`);
     
     setTimeout(() => {
         window.open(`https://wa.me/${finalPhone}?text=${message}`, '_blank');
     }, 500);
 
   } catch (err) {
-    console.error('PDF Error:', err);
-    showToast('error', 'Critical error generating receipt.');
+    console.error('PDF Secure Error:', err);
+    showToast('error', 'Critical error generating secure receipt.');
   }
 };
 
