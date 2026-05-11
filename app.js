@@ -77,6 +77,8 @@ function showToast(type, msg) {
   t.innerHTML = `<span style="font-size:16px">${icons[type]}</span><span>${msg}</span>`;
   c.appendChild(t);
   setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateX(20px)'; t.style.transition='all 300ms'; setTimeout(()=>t.remove(),300); }, 3000);
+}
+
 // --- SECURITY & AUDIT ---
 async function logSecurityEvent(type, details = {}) {
   try {
