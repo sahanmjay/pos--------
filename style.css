@@ -419,3 +419,12 @@ body { font-family: var(--font); background: var(--surface-2); color: var(--text
   0% { top: 0; }
   100% { top: 100%; }
 }
+
+/* ADDITIONAL UTILITIES */
+.p-12 { padding: 12px !important; }
+.fs-11 { font-size: 11px !important; }
+.fs-18 { font-size: 18px !important; }
+.uppercase { text-transform: uppercase !important; }
+.letter-spacing-1 { letter-spacing: 0.5px; }
+.td-mono { font-family: var(--mono) !important; font-size: 12px; }
+.td-right { text-align: right; }

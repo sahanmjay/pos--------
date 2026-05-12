@@ -1494,7 +1494,10 @@ window.renderAIReports = async () => {
     end = new Date(now.setHours(23,59,59,999)).toISOString();
   } else if (period === 'week') {
     const day = now.getDay() || 7;
-    start = new Date(now.setHours(0,0,0,0) - (day-1)*24*60*60*1000).toISOString();
+    const firstDay = new Date(now);
+    firstDay.setDate(now.getDate() - (day - 1));
+    firstDay.setHours(0,0,0,0);
+    start = firstDay.toISOString();
     end = new Date().toISOString();
   } else if (period === 'month') {
     start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
@@ -1516,34 +1519,109 @@ window.renderAIReports = async () => {
   document.getElementById('kpi-avg-value').textContent = formatMoney(data.revenue / (data.transactions || 1));
   document.getElementById('kpi-profit').textContent = formatMoney(data.grossProfit);
   
-  // 2. Update HR & Operations
+  // 2. Add/Update Secondary Metrics
+  const secondaryHtml = `
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:15px; margin-top:20px">
+      <div class="card p-12">
+        <div class="text-muted fs-11 uppercase">Items Per Sale (IPT)</div>
+        <div class="fw-700 fs-18">${(data.totalItemsSold / (data.transactions || 1)).toFixed(1)}</div>
+      </div>
+      <div class="card p-12">
+        <div class="text-muted fs-11 uppercase">Unique Customers</div>
+        <div class="fw-700 fs-18">${data.uniqueCustomers}</div>
+      </div>
+      <div class="card p-12">
+        <div class="text-muted fs-11 uppercase">Profit Margin</div>
+        <div class="fw-700 fs-18" style="color:var(--success)">${((data.grossProfit / (data.revenue || 1)) * 100).toFixed(1)}%</div>
+      </div>
+      <div class="card p-12">
+        <div class="text-muted fs-11 uppercase">Tax Liability</div>
+        <div class="fw-700 fs-18">${formatMoney(data.tax)}</div>
+      </div>
+    </div>
+  `;
+  
+  const secondaryContainer = document.getElementById('report-secondary-metrics');
+  if (secondaryContainer) secondaryContainer.innerHTML = secondaryHtml;
+
+  // 3. Update HR & Operations
   document.getElementById('kpi-hr-hours').textContent = `${data.totalHours.toFixed(1)}h`;
   document.getElementById('kpi-hr-cost').textContent = formatMoney(data.payrollTotal + data.advancesTotal);
   document.getElementById('hr-insight-text').textContent = data.totalHours > 0 
-    ? `Active operations detected with ${data.totalHours.toFixed(0)} labor hours recorded.`
-    : "No attendance data recorded for this period.";
+    ? `Staff productivity: ${formatMoney(data.revenue / (data.totalHours || 1))} per hour.`
+    : "No labor hours recorded.";
 
-  // 3. Update Inventory Intelligence
+  // 4. Update Inventory Intelligence
   document.getElementById('kpi-inv-value').textContent = formatMoney(data.totalInventoryValue);
   document.getElementById('kpi-inv-low').textContent = data.lowStockCount;
+  
+  const invInsight = document.getElementById('inv-insight-text');
+  if (invInsight) {
+    invInsight.innerHTML = `
+      <div style="margin-top:10px; font-size:12px">
+        <span>Turnover Rate: <b>${(data.turnoverRate * 100).toFixed(1)}%</b></span>
+        <span style="margin-left:15px">Sell-Through: <b>${(data.sellThroughRate * 100).toFixed(1)}%</b></span>
+      </div>
+    `;
+  }
 
-  // 4. Update Top Products
-  document.getElementById('report-top-products-tbody').innerHTML = data.topProducts.map((p, i) => `
-    <tr>
-      <td>#${i+1}</td>
-      <td class="fw-600">${p.name}</td>
-      <td>${p.qty}</td>
-      <td class="td-mono">${formatMoney(p.revenue)}</td>
-    </tr>
-  `).join('') || '<tr><td colspan="4" style="text-align:center">No sales data</td></tr>';
+  // 5. Update Breakdowns
+  const breakdownHtml = `
+    <div class="dash-grid" style="margin-top:20px">
+      <div class="card">
+        <div class="card-body">
+          <div class="section-header">Sales by Category</div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Category</th><th style="text-align:right">Revenue</th></tr></thead>
+              <tbody>
+                ${Object.entries(data.categoryStats).sort((a,b)=>b[1]-a[1]).map(([cat, rev]) => `
+                  <tr><td>${cat}</td><td style="text-align:right">${formatMoney(rev)}</td></tr>
+                `).join('') || '<tr><td colspan="2">No data</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <div class="section-header">Sales by Employee</div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Employee</th><th style="text-align:right">Revenue</th></tr></thead>
+              <tbody>
+                ${Object.entries(data.salesByCashier).sort((a,b)=>b[1]-a[1]).map(([emp, rev]) => `
+                  <tr><td>${emp}</td><td style="text-align:right">${formatMoney(rev)}</td></tr>
+                `).join('') || '<tr><td colspan="2">No data</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  const breakdownContainer = document.getElementById('report-breakdowns');
+  if (breakdownContainer) breakdownContainer.innerHTML = breakdownHtml;
 
-  // 5. Render Charts
+  // 6. Update Top Products Table
+  const topProductsTbody = document.getElementById('report-top-products-tbody');
+  if (topProductsTbody) {
+    topProductsTbody.innerHTML = data.topProducts.map((p, i) => `
+      <tr>
+        <td>#${i+1}</td>
+        <td class="fw-600">${p.name}</td>
+        <td>${p.qty}</td>
+        <td class="td-mono">${formatMoney(p.revenue)}</td>
+      </tr>
+    `).join('') || '<tr><td colspan="4" style="text-align:center">No sales data</td></tr>';
+  }
+
+  // 7. Render Charts
   renderReportCharts(data);
   
-  // Reset AI box
   document.getElementById('ai-empty').style.display = 'block';
+  document.getElementById('ai-ready').style.display = 'none';
   document.getElementById('ai-content').style.display = 'none';
-  document.getElementById('ai-footer').style.display = 'none';
 };
 
 async function fetchReportData(start, end) {
@@ -1553,8 +1631,10 @@ async function fetchReportData(start, end) {
   
   const revenue = periodSales.reduce((sum, s) => sum + s.total_amount, 0);
   const transactions = periodSales.length;
+  const totalItemsSold = periodSales.reduce((sum, s) => sum + (s.items_count || 0), 0);
   const discount = periodSales.reduce((sum, s) => sum + (s.discount || 0), 0);
   const tax = periodSales.reduce((sum, s) => sum + (s.tax || 0), 0);
+  const uniqueCustomers = new Set(periodSales.map(s => s.customer_id)).size;
   
   // 2. Revenue by Payment Type
   const payments = { cash: 0, card: 0, credit: 0 };
@@ -1567,16 +1647,36 @@ async function fetchReportData(start, end) {
     dailyRev[day] = (dailyRev[day] || 0) + s.total_amount;
   });
   
-  // 4. Top Products (approximate from sale_items)
+  // 4. Detailed Sales Breakdowns
+  const salesByCashier = {};
+  periodSales.forEach(s => {
+    const c = s.cashier || 'Unknown';
+    salesByCashier[c] = (salesByCashier[c] || 0) + s.total_amount;
+  });
+
+  // 5. Product & Category Performance
   const items = await db.sale_items.toArray();
   const saleIds = periodSales.map(s => s.id);
   const periodItems = items.filter(i => saleIds.includes(i.sale_id));
   
+  const allProducts = await db.products.toArray();
+  const prodMap = {}; 
+  allProducts.forEach(p => {
+    prodMap[p.id] = { cost: p.cost_price || 0, category: p.category || 'Uncategorized' };
+  });
+
   const productStats = {};
+  const categoryStats = {};
+  
   periodItems.forEach(i => {
+    // Product stats
     if (!productStats[i.product_name]) productStats[i.product_name] = { qty: 0, revenue: 0, product_id: i.product_id };
     productStats[i.product_name].qty += i.quantity;
     productStats[i.product_name].revenue += i.line_total;
+
+    // Category stats
+    const cat = prodMap[i.product_id]?.category || 'Uncategorized';
+    categoryStats[cat] = (categoryStats[cat] || 0) + i.line_total;
   });
   
   const topProducts = Object.entries(productStats)
@@ -1584,14 +1684,12 @@ async function fetchReportData(start, end) {
     .sort((a, b) => b.qty - a.qty)
     .slice(0, 5);
     
-  // 5. Gross Profit Estimate
+  // 6. Gross Profit & Margins
   let totalCost = 0;
-  const allProducts = await db.products.toArray();
-  const prodMap = {}; allProducts.forEach(p => prodMap[p.id] = p.cost_price || 0);
-  periodItems.forEach(i => { totalCost += i.quantity * (prodMap[i.product_id] || 0); });
+  periodItems.forEach(i => { totalCost += i.quantity * (prodMap[i.product_id]?.cost || 0); });
   const grossProfit = revenue - totalCost;
   
-  // 6. Payroll & Advances
+  // 7. HR Costs
   const payrolls = await db.payroll.toArray();
   const periodPayroll = payrolls.filter(p => p.paid_at >= start && p.paid_at <= end);
   const payrollTotal = periodPayroll.reduce((sum, p) => sum + p.total_salary, 0);
@@ -1600,7 +1698,7 @@ async function fetchReportData(start, end) {
   const periodAdvances = advances.filter(a => a.date >= start.split('T')[0] && a.date <= end.split('T')[0]);
   const advancesTotal = periodAdvances.reduce((sum, a) => sum + a.amount, 0);
 
-  // 7. HR Attendance (Total Hours)
+  // 8. HR Attendance (Total Hours)
   const attendance = await db.attendance.toArray();
   const periodAtt = attendance.filter(a => a.date >= start.split('T')[0] && a.date <= end.split('T')[0]);
   let totalHours = 0;
@@ -1610,17 +1708,26 @@ async function fetchReportData(start, end) {
     }
   });
 
-  // 8. Full Inventory Valuation
+  // 9. Inventory Intelligence
   let totalInventoryValue = 0;
+  let totalStockQty = 0;
   let lowStockCount = 0;
   allProducts.forEach(p => {
     totalInventoryValue += (p.stock_qty || 0) * (p.retail_price || 0);
+    totalStockQty += (p.stock_qty || 0);
     if ((p.stock_qty || 0) <= (p.low_stock_threshold || 0)) lowStockCount++;
   });
 
+  // Turnover & Efficiency
+  const avgInventoryValue = totalInventoryValue; // Simplification
+  const turnoverRate = totalCost > 0 ? (totalCost / (avgInventoryValue || 1)) : 0;
+  const sellThroughRate = totalItemsSold / (totalStockQty + totalItemsSold || 1);
+
   return {
-    revenue, transactions, discount, tax, payments, dailyRev, topProducts, grossProfit, 
-    payrollTotal, advancesTotal, totalHours, totalInventoryValue, lowStockCount, start, end
+    revenue, transactions, totalItemsSold, discount, tax, uniqueCustomers,
+    payments, dailyRev, salesByCashier, categoryStats, topProducts, grossProfit, 
+    payrollTotal, advancesTotal, totalHours, totalInventoryValue, lowStockCount,
+    turnoverRate, sellThroughRate, start, end
   };
 }
 
@@ -1818,19 +1925,21 @@ window.downloadPDFReport = async () => {
 
     const kpis = [
       { label: 'Total Revenue', value: formatMoney(currentReportData.revenue), sub: `from ${currentReportData.transactions} transactions`, color: [16, 185, 129] },
-      { label: 'Transactions', value: currentReportData.transactions.toString(), sub: 'completed sales', color: [59, 130, 246] },
-      { label: 'Avg Transaction', value: formatMoney(currentReportData.revenue / (currentReportData.transactions || 1)), sub: 'revenue per customer', color: [168, 85, 247] },
-      { label: 'Gross Profit (Est.)', value: formatMoney(currentReportData.grossProfit), sub: 'estimated margin', color: [245, 158, 11] }
+      { label: 'Net Profit (Est.)', value: formatMoney(currentReportData.grossProfit), sub: `${((currentReportData.grossProfit / (currentReportData.revenue || 1)) * 100).toFixed(1)}% margin`, color: [245, 158, 11] },
+      { label: 'Unique Customers', value: currentReportData.uniqueCustomers.toString(), sub: 'distinct buyers', color: [59, 130, 246] },
+      { label: 'Items Per Sale', value: (currentReportData.totalItemsSold / (currentReportData.transactions || 1)).toFixed(1), sub: 'avg items per basket', color: [168, 85, 247] },
+      { label: 'Avg Transaction', value: formatMoney(currentReportData.revenue / (currentReportData.transactions || 1)), sub: 'revenue per customer', color: [107, 114, 128] },
+      { label: 'Tax Liability', value: formatMoney(currentReportData.tax), sub: 'collected tax', color: [239, 68, 68] }
     ];
 
-    let kX = margin, kY = 50, boxW = (contentWidth - 10) / 2, boxH = 30;
+    let kX = margin, kY = 50, boxW = (contentWidth - 10) / 3, boxH = 30;
     kpis.forEach((k, i) => {
       doc.setFillColor(255, 255, 255); doc.setDrawColor(230, 230, 230); doc.rect(kX, kY, boxW, boxH, 'FD');
       doc.setFillColor(...k.color); doc.rect(kX, kY, 2, boxH, 'F');
-      doc.setTextColor(120, 120, 120); doc.setFontSize(8); doc.text(k.label, kX + 6, kY + 8);
-      doc.setTextColor(50, 50, 50); doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.text(k.value, kX + 6, kY + 16);
-      doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(150, 150, 150); doc.text(k.sub, kX + 6, kY + 23);
-      if (i % 2 === 0) kX += boxW + 10; else { kX = margin; kY += boxH + 6; }
+      doc.setTextColor(120, 120, 120); doc.setFontSize(7); doc.text(k.label, kX + 6, kY + 8);
+      doc.setTextColor(50, 50, 50); doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text(k.value, kX + 6, kY + 16);
+      doc.setFontSize(6); doc.setFont('helvetica', 'normal'); doc.setTextColor(150, 150, 150); doc.text(k.sub, kX + 6, kY + 23);
+      if ((i + 1) % 3 === 0) { kX = margin; kY += boxH + 6; } else { kX += boxW + 5; }
     });
 
     curY = kY + 10;
@@ -1876,6 +1985,26 @@ window.downloadPDFReport = async () => {
       pY += 8;
     });
 
+    pY += 15;
+    doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.text("Sales Breakdown by Category", margin, pY);
+    pY += 8;
+    Object.entries(currentReportData.categoryStats).sort((a,b)=>b[1]-a[1]).forEach(([cat, rev]) => {
+      doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+      doc.text(cat, margin + 2, pY);
+      doc.text(formatMoney(rev), pageWidth - margin - 2, pY, { align: 'right' });
+      pY += 7;
+    });
+
+    pY += 10;
+    doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.text("Employee Performance (Sales)", margin, pY);
+    pY += 8;
+    Object.entries(currentReportData.salesByCashier).sort((a,b)=>b[1]-a[1]).forEach(([emp, rev]) => {
+      doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+      doc.text(emp, margin + 2, pY);
+      doc.text(formatMoney(rev), pageWidth - margin - 2, pY, { align: 'right' });
+      pY += 7;
+    });
+
     // --- PAGE 4: INVENTORY INTELLIGENCE ---
     doc.addPage(); pageNum++;
     addPDFHeaderFooter(doc, bizName, pageNum, 6);
@@ -1886,6 +2015,10 @@ window.downloadPDFReport = async () => {
     doc.text("Inventory Intelligence Report", margin + 6, 42);
     doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(107, 114, 128);
     doc.text(`Proprietary Analysis for ${bizName}`, margin + 6, 47);
+    
+    doc.setFontSize(10); doc.setTextColor(50, 50, 50); doc.setFont('helvetica', 'bold');
+    doc.text(`Turnover Rate: ${(currentReportData.turnoverRate * 100).toFixed(1)}%`, margin, 53);
+    doc.text(`Sell-Through Rate: ${(currentReportData.sellThroughRate * 100).toFixed(1)}%`, pageWidth/2, 53);
 
     doc.setFontSize(11); doc.setTextColor(55, 65, 81); doc.setFont('helvetica', 'bold');
     doc.text("Low Stock Alerts", margin, 58);

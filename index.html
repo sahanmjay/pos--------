@@ -429,6 +429,9 @@
             </div>
           </div>
 
+          <!-- Secondary Metrics -->
+          <div id="report-secondary-metrics"></div>
+
           <!-- Charts Row -->
           <div class="dash-grid" style="margin-bottom:20px">
             <div class="card">
@@ -477,35 +480,52 @@
                     <div style="font-size:18px; font-weight:700; color:var(--danger)" id="kpi-inv-low">0</div>
                   </div>
                 </div>
+                <div id="inv-insight-text" style="margin-top:12px"></div>
               </div>
             </div>
           </div>
 
-          <div class="dash-grid">
-                </div>
-                <!-- Hidden div for PDF generation -->
-                <div id="ai-content" style="display:none"></div>
-                
-                <div id="ai-ready" style="display:none; text-align:center; padding:30px">
-                  <div style="font-size:40px; margin-bottom:15px">📊</div>
-                  <div class="section-header" style="justify-content:center">AI Analysis Complete!</div>
-                  <div class="text-muted" style="margin-bottom:20px">Your professional business report is ready for download.</div>
-                  <button class="btn btn-primary btn-full" onclick="downloadPDFReport()" id="btn-download-pdf-big">⬇ Download PDF Report</button>
-                  <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="generateAIInsight()">🔄 Regenerate</button>
-                </div>
+          <!-- Detailed Breakdowns -->
+          <div id="report-breakdowns"></div>
 
-                <div id="ai-empty" style="text-align:center; padding:30px">
-                  <div style="font-size:40px; margin-bottom:15px">✨</div>
-                  <div class="section-header" style="justify-content:center">Business Intelligence</div>
-                  <div class="text-muted" style="margin-bottom:20px">Get deep insights and recommendations for your business performance.</div>
-                  <button class="btn btn-primary btn-full" onclick="generateAIInsight()">Generate AI Report</button>
-                </div>
+          <!-- Top Products Table -->
+          <div class="card" style="margin-top:20px">
+            <div class="card-body">
+              <div class="section-header">Top Selling Products</div>
+              <div class="data-table-wrap">
+                <table class="data-table">
+                  <thead><tr><th>Rank</th><th>Product</th><th>Units Sold</th><th>Revenue</th></tr></thead>
+                  <tbody id="report-top-products-tbody"></tbody>
+                </table>
               </div>
             </div>
           </div>
 
-        </div>
-      </div>
+          <!-- AI Intelligence Section -->
+          <div class="card" style="margin-top:20px">
+            <div class="card-body">
+              <!-- Hidden div for PDF generation -->
+              <div id="ai-content" style="display:none"></div>
+              
+              <div id="ai-ready" style="display:none; text-align:center; padding:30px">
+                <div style="font-size:40px; margin-bottom:15px">📊</div>
+                <div class="section-header" style="justify-content:center">AI Analysis Complete!</div>
+                <div class="text-muted" style="margin-bottom:20px">Your professional business report is ready for download.</div>
+                <button class="btn btn-primary btn-full" onclick="downloadPDFReport()" id="btn-download-pdf-big">⬇ Download PDF Report</button>
+                <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="generateAIInsight()">🔄 Regenerate</button>
+              </div>
+
+              <div id="ai-empty" style="text-align:center; padding:30px">
+                <div style="font-size:40px; margin-bottom:15px">✨</div>
+                <div class="section-header" style="justify-content:center">Business Intelligence</div>
+                <div class="text-muted" style="margin-bottom:20px">Get deep insights and recommendations for your business performance.</div>
+                <button class="btn btn-primary btn-full" onclick="generateAIInsight()">Generate AI Report</button>
+              </div>
+            </div>
+          </div>
+
+        </div> <!-- /page -->
+      </div> <!-- /screen-ai-reports -->
 
     </div><!-- /main -->
   </div><!-- /app-body -->
