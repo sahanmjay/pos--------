@@ -1516,30 +1516,51 @@ window.renderAIReports = async () => {
   const data = await fetchReportData(start, end);
   currentReportData = data;
   
+  // Show content
+  const mainContent = document.getElementById('report-main-content');
+  if (mainContent) mainContent.style.display = 'flex';
+
   // 1. Update Sales KPIs
-  document.getElementById('kpi-revenue').textContent = formatMoney(data.revenue);
-  document.getElementById('kpi-transactions').textContent = data.transactions;
-  document.getElementById('kpi-avg-value').textContent = formatMoney(data.revenue / (data.transactions || 1));
-  document.getElementById('kpi-profit').textContent = formatMoney(data.grossProfit);
+  const kpiGrid = document.getElementById('report-kpi-grid');
+  if (kpiGrid) {
+    kpiGrid.innerHTML = `
+      <div class="summary-card">
+        <div class="summary-label">Total Revenue</div>
+        <div class="summary-value">${formatMoney(data.revenue)}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Transactions</div>
+        <div class="summary-value">${data.transactions}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Avg Transaction</div>
+        <div class="summary-value">${formatMoney(data.revenue / (data.transactions || 1))}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Gross Profit</div>
+        <div class="summary-value" style="color:var(--success)">${formatMoney(data.grossProfit)}</div>
+      </div>
+    `;
+  }
   
   // 2. Add/Update Secondary Metrics
   const secondaryHtml = `
-    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:15px; margin-top:20px">
-      <div class="card p-12">
-        <div class="text-muted fs-11 uppercase">Items Per Sale (IPT)</div>
-        <div class="fw-700 fs-18">${(data.totalItemsSold / (data.transactions || 1)).toFixed(1)}</div>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:15px">
+      <div class="card" style="padding:15px">
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Items Per Sale</div>
+        <div style="font-size:20px; font-weight:700">${(data.totalItemsSold / (data.transactions || 1)).toFixed(1)}</div>
       </div>
-      <div class="card p-12">
-        <div class="text-muted fs-11 uppercase">Unique Customers</div>
-        <div class="fw-700 fs-18">${data.uniqueCustomers}</div>
+      <div class="card" style="padding:15px">
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Unique Customers</div>
+        <div style="font-size:20px; font-weight:700">${data.uniqueCustomers}</div>
       </div>
-      <div class="card p-12">
-        <div class="text-muted fs-11 uppercase">Profit Margin</div>
-        <div class="fw-700 fs-18" style="color:var(--success)">${((data.grossProfit / (data.revenue || 1)) * 100).toFixed(1)}%</div>
+      <div class="card" style="padding:15px">
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Profit Margin</div>
+        <div style="font-size:20px; font-weight:700; color:var(--success)">${((data.grossProfit / (data.revenue || 1)) * 100).toFixed(1)}%</div>
       </div>
-      <div class="card p-12">
-        <div class="text-muted fs-11 uppercase">Tax Liability</div>
-        <div class="fw-700 fs-18">${formatMoney(data.tax)}</div>
+      <div class="card" style="padding:15px">
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Tax Liability</div>
+        <div style="font-size:20px; font-weight:700">${formatMoney(data.tax)}</div>
       </div>
     </div>
   `;

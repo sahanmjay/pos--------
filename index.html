@@ -411,41 +411,79 @@
             </div>
           </div>
 
-          <!-- KPI Cards -->
-          <div class="summary-grid" id="report-kpi-grid">
-            <div class="summary-card">
-              <div class="summary-label">Total Revenue</div>
-              <div class="summary-value" id="kpi-revenue">Rs. 0.00</div>
-            </div>
-            <div class="summary-card">
-              <div class="summary-label">Transactions</div>
-              <div class="summary-value" id="kpi-transactions">0</div>
-            </div>
-            <div class="summary-card">
-              <div class="summary-label">Avg Transaction</div>
-              <div class="summary-value" id="kpi-avg-value">Rs. 0.00</div>
-            </div>
-            <div class="summary-card">
-              <div class="summary-label">Gross Profit (Est.)</div>
-              <div class="summary-value" id="kpi-profit" style="color:var(--success)">Rs. 0.00</div>
-            </div>
-          </div>
+          <!-- Active Report Content (Hidden until loaded) -->
+          <div id="report-main-content" style="display:none; flex-direction:column; gap:24px">
+            <!-- KPI Cards -->
+            <div class="summary-grid" id="report-kpi-grid"></div>
 
-          <!-- Secondary Metrics -->
-          <div id="report-secondary-metrics"></div>
+            <!-- Secondary Metrics -->
+            <div id="report-secondary-metrics"></div>
 
-          <!-- Charts Row -->
-          <div class="dash-grid" style="margin-bottom:20px">
-            <div class="card">
-              <div class="card-body">
-                <div class="section-header">Revenue Trend</div>
-                <div style="height:250px"><canvas id="chart-revenue-trend"></canvas></div>
+            <!-- Charts Row -->
+            <div class="dash-grid">
+              <div class="card">
+                <div class="card-body">
+                  <div class="section-header">Revenue Trend</div>
+                  <div style="height:250px"><canvas id="chart-revenue-trend"></canvas></div>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-body">
+                  <div class="section-header">Payment Methods</div>
+                  <div style="height:250px"><canvas id="chart-payments"></canvas></div>
+                </div>
               </div>
             </div>
+
+            <!-- HR & Inventory Row -->
+            <div class="dash-grid">
+              <div class="card">
+                <div class="card-body">
+                  <div class="section-header">👥 HR & Operations</div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
+                    <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
+                      <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Hours</div>
+                      <div style="font-size:18px; font-weight:700" id="kpi-hr-hours">0h</div>
+                    </div>
+                    <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
+                      <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Payroll</div>
+                      <div style="font-size:18px; font-weight:700" id="kpi-hr-cost">0</div>
+                    </div>
+                  </div>
+                  <div id="hr-insight-text" style="margin-top:12px; font-size:12px"></div>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-body">
+                  <div class="section-header">📦 Inventory</div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
+                    <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
+                      <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Stock Value</div>
+                      <div style="font-size:18px; font-weight:700" id="kpi-inv-value">0</div>
+                    </div>
+                    <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
+                      <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Low Stock</div>
+                      <div style="font-size:18px; font-weight:700; color:var(--danger)" id="kpi-inv-low">0</div>
+                    </div>
+                  </div>
+                  <div id="inv-insight-text" style="margin-top:12px; font-size:12px"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Detailed Breakdowns -->
+            <div id="report-breakdowns"></div>
+
+            <!-- Top Products -->
             <div class="card">
               <div class="card-body">
-                <div class="section-header">Payment Methods</div>
-                <div style="height:250px"><canvas id="chart-payments"></canvas></div>
+                <div class="section-header">Top Selling Products</div>
+                <div class="data-table-wrap">
+                  <table class="data-table">
+                    <thead><tr><th>Rank</th><th>Product</th><th>Sold</th><th>Revenue</th></tr></thead>
+                    <tbody id="report-top-products-tbody"></tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
@@ -560,17 +598,17 @@
 </div>
 
 <!-- RECEIPT MODAL -->
-  <div class="modal-overlay" id="receipt-overlay">
-    <div class="modal" style="width:420px">
-      <div class="modal-header">
-        <div class="modal-title">Receipt</div>
-        <button class="modal-close" onclick="closeReceipt()">✕</button>
-      </div>
-      <div id="receipt-status-banner" style="display:none; background:var(--surface-3); padding:8px; text-align:center; font-size:12px; font-weight:700; color:var(--text-secondary); border-bottom:1px solid var(--border)">
-        🔒 TRANSACTION LOCKED — RECORD FINALIZED
-      </div>
-      <div class="modal-body" id="receipt-body" style="font-family:var(--mono); font-size:13px; color:#333; line-height:1.4"></div>
-      <div class="modal-footer" style="flex-wrap:wrap; gap:8px">
+<div class="modal-overlay" id="receipt-overlay">
+  <div class="modal" style="width:420px">
+    <div class="modal-header">
+      <div class="modal-title">Receipt</div>
+      <button class="modal-close" onclick="closeReceipt()">✕</button>
+    </div>
+    <div id="receipt-status-banner" style="display:none; background:var(--surface-3); padding:8px; text-align:center; font-size:12px; font-weight:700; color:var(--text-secondary); border-bottom:1px solid var(--border)">
+      🔒 TRANSACTION LOCKED — RECORD FINALIZED
+    </div>
+    <div class="modal-body" id="receipt-body" style="font-family:var(--mono); font-size:13px; color:#333; line-height:1.4"></div>
+    <div class="modal-footer" style="flex-wrap:wrap; gap:8px">
       <button class="btn btn-primary btn-sm" onclick="printReceipt()">🖨️ Print</button>
       <button class="btn btn-secondary btn-sm" onclick="shareReceiptPDF()">📄 WhatsApp PDF</button>
       <button class="btn btn-secondary btn-sm" onclick="printViaRawBT()">🔌 Bluetooth</button>
@@ -579,13 +617,11 @@
   </div>
 </div>
 
-<!-- TOAST -->
 <div class="toast-container" id="toast-container"></div>
 
 <script src="https://unpkg.com/@zxing/browser@latest/umd/index.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="db.js"></script>
 <script src="app.js"></script>
 </body>
+</html>
 </html>
