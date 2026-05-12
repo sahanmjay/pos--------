@@ -1703,14 +1703,178 @@ window.renderReportCharts = (data) => {
   });
 };
 
-window.downloadPDFReport = () => {
-  showToast('info', 'Preparing PDF report... This may take a few seconds.');
-  // Implementation of PDF generation would go here using jspdf/html2canvas
-  // For now, we simulate a delay
-  setTimeout(() => {
-    showToast('success', 'PDF Report generated and downloaded.');
-    window.print(); // Simple fallback
-  }, 1500);
+window.downloadPDFReport = async () => {
+  if (!currentReportData) return showToast('error', 'Please load report data first');
+  showToast('info', 'Building professional 6-page report. Please wait...');
+  
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const data = currentReportData;
+  const bizName = currentSettings.biz_name || 'NexPOS';
+  const primaryColor = [91, 95, 199];
+  
+  const addFooter = (pageNum) => {
+    doc.setFontSize(8); doc.setTextColor(150);
+    doc.setDrawColor(200); doc.line(20, 280, 190, 280);
+    doc.text(`NexPOS — Confidential Business Report`, 20, 285);
+    doc.text(`Page ${pageNum} of 6`, 105, 285, { align: 'center' });
+    doc.text(bizName.toLowerCase() + ' shop', 190, 285, { align: 'right' });
+  };
+
+  // --- PAGE 1: EXECUTIVE OVERVIEW ---
+  doc.setFillColor(...primaryColor); doc.rect(0, 0, 210, 40, 'F');
+  doc.setTextColor(255); doc.setFontSize(24); doc.setFont('helvetica', 'bold');
+  doc.text(bizName.toUpperCase(), 20, 25);
+  doc.setFontSize(12); doc.setFont('helvetica', 'normal');
+  doc.text('EXECUTIVE PERFORMANCE REPORT', 20, 32);
+  
+  doc.setTextColor(50); doc.setFontSize(14); doc.text('Operational Summary', 20, 60);
+  doc.setDrawColor(primaryColor[0], primaryColor[1], primaryColor[2]); doc.setLineWidth(1); doc.line(20, 63, 40, 63);
+
+  const kpis = [
+    { l: 'Total Revenue', v: formatMoney(data.revenue) },
+    { l: 'Gross Profit', v: formatMoney(data.grossProfit) },
+    { l: 'Total Transactions', v: data.transactions.toString() },
+    { l: 'Avg Basket Value', v: formatMoney(data.revenue / (data.transactions || 1)) },
+    { l: 'Unique Customers', v: data.uniqueCustomers.toString() },
+    { l: 'Items Per Sale', v: (data.totalItemsSold / (data.transactions || 1)).toFixed(1) }
+  ];
+
+  let y = 80;
+  kpis.forEach((k, i) => {
+    doc.setFontSize(10); doc.setTextColor(100); doc.text(k.l, 25 + (i % 2 * 90), y);
+    doc.setFontSize(16); doc.setTextColor(50); doc.setFont('helvetica', 'bold');
+    doc.text(k.v, 25 + (i % 2 * 90), y + 8);
+    if (i % 2 === 1) y += 25;
+  });
+
+  addFooter(1);
+
+  // --- PAGE 2: REVENUE TRENDS & PAYMENT ANALYTICS ---
+  doc.addPage();
+  doc.setTextColor(...primaryColor); doc.setFontSize(18); doc.text('Revenue & Payment Analytics', 20, 25);
+  
+  try {
+    const trendCanvas = await html2canvas(document.getElementById('chart-revenue-trend').parentElement);
+    doc.addImage(trendCanvas.toDataURL('image/png'), 'PNG', 20, 40, 170, 80);
+    doc.setFontSize(10); doc.setTextColor(100); doc.text('Daily Revenue Trend Analysis', 20, 125);
+
+    const payCanvas = await html2canvas(document.getElementById('chart-payments').parentElement);
+    doc.addImage(payCanvas.toDataURL('image/png'), 'PNG', 20, 140, 170, 80);
+    doc.text('Revenue Breakdown by Payment Method', 20, 225);
+    
+    // Mini table for payments
+    let py = 235;
+    Object.entries(data.payments).forEach(([type, val]) => {
+      doc.setFontSize(9); doc.setTextColor(50); doc.text(type, 25, py);
+      doc.text(formatMoney(val), 100, py, { align: 'right' });
+      py += 7;
+    });
+  } catch (e) { console.error('PDF Chart Error', e); }
+  
+  addFooter(2);
+
+  // --- PAGE 3: CATEGORY & STAFF PERFORMANCE ---
+  doc.addPage();
+  doc.setTextColor(...primaryColor); doc.setFontSize(18); doc.text('Sectional Performance Breakdown', 20, 25);
+  
+  doc.setFontSize(12); doc.setTextColor(50); doc.text('Revenue by Category', 20, 45);
+  let cy = 55;
+  Object.entries(data.categoryStats).sort((a,b)=>b[1]-a[1]).forEach(([cat, rev]) => {
+    doc.setFontSize(9); doc.text(cat, 25, cy);
+    doc.text(formatMoney(rev), 100, cy, { align: 'right' });
+    doc.setDrawColor(240); doc.line(20, cy+2, 100, cy+2);
+    cy += 8;
+  });
+
+  doc.text('Cashier/Employee Efficiency', 115, 45);
+  let ey = 55;
+  Object.entries(data.salesByCashier).sort((a,b)=>b[1]-a[1]).forEach(([emp, rev]) => {
+    doc.setFontSize(9); doc.text(emp, 120, ey);
+    doc.text(formatMoney(rev), 190, ey, { align: 'right' });
+    doc.setDrawColor(240); doc.line(115, ey+2, 190, ey+2);
+    ey += 8;
+  });
+
+  doc.setFontSize(12); doc.text('HR Productivity Insight', 20, 150);
+  doc.setFontSize(10); doc.setTextColor(100);
+  doc.text(`Total Staff Hours: ${data.totalHours.toFixed(1)}h`, 25, 160);
+  doc.text(`Estimated Labor Cost: ${formatMoney(data.payrollTotal + data.advancesTotal)}`, 25, 167);
+  doc.setTextColor(...primaryColor);
+  doc.text(`Revenue per Labor Hour: ${formatMoney(data.revenue / (data.totalHours || 1))}`, 25, 174);
+
+  addFooter(3);
+
+  // --- PAGE 4: INVENTORY INTELLIGENCE ---
+  doc.addPage();
+  doc.setTextColor(...primaryColor); doc.setFontSize(18); doc.text('Inventory Intelligence Report', 20, 25);
+  doc.setFontSize(9); doc.setTextColor(100); doc.text('Proprietary Analysis for ' + bizName, 20, 31);
+  
+  doc.setTextColor(50); doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text(`Turnover Rate: ${(data.turnoverRate * 100).toFixed(1)}%`, 20, 45);
+  doc.text(`Sell-Through Rate: ${(data.sellThroughRate * 100).toFixed(1)}%`, 110, 45);
+  
+  doc.text('Low Stock Alerts', 20, 55);
+  doc.setFillColor(50, 60, 80); doc.rect(20, 58, 170, 8, 'F');
+  doc.setTextColor(255); doc.setFontSize(8);
+  doc.text('PRODUCT', 25, 63.5); doc.text('STOCK', 80, 63.5); doc.text('THRESHOLD', 105, 63.5); doc.text('STATUS', 130, 63.5); doc.text('SUGGESTED ORDER', 155, 63.5);
+
+  let iy = 73;
+  doc.setTextColor(50); doc.setFont('helvetica', 'normal');
+  const lowItems = (await db.products.toArray()).filter(p => p.stock_qty <= p.low_stock_threshold).slice(0, 20);
+  lowItems.forEach(p => {
+    doc.text(p.name, 25, iy);
+    doc.text(p.stock_qty.toString(), 80, iy);
+    doc.text(p.low_stock_threshold.toString(), 105, iy);
+    doc.setTextColor(200, 50, 50); doc.text('REORDER', 130, iy); doc.setTextColor(50);
+    doc.text((p.low_stock_threshold * 2).toString(), 155, iy);
+    iy += 7;
+  });
+
+  doc.setTextColor(...primaryColor); doc.setFontSize(12); doc.text('Reorder Schedule', 20, 220);
+  doc.setTextColor(50); doc.setFontSize(10);
+  doc.text(`Total Reorder Budget: ${formatMoney(lowItems.length * 1500)}`, 20, 230); // Est budget
+
+  addFooter(4);
+
+  // --- PAGE 5: AI BUSINESS STRATEGY ---
+  doc.addPage();
+  doc.setTextColor(...primaryColor); doc.setFontSize(18); doc.text('Business Intelligence Engine Analysis', 20, 25);
+  doc.setFontSize(9); doc.setTextColor(150); doc.setFont('helvetica', 'italic'); doc.text('Powered by NexPOS Intelligence Engine', 20, 31);
+  
+  const aiContent = document.getElementById('ai-content');
+  if (aiContent && aiContent.style.display !== 'none') {
+    doc.setTextColor(50); doc.setFontSize(11); doc.setFont('helvetica', 'normal');
+    // Simple text wrapping for AI content
+    const splitText = doc.splitTextToSize(aiContent.innerText, 170);
+    doc.text(splitText, 20, 50);
+  } else {
+    doc.setFillColor(245, 247, 250); doc.rect(20, 45, 170, 30, 'F');
+    doc.setDrawColor(...primaryColor); doc.setLineWidth(1.5); doc.line(20, 45, 20, 75);
+    doc.setTextColor(50); doc.setFont('helvetica', 'bold'); doc.text('Performance Summary', 25, 55);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.text('AI analysis not generated for this report. Please use the \'Generate AI Report\' button for deep insights.', 25, 65);
+  }
+
+  addFooter(5);
+
+  // --- PAGE 6: MARKET CONTEXT & DISCLAIMERS ---
+  doc.addPage();
+  doc.setTextColor(...primaryColor); doc.setFontSize(18); doc.text('Market Intelligence & Context', 20, 25);
+  doc.setTextColor(50); doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+  const context = `This report provides an analytical snapshot of ${bizName}'s performance during the selected period. 
+  
+  Comparative Benchmarks:
+  - Sector Average Margin: 15-25%
+  - Target Sell-Through: >35%
+  - Optimal IPT: 1.8+
+  
+  Disclaimer: The data provided herein is for informational purposes and business strategy support. Financial accuracy depends on the integrity of local transaction logging and inventory updates. NexPOS is not liable for business decisions made based on AI-generated suggestions.`;
+  doc.text(doc.splitTextToSize(context, 170), 20, 40);
+
+  addFooter(6);
+
+  doc.save(`${bizName.replace(/\s+/g, '_')}_Business_Report_${new Date().toISOString().split('T')[0]}.pdf`);
+  showToast('success', 'Professional Business Report generated successfully.');
 };
 
 async function fetchReportData(start, end) {
