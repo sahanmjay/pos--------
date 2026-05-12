@@ -1721,325 +1721,8 @@ window.renderAIReports = async () => {
   }
 };
 
-window.generateAIInsight = async () => {
-  if (!currentReportData) return showToast('error', 'Please select a report period first');
-  
-  const emptyDiv = document.getElementById('ai-empty');
-  const readyDiv = document.getElementById('ai-ready');
-  const contentDiv = document.getElementById('ai-content');
-  
-  if (emptyDiv) emptyDiv.style.display = 'none';
-  if (readyDiv) readyDiv.style.display = 'none';
-  if (contentDiv) {
-    contentDiv.style.display = 'block';
-    contentDiv.innerHTML = '<div style="text-align:center; padding:40px"><div class="spinner"></div><p style="margin-top:15px">Analyzing business performance...</p></div>';
-  }
 
-  try {
-    // Basic AI prompt construction
-    const stats = currentReportData;
-    const prompt = `Business Analysis for ${stats.revenue} revenue. 
-      Gross Profit: ${stats.grossProfit}. 
-      Transactions: ${stats.transactions}. 
-      Top Products: ${stats.topProducts.map(p=>p.name).join(', ')}.
-      Low stock items: ${stats.lowStockCount}.
-      Please provide 3 strategic growth tips.`;
 
-    // Simulate AI for now if no key, or implement call to Supabase Edge Function
-    setTimeout(() => {
-      const mockInsight = `
-        <h3>Executive Analysis</h3>
-        <p>Based on the revenue of <b>${formatMoney(stats.revenue)}</b>, your business is showing steady performance. 
-        Your items per transaction is <b>${(stats.totalItemsSold / (stats.transactions || 1)).toFixed(1)}</b>, which is healthy for this sector.</p>
-        
-        <h4>Strategic Recommendations:</h4>
-        <ul>
-          <li><b>Optimize Inventory:</b> You have ${stats.lowStockCount} items below threshold. Prioritize restocking ${stats.topProducts[0]?.name || 'top items'} to avoid missed sales.</li>
-          <li><b>Boost Margin:</b> With a profit margin of ${((stats.grossProfit / (stats.revenue || 1)) * 100).toFixed(1)}%, consider upselling higher-margin categories.</li>
-          <li><b>Staffing:</b> Productivity is currently ${formatMoney(stats.revenue / (stats.totalHours || 1))} per hour. Ensure coverage during peak revenue trends.</li>
-        </ul>
-      `;
-      if (contentDiv) contentDiv.innerHTML = mockInsight;
-      if (readyDiv) readyDiv.style.display = 'block';
-    }, 2000);
-
-  } catch (err) {
-    showToast('error', 'Failed to generate AI insights');
-    if (emptyDiv) emptyDiv.style.display = 'block';
-  }
-};
-
-window.renderReportCharts = (data) => {
-  if (!window.reportCharts) window.reportCharts = {};
-  
-  const ctxTrend = document.getElementById('chart-revenue-trend');
-  const ctxHourly = document.getElementById('chart-hourly-peak');
-  const ctxPay = document.getElementById('chart-payments');
-  const ctxLoyalty = document.getElementById('chart-loyalty');
-
-  // 1. Revenue Trend
-  if (ctxTrend) {
-    if (window.reportCharts.trend) window.reportCharts.trend.destroy();
-    const trendLabels = Object.keys(data.dailyRev).sort();
-    window.reportCharts.trend = new Chart(ctxTrend, {
-      type: 'line',
-      data: {
-        labels: trendLabels,
-        datasets: [{ 
-          label: 'Revenue', 
-          data: trendLabels.map(l => data.dailyRev[l]), 
-          borderColor: '#5B5FC7', 
-          tension: 0.3, 
-          fill: true, 
-          backgroundColor: 'rgba(91,95,199,0.1)' 
-        }]
-      },
-      options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
-    });
-  }
-
-  // 2. Hourly Peak
-  if (ctxHourly) {
-    if (window.reportCharts.hourly) window.reportCharts.hourly.destroy();
-    window.reportCharts.hourly = new Chart(ctxHourly, {
-      type: 'bar',
-      data: {
-        labels: Array.from({length: 24}, (_, i) => `${i}:00`),
-        datasets: [{ label: 'Transactions', data: data.hourlySales, backgroundColor: 'rgba(245, 158, 11, 0.8)' }]
-      },
-      options: { maintainAspectRatio: false, plugins: { legend: { display: false } } }
-    });
-  }
-
-  // 3. Payment Methods
-  if (ctxPay) {
-    if (window.reportCharts.pay) window.reportCharts.pay.destroy();
-    window.reportCharts.pay = new Chart(ctxPay, {
-      type: 'doughnut',
-      data: {
-        labels: ['Cash', 'Card', 'Credit'],
-        datasets: [{ 
-          data: [data.payments.cash, data.payments.card, data.payments.credit], 
-          backgroundColor: ['#10B981', '#5B5FC7', '#F59E0B'] 
-        }]
-      },
-      options: { maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'bottom' } } }
-    });
-  }
-
-  // 4. Loyalty
-  if (ctxLoyalty) {
-    if (window.reportCharts.loyalty) window.reportCharts.loyalty.destroy();
-    window.reportCharts.loyalty = new Chart(ctxLoyalty, {
-      type: 'pie',
-      data: {
-        labels: ['New', 'Repeat'],
-        datasets: [{ 
-          data: [data.uniqueCustomers - data.repeatCount, data.repeatCount], 
-          backgroundColor: ['#5B5FC7', '#10B981'] 
-        }]
-      },
-      options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-    });
-  }
-};
-
-window.downloadPDFReport = async () => {
-  if (!currentReportData) return showToast('error', 'Please load report data first');
-  showToast('info', 'Building professional 6-page report. Please wait...');
-  
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF('p', 'mm', 'a4');
-  const data = currentReportData;
-  const bizName = currentSettings.biz_name || 'NexPOS';
-  const primaryColor = [91, 95, 199];
-  
-  const addFooter = (pageNum) => {
-    doc.setFontSize(8); doc.setTextColor(150);
-    doc.setDrawColor(200); doc.line(20, 280, 190, 280);
-    doc.text(`NexPOS — Confidential Business Report`, 20, 285);
-    doc.text(`Page ${pageNum} of 6`, 105, 285, { align: 'center' });
-    doc.text(bizName.toLowerCase() + ' shop', 190, 285, { align: 'right' });
-  };
-
-  // --- PAGE 1: EXECUTIVE OVERVIEW ---
-  doc.setFillColor(...primaryColor); doc.rect(0, 0, 210, 40, 'F');
-  doc.setTextColor(255); doc.setFontSize(24); doc.setFont('helvetica', 'bold');
-  doc.text(bizName.toUpperCase(), 20, 25);
-  doc.setFontSize(12); doc.setFont('helvetica', 'normal');
-  doc.text('EXECUTIVE PERFORMANCE REPORT', 20, 32);
-  
-  doc.setTextColor(50); doc.setFontSize(14); doc.text('Operational Summary', 20, 60);
-  doc.setDrawColor(primaryColor[0], primaryColor[1], primaryColor[2]); doc.setLineWidth(1); doc.line(20, 63, 40, 63);
-
-  const kpis = [
-    { l: 'Total Revenue', v: formatMoney(data.revenue) },
-    { l: 'Net Revenue', v: formatMoney(data.netRevenue) },
-    { l: 'Gross Profit', v: formatMoney(data.grossProfit) },
-    { l: 'Profit Margin', v: data.profitMargin.toFixed(1) + '%' },
-    { l: 'Transactions', v: data.transactions.toString() },
-    { l: 'Items Per Sale (IPT)', v: data.ipt.toFixed(1) },
-    { l: 'Unique Customers', v: data.uniqueCustomers.toString() },
-    { l: 'Repeat Rate', v: data.repeatRate.toFixed(1) + '%' }
-  ];
-
-  let y = 80;
-  kpis.forEach((k, i) => {
-    doc.setFontSize(10); doc.setTextColor(100); doc.text(k.l, 25 + (i % 2 * 90), y);
-    doc.setFontSize(16); doc.setTextColor(50); doc.setFont('helvetica', 'bold');
-    doc.text(k.v, 25 + (i % 2 * 90), y + 8);
-    if (i % 2 === 1) y += 25;
-  });
-
-  // Executive Insight Box
-  doc.setFillColor(245, 247, 250); doc.rect(20, y + 10, 170, 35, 'F');
-  doc.setTextColor(50); doc.setFontSize(10); doc.setFont('helvetica', 'bold');
-  doc.text('Executive Insight:', 25, y + 20);
-  doc.setFont('helvetica', 'normal');
-  const insight = `During this period, your business processed ${data.transactions} transactions with an average items-per-transaction of ${data.ipt.toFixed(1)}. Customer retention is sitting at ${data.repeatRate.toFixed(1)}%, suggesting ${data.repeatRate > 30 ? 'strong' : 'improving'} loyalty.`;
-  doc.text(doc.splitTextToSize(insight, 160), 25, y + 27);
-
-  addFooter(1);
-
-  // --- PAGE 2: REVENUE TRENDS & PAYMENT ANALYTICS ---
-  doc.addPage();
-  doc.setTextColor(...primaryColor); doc.setFontSize(18); doc.text('Revenue & Behavioral Analytics', 20, 25);
-  
-  try {
-    const trendCanvas = await html2canvas(document.getElementById('chart-revenue-trend').parentElement);
-    doc.addImage(trendCanvas.toDataURL('image/png'), 'PNG', 20, 40, 170, 60);
-    doc.setFontSize(10); doc.setTextColor(100); doc.text('Revenue Trend Over Time', 20, 105);
-
-    const peakCanvas = await html2canvas(document.getElementById('chart-hourly-peak').parentElement);
-    doc.addImage(peakCanvas.toDataURL('image/png'), 'PNG', 20, 115, 170, 60);
-    doc.text('Hourly Transaction Volume (Peak Hour: ' + data.peakHour + ':00)', 20, 180);
-
-    const payCanvas = await html2canvas(document.getElementById('chart-payments').parentElement);
-    doc.addImage(payCanvas.toDataURL('image/png'), 'PNG', 20, 195, 80, 60);
-    
-    const loyaltyCanvas = await html2canvas(document.getElementById('chart-loyalty').parentElement);
-    doc.addImage(loyaltyCanvas.toDataURL('image/png'), 'PNG', 110, 195, 80, 60);
-    
-    doc.text('Payment Methods', 20, 260);
-    doc.text('Customer Loyalty', 110, 260);
-  } catch (e) { console.error('PDF Chart Error', e); }
-  
-  addFooter(2);
-
-  // --- PAGE 3: CATEGORY & STAFF PERFORMANCE ---
-  doc.addPage();
-  doc.setTextColor(...primaryColor); doc.setFontSize(18); doc.text('Performance Breakdowns', 20, 25);
-  
-  doc.setFontSize(12); doc.setTextColor(50); doc.text('Revenue by Category', 20, 45);
-  let cy = 55;
-  Object.entries(data.categoryStats).sort((a,b)=>b[1]-a[1]).forEach(([cat, rev]) => {
-    doc.setFontSize(9); doc.text(cat, 25, cy);
-    doc.text(formatMoney(rev), 100, cy, { align: 'right' });
-    doc.setDrawColor(240); doc.line(20, cy+2, 100, cy+2);
-    cy += 8;
-  });
-
-  doc.text('Employee Efficiency', 115, 45);
-  let ey = 55;
-  // Simulating sales by cashier from data if available, otherwise mock
-  const salesByEmp = Object.entries(data.salesByCashier || { 'Administrator': data.revenue });
-  salesByEmp.sort((a,b)=>b[1]-a[1]).forEach(([emp, rev]) => {
-    doc.setFontSize(9); doc.text(emp, 120, ey);
-    doc.text(formatMoney(rev), 190, ey, { align: 'right' });
-    doc.setDrawColor(240); doc.line(115, ey+2, 190, ey+2);
-    ey += 8;
-  });
-
-  doc.setFontSize(12); doc.text('Labor & Productivity', 20, 150);
-  doc.setFontSize(10); doc.setTextColor(100);
-  doc.text(`Total Staff Hours: ${data.totalHours.toFixed(1)} hrs`, 25, 160);
-  doc.text(`Total Labor Cost: ${formatMoney(data.payrollTotal + data.advancesTotal)}`, 25, 167);
-  doc.setTextColor(...primaryColor);
-  doc.text(`Revenue per Labor Hour: ${formatMoney(data.revenue / (data.totalHours || 1))}`, 25, 174);
-
-  addFooter(3);
-
-  // --- PAGE 4: INVENTORY INTELLIGENCE ---
-  doc.addPage();
-  doc.setTextColor(...primaryColor); doc.setFontSize(18); doc.text('Inventory & Stock Analysis', 20, 25);
-  
-  doc.setTextColor(50); doc.setFontSize(11); doc.setFont('helvetica', 'bold');
-  doc.text(`Inventory Turnover: ${(data.turnoverRate * 100).toFixed(1)}%`, 20, 40);
-  doc.text(`Sell-Through Rate: ${(data.sellThroughRate * 100).toFixed(1)}%`, 110, 40);
-  
-  doc.text('Low Stock Critical Alerts', 20, 55);
-  doc.setFillColor(50, 60, 80); doc.rect(20, 58, 170, 8, 'F');
-  doc.setTextColor(255); doc.setFontSize(8);
-  doc.text('PRODUCT', 25, 63.5); doc.text('STOCK', 80, 63.5); doc.text('THRESHOLD', 105, 63.5); doc.text('STATUS', 130, 63.5); doc.text('SUGGESTED ORDER', 155, 63.5);
-
-  let iy = 73;
-  doc.setTextColor(50); doc.setFont('helvetica', 'normal');
-  const lowItems = (await db.products.toArray()).filter(p => p.stock_qty <= p.low_stock_threshold).slice(0, 20);
-  lowItems.forEach(p => {
-    doc.text(p.name, 25, iy);
-    doc.text(p.stock_qty.toString(), 80, iy);
-    doc.text(p.low_stock_threshold.toString(), 105, iy);
-    doc.setTextColor(200, 50, 50); doc.text('CRITICAL', 130, iy); doc.setTextColor(50);
-    doc.text((p.low_stock_threshold * 2.5).toFixed(0), 155, iy);
-    iy += 7;
-  });
-
-  addFooter(4);
-
-  // --- PAGE 5: MARKET STRATEGY & OPPORTUNITIES ---
-  doc.addPage();
-  doc.setTextColor(...primaryColor); doc.setFontSize(18); doc.text('Market Strategy & Growth Opportunities', 20, 25);
-  
-  doc.setTextColor(50); doc.setFontSize(12); doc.setFont('helvetica', 'bold');
-  doc.text('Competitive Positioning', 20, 45);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-  const strategy = [
-    { t: 'Market Gap:', d: 'Your peak activity occurs at ' + data.peakHour + ':00. Consider limited-time offers to drive traffic during slower hours.' },
-    { t: 'Customer Experience:', d: 'With a repeat rate of ' + data.repeatRate.toFixed(1) + '%, focused loyalty rewards for the ' + (100 - data.repeatRate).toFixed(1) + '% new customers could significantly boost revenue.' },
-    { t: 'Pricing Strategy:', d: 'The current gross margin is ' + data.profitMargin.toFixed(1) + '%. Review top sellers to see if premium pricing is sustainable.' },
-    { t: 'Operational Gap:', d: 'Labor efficiency is ' + formatMoney(data.revenue / (data.totalHours || 1)) + '/hr. Optimization during off-peak could save on overheads.' }
-  ];
-
-  let sy = 55;
-  strategy.forEach(s => {
-    doc.setFont('helvetica', 'bold'); doc.text(s.t, 25, sy);
-    doc.setFont('helvetica', 'normal');
-    const lines = doc.splitTextToSize(s.d, 150);
-    doc.text(lines, 30, sy + 5);
-    sy += (lines.length * 5) + 10;
-  });
-
-  addFooter(5);
-
-  // --- PAGE 6: AI INSIGHTS & SUMMARY ---
-  doc.addPage();
-  doc.setTextColor(...primaryColor); doc.setFontSize(18); doc.text('AI Strategic Analysis', 20, 25);
-  
-  const aiContent = document.getElementById('ai-content');
-  if (aiContent && aiContent.style.display !== 'none') {
-    doc.setTextColor(50); doc.setFontSize(10);
-    const splitText = doc.splitTextToSize(aiContent.innerText, 170);
-    doc.text(splitText, 20, 45);
-  } else {
-    doc.text('Generate AI Insights on the dashboard to include them here.', 20, 45);
-  }
-
-  addFooter(6);
-  const context = `This report provides an analytical snapshot of ${bizName}'s performance during the selected period. 
-  
-  Comparative Benchmarks:
-  - Sector Average Margin: 15-25%
-  - Target Sell-Through: >35%
-  - Optimal IPT: 1.8+
-  
-  Disclaimer: The data provided herein is for informational purposes and business strategy support. Financial accuracy depends on the integrity of local transaction logging and inventory updates. NexPOS is not liable for business decisions made based on AI-generated suggestions.`;
-  doc.text(doc.splitTextToSize(context, 170), 20, 40);
-
-  addFooter(6);
-
-  doc.save(`${bizName.replace(/\s+/g, '_')}_Business_Report_${new Date().toISOString().split('T')[0]}.pdf`);
-  showToast('success', 'Professional Business Report generated successfully.');
-};
 
 async function fetchReportData(start, end) {
   // 1. Sales Data
@@ -2323,16 +2006,24 @@ window.copyAIReport = () => {
 };
 
 window.downloadPDFReport = async () => {
-  if (!currentReportData) return showToast('error', 'No data available to generate report');
-  const aiTextRaw = document.getElementById('ai-content').innerText || "AI analysis not generated for this report. Please use the 'Generate AI Report' button for deep insights.";
-
+  if (!currentReportData) return showToast('error', 'Please generate or refresh a report first');
+  
   const btn = document.getElementById('btn-download-pdf');
   const originalText = btn.innerHTML;
   btn.disabled = true;
 
   try {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF('p', 'mm', 'a4');
+    // 1. Get jsPDF constructor robustly
+    let jspdfLib;
+    if (window.jspdf && window.jspdf.jsPDF) {
+      jspdfLib = window.jspdf.jsPDF;
+    } else if (window.jsPDF) {
+      jspdfLib = window.jsPDF;
+    }
+    
+    if (!jspdfLib) throw new Error("PDF generation library (jsPDF) is not loaded. Please check your internet connection.");
+
+    const doc = new jspdfLib('p', 'mm', 'a4');
     const pageWidth = 210;
     const pageHeight = 297;
     const margin = 20;
@@ -2340,77 +2031,90 @@ window.downloadPDFReport = async () => {
     let curY = 40;
     let pageNum = 1;
 
-    const setProgress = (step, msg) => { btn.innerText = `Step ${step}/5: ${msg}`; };
+    const setProgress = (step, msg) => { 
+      btn.innerText = `Step ${step}/5: ${msg}`; 
+      console.log(`PDF Gen Step ${step}: ${msg}`);
+    };
 
-    setProgress(1, "Fetching inventory data...");
+    const aiTextRaw = document.getElementById('ai-content')?.innerText || "AI analysis not generated. Use the 'Generate AI Report' button for insights.";
+
+    // --- STEP 1: DATA GATHERING ---
+    setProgress(1, "Analyzing inventory...");
     const invData = await fetchInventoryIntelligence();
 
-    setProgress(2, "Searching market information...");
+    setProgress(2, "Fetching market trends...");
     const marketData = await fetchMarketIntelligence();
 
-    setProgress(3, "Capturing charts...");
+    setProgress(3, "Processing report structure...");
     const bizName = currentSettings.biz_name || 'NexPOS Shop';
-    const periodType = document.querySelector('.btn-group .btn.active')?.innerText || 'Today';
+    const periodType = document.querySelector('.btn-group .btn.active')?.innerText || 'Report';
     const dateRange = `${new Date(currentReportData.start).toLocaleDateString()} – ${new Date(currentReportData.end).toLocaleDateString()}`;
 
-    // --- PAGE 1: COVER ---
-    doc.setFillColor(27, 29, 42); // rgbDark
+    // --- PAGE 1: COVER PAGE ---
+    doc.setFillColor(27, 29, 42); 
     doc.rect(0, 0, pageWidth, pageHeight, 'F');
-    doc.setFillColor(91, 95, 199); // rgbPrimary
+    doc.setFillColor(91, 95, 199); 
     doc.circle(pageWidth/2, 80, 15, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(16); doc.setFont('helvetica', 'bold');
     doc.text("NP", pageWidth/2, 82, { align: 'center' });
-    doc.setFontSize(26); doc.text(bizName, pageWidth/2, 110, { align: 'center' });
+    doc.setFontSize(26); doc.text(bizName.toUpperCase(), pageWidth/2, 110, { align: 'center' });
     doc.setFontSize(18); doc.setFont('helvetica', 'normal');
-    doc.text("6-Page Comprehensive Business Report", pageWidth/2, 125, { align: 'center' });
+    doc.text("Business Performance Report", pageWidth/2, 125, { align: 'center' });
     doc.setDrawColor(91, 95, 199); doc.setLineWidth(1); doc.line(pageWidth/2 - 40, 135, pageWidth/2 + 40, 135);
-    doc.setFontSize(12); doc.text(`${periodType} Report: ${dateRange}`, pageWidth/2, 150, { align: 'center' });
-    doc.setFontSize(9); doc.text("Powered by NexPOS Intelligence Engine", pageWidth/2, pageHeight - 20, { align: 'center' });
+    doc.setFontSize(12); doc.text(`${periodType}: ${dateRange}`, pageWidth/2, 150, { align: 'center' });
+    doc.setFontSize(9); doc.text("NexPOS Ceylon — Business Intelligence Module", pageWidth/2, pageHeight - 20, { align: 'center' });
 
-    // --- PAGE 2: DASHBOARD ---
-    setProgress(4, "Building PDF pages...");
+    // --- PAGE 2: EXECUTIVE DASHBOARD ---
+    setProgress(4, "Building performance pages...");
     doc.addPage(); pageNum++;
     addPDFHeaderFooter(doc, bizName, pageNum, 6);
-    doc.setTextColor(50, 50, 50); doc.setFontSize(16); doc.setFont('helvetica', 'bold');
-    doc.text("Performance Overview", margin, 40);
+    doc.setTextColor(31, 41, 55); doc.setFontSize(16); doc.setFont('helvetica', 'bold');
+    doc.text("Executive Summary", margin, 40);
 
     const kpis = [
       { label: 'Total Revenue', value: formatMoney(currentReportData.revenue), sub: `from ${currentReportData.transactions} transactions`, color: [16, 185, 129] },
-      { label: 'Net Profit (Est.)', value: formatMoney(currentReportData.grossProfit), sub: `${((currentReportData.grossProfit / (currentReportData.revenue || 1)) * 100).toFixed(1)}% margin`, color: [245, 158, 11] },
-      { label: 'Unique Customers', value: currentReportData.uniqueCustomers.toString(), sub: 'distinct buyers', color: [59, 130, 246] },
-      { label: 'Items Per Sale', value: (currentReportData.totalItemsSold / (currentReportData.transactions || 1)).toFixed(1), sub: 'avg items per basket', color: [168, 85, 247] },
-      { label: 'Avg Transaction', value: formatMoney(currentReportData.revenue / (currentReportData.transactions || 1)), sub: 'revenue per customer', color: [107, 114, 128] },
-      { label: 'Tax Liability', value: formatMoney(currentReportData.tax), sub: 'collected tax', color: [239, 68, 68] }
+      { label: 'Gross Profit', value: formatMoney(currentReportData.grossProfit), sub: `${((currentReportData.grossProfit / (currentReportData.revenue || 1)) * 100).toFixed(1)}% margin`, color: [245, 158, 11] },
+      { label: 'Avg Sale', value: formatMoney(currentReportData.revenue / (currentReportData.transactions || 1)), sub: 'revenue per customer', color: [59, 130, 246] },
+      { label: 'Items Per Sale', value: (currentReportData.totalItemsSold / (currentReportData.transactions || 1)).toFixed(1), sub: 'average basket size', color: [168, 85, 247] }
     ];
 
-    let kX = margin, kY = 50, boxW = (contentWidth - 10) / 3, boxH = 30;
+    let kX = margin, kY = 50, boxW = (contentWidth - 10) / 2, boxH = 30;
     kpis.forEach((k, i) => {
-      doc.setFillColor(255, 255, 255); doc.setDrawColor(230, 230, 230); doc.rect(kX, kY, boxW, boxH, 'FD');
+      doc.setFillColor(255, 255, 255); doc.setDrawColor(240, 240, 240); doc.rect(kX, kY, boxW, boxH, 'FD');
       doc.setFillColor(...k.color); doc.rect(kX, kY, 2, boxH, 'F');
-      doc.setTextColor(120, 120, 120); doc.setFontSize(7); doc.text(k.label, kX + 6, kY + 8);
-      doc.setTextColor(50, 50, 50); doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text(k.value, kX + 6, kY + 16);
-      doc.setFontSize(6); doc.setFont('helvetica', 'normal'); doc.setTextColor(150, 150, 150); doc.text(k.sub, kX + 6, kY + 23);
-      if ((i + 1) % 3 === 0) { kX = margin; kY += boxH + 6; } else { kX += boxW + 5; }
+      doc.setTextColor(100, 100, 100); doc.setFontSize(8); doc.text(k.label, kX + 6, kY + 8);
+      doc.setTextColor(31, 41, 55); doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.text(k.value, kX + 6, kY + 18);
+      doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(150, 150, 150); doc.text(k.sub, kX + 6, kY + 25);
+      if ((i + 1) % 2 === 0) { kX = margin; kY += boxH + 5; } else { kX += boxW + 5; }
     });
 
     curY = kY + 10;
-    doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text("Daily Revenue Trend", margin, curY);
-    const trendEl = document.getElementById('chart-revenue-trend').parentElement;
-    const trendCanvas = await html2canvas(trendEl, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
-    doc.addImage(trendCanvas.toDataURL('image/png'), 'PNG', margin, curY + 5, contentWidth, 50);
-
-    curY += 70;
-    doc.text("Revenue by Payment Type", margin, curY);
-    const payEl = document.getElementById('chart-payments').parentElement;
-    // Set explicit size for doughnut to avoid squishing
-    const payCanvas = await html2canvas(payEl, { scale: 2, useCORS: true, backgroundColor: '#ffffff', width: 400, height: 400 });
-    doc.addImage(payCanvas.toDataURL('image/png'), 'PNG', pageWidth/2 - 35, curY + 5, 70, 70);
+    setProgress(5, "Capturing visual data...");
     
-    curY += 80;
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-    const payText = `Cash: ${formatMoney(currentReportData.payments.cash)}   |   Card: ${formatMoney(currentReportData.payments.card)}   |   Credit: ${formatMoney(currentReportData.payments.credit)}`;
-    doc.text(payText, pageWidth/2, curY, { align: 'center' });
+    // Revenue Trend Chart
+    const trendEl = document.getElementById('chart-revenue-trend');
+    if (trendEl) {
+      try {
+        const trendCanvas = await html2canvas(trendEl.parentElement, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+        doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(31, 41, 55);
+        doc.text("Revenue Trend Analysis", margin, curY);
+        doc.addImage(trendCanvas.toDataURL('image/png'), 'PNG', margin, curY + 5, contentWidth, 60);
+        curY += 75;
+      } catch (ce) { console.warn("Failed to capture trend chart", ce); curY += 10; }
+    }
+
+    // Payment Type Chart
+    const payEl = document.getElementById('chart-payments');
+    if (payEl) {
+      try {
+        if (curY > pageHeight - 80) { doc.addPage(); pageNum++; addPDFHeaderFooter(doc, bizName, pageNum, 6); curY = 40; }
+        doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+        doc.text("Revenue by Payment Method", margin, curY);
+        const payCanvas = await html2canvas(payEl.parentElement, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+        doc.addImage(payCanvas.toDataURL('image/png'), 'PNG', margin + (contentWidth - 60)/2, curY + 5, 60, 60);
+      } catch (ce) { console.warn("Failed to capture payment chart", ce); }
+    }
 
     // --- PAGE 3: TOP PRODUCTS ---
     doc.addPage(); pageNum++;
@@ -2425,7 +2129,7 @@ window.downloadPDFReport = async () => {
     ['RANK', 'PRODUCT', 'UNITS', 'REVENUE', '% TOTAL'].forEach((h, i) => { doc.text(h, pX + 2, pY); pX += pCols[i]; });
 
     pY += 8;
-    currentReportData.topProducts.forEach((p, i) => {
+    (currentReportData.topProducts || []).forEach((p, i) => {
       doc.setTextColor(50, 50, 50); doc.setFontSize(8);
       if (i % 2 !== 0) { doc.setFillColor(248, 249, 250); doc.rect(margin, pY - 5, contentWidth, 8, 'F'); }
       let rX = margin;
@@ -2440,7 +2144,7 @@ window.downloadPDFReport = async () => {
     pY += 15;
     doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.text("Sales Breakdown by Category", margin, pY);
     pY += 8;
-    Object.entries(currentReportData.categoryStats).sort((a,b)=>b[1]-a[1]).forEach(([cat, rev]) => {
+    Object.entries(currentReportData.categoryStats || {}).sort((a,b)=>b[1]-a[1]).forEach(([cat, rev]) => {
       doc.setFontSize(9); doc.setFont('helvetica', 'normal');
       doc.text(cat, margin + 2, pY);
       doc.text(formatMoney(rev), pageWidth - margin - 2, pY, { align: 'right' });
@@ -2450,7 +2154,7 @@ window.downloadPDFReport = async () => {
     pY += 10;
     doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.text("Employee Performance (Sales)", margin, pY);
     pY += 8;
-    Object.entries(currentReportData.salesByCashier).sort((a,b)=>b[1]-a[1]).forEach(([emp, rev]) => {
+    Object.entries(currentReportData.salesByCashier || {}).sort((a,b)=>b[1]-a[1]).forEach(([emp, rev]) => {
       doc.setFontSize(9); doc.setFont('helvetica', 'normal');
       doc.text(emp, margin + 2, pY);
       doc.text(formatMoney(rev), pageWidth - margin - 2, pY, { align: 'right' });
@@ -2618,40 +2322,45 @@ function addPDFHeaderFooter(doc, bizName, page, total) {
 // --- INTELLIGENCE HELPERS ---
 
 async function fetchInventoryIntelligence() {
-  // Query 1: Low Stock
-  const { data: lowStockData } = await supa.from('products')
-    .select('name, stock_qty, low_stock_threshold, retail_price, cost_price, category')
-    .eq('organization_id', currentOrgId)
-    .eq('is_active', true)
-    .filter('stock_qty', 'lte', 'low_stock_threshold') // Simplification for RLS/JS layer
-    .order('stock_qty', { ascending: true });
-
-  // Query 2: Velocity
-  const { data: velocityRaw } = await supa.from('products')
-    .select(`
-      id, name, stock_qty, cost_price, retail_price,
-      sale_items(quantity, sales(created_at))
-    `)
-    .eq('organization_id', currentOrgId);
+  try {
+    const orgId = db.currentOrgId;
     
-  const processedVelocity = (velocityRaw || []).map(p => {
-    const units30d = p.sale_items ? p.sale_items.filter(si => new Date(si.sales.created_at) >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).reduce((sum, item) => sum + item.quantity, 0) : 0;
-    const dailyRate = units30d / 30;
-    const daysUntilStockout = dailyRate > 0 ? p.stock_qty / dailyRate : 999;
-    return { ...p, units30d, daysUntilStockout };
-  }).sort((a, b) => a.daysUntilStockout - b.daysUntilStockout).slice(0, 10);
+    // We use the already initialized db wrappers for consistency and safety
+    const allProducts = await db.products.toArray();
+    const allSales = await db.sales.toArray();
+    const allItems = await db.sale_items.toArray();
+    
+    // 1. Low Stock Logic
+    const lowStockData = allProducts.filter(p => p.is_active && p.stock_qty <= (p.low_stock_threshold || 5));
+    lowStockData.sort((a, b) => a.stock_qty - b.stock_qty);
 
-  // Query 3: Overstock
-  const processedOverstock = (velocityRaw || [])
-    .map(p => {
-      const units30d = p.sale_items ? p.sale_items.filter(si => new Date(si.sales.created_at) >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).reduce((sum, item) => sum + item.quantity, 0) : 0;
-      return { ...p, units30d, stock_value: p.stock_qty * p.cost_price };
-    })
-    .filter(p => p.stock_qty > 50 && p.units30d < 5)
-    .sort((a, b) => b.stock_value - a.stock_value)
-    .slice(0, 5);
+    // 2. Velocity Logic (Sales in last 30 days)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const recentSales = allSales.filter(s => s.date >= thirtyDaysAgo);
+    const recentSaleIds = new Set(recentSales.map(s => s.id));
+    
+    const processedVelocity = allProducts.map(p => {
+      const pItems = allItems.filter(i => i.product_id === p.id && recentSaleIds.has(i.sale_id));
+      const units30d = pItems.reduce((sum, item) => sum + item.quantity, 0);
+      const dailyRate = units30d / 30;
+      const daysUntilStockout = dailyRate > 0 ? p.stock_qty / dailyRate : 999;
+      return { ...p, units30d, daysUntilStockout };
+    }).sort((a, b) => a.daysUntilStockout - b.daysUntilStockout).slice(0, 10);
 
-  return { lowStock: lowStockData || [], velocity: processedVelocity, overstock: processedOverstock };
+    // 3. Overstock Logic
+    const processedOverstock = allProducts.map(p => {
+      const pItems = allItems.filter(i => i.product_id === p.id && recentSaleIds.has(i.sale_id));
+      const units30d = pItems.reduce((sum, item) => sum + item.quantity, 0);
+      return { ...p, units30d, stock_value: p.stock_qty * (p.cost_price || 0) };
+    }).filter(p => p.stock_qty > 50 && p.units30d < 5)
+      .sort((a, b) => b.stock_value - a.stock_value)
+      .slice(0, 5);
+
+    return { lowStock: lowStockData, velocity: processedVelocity, overstock: processedOverstock };
+  } catch (err) {
+    console.error('fetchInventoryIntelligence error:', err);
+    return { lowStock: [], velocity: [], overstock: [] };
+  }
 }
 
 async function fetchMarketIntelligence() {
@@ -2700,13 +2409,14 @@ async function fetchMarketIntelligence() {
 function generateSmartSuggestions(invData) {
   const suggestions = [];
   const report = currentReportData;
+  if (!report) return ["No report data available"];
   const period = document.querySelector('.btn-group .btn.active')?.innerText || 'Today';
 
   if (report.payments.cash / (report.revenue || 1) > 0.9) {
     suggestions.push("→ Consider accepting card payments — you may be losing customers who prefer digital payments");
   }
 
-  const urgentItem = invData.velocity.find(v => v.daysUntilStockout < 7);
+  const urgentItem = (invData?.velocity || []).find(v => v.daysUntilStockout < 7);
   if (urgentItem) {
     suggestions.push(`→ URGENT: Reorder ${urgentItem.name} immediately — estimated stockout in ${Math.round(urgentItem.daysUntilStockout)} days`);
   }
@@ -2715,7 +2425,7 @@ function generateSmartSuggestions(invData) {
     suggestions.push("→ Your profit margin is below 20%. Review pricing on low-margin products.");
   }
 
-  if (report.topProducts[0] && report.topProducts[0].revenue > report.revenue * 0.5) {
+  if (report.topProducts && report.topProducts[0] && report.topProducts[0].revenue > report.revenue * 0.5) {
     suggestions.push(`→ ${report.topProducts[0].name} drives over 50% of revenue. Ensure you never run out of it.`);
   }
 
