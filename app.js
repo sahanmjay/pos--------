@@ -1569,7 +1569,7 @@ window.renderAIReports = async () => {
   if (secondaryContainer) secondaryContainer.innerHTML = secondaryHtml;
 
   // 3. Update HR & Operations
-  document.getElementById('kpi-hr-hours').textContent = `${data.totalHours.toFixed(1)}h`;
+  document.getElementById('kpi-hr-hours').textContent = `${data.totalHours.toFixed(1)} hrs`;
   document.getElementById('kpi-hr-cost').textContent = formatMoney(data.payrollTotal + data.advancesTotal);
   document.getElementById('hr-insight-text').textContent = data.totalHours > 0 
     ? `Staff productivity: ${formatMoney(data.revenue / (data.totalHours || 1))} per hour.`

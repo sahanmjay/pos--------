@@ -24,25 +24,30 @@
   <div class="login-card">
     <div class="login-logo">
       <div class="login-logo-icon">NP</div>
-      <div>
+      <div class="login-logo-content">
         <div class="login-logo-text">NexPOS</div>
-        <div class="login-logo-sub">Universal Point of Sale</div>
+        <div class="login-logo-sub">Business Intelligence System</div>
       </div>
     </div>
     <div class="login-title">Welcome back</div>
-    <div class="login-subtitle">Sign in to continue to your business</div>
+    <div class="login-subtitle">Sign in to manage your business operations</div>
     <div class="form-group">
       <label class="form-label">Username</label>
-      <input class="form-input" type="text" id="login-user" autocomplete="off" placeholder="Enter username">
+      <input class="form-input" type="text" id="login-user" autocomplete="off" placeholder="Enter your username">
     </div>
     <div class="form-group">
       <label class="form-label">Password</label>
-      <input class="form-input" type="password" id="login-pass" autocomplete="new-password" placeholder="Enter password">
+      <input class="form-input" type="password" id="login-pass" autocomplete="new-password" placeholder="••••••••">
     </div>
-    <div id="login-error" style="color:var(--danger);font-size:12px;margin-bottom:12px;display:none"></div>
-    <button class="btn btn-primary btn-full" onclick="doLogin()" style="padding:12px">Sign In →</button>
-    <div style="margin-top:16px;text-align:center;font-size:12px;color:var(--text-muted)">Please enter your credentials to login</div>
+    <div id="login-error" class="login-error-box" style="display:none"></div>
+    <button class="btn btn-primary btn-full" onclick="doLogin()" id="login-btn" style="padding:14px; font-size:15px; border-radius:12px; margin-top:8px">
+      Sign In to Dashboard →
+    </button>
+    <div style="margin-top:24px; text-align:center; font-size:13px; color:var(--text-muted)">
+      Securely powered by <span style="color:var(--brand); font-weight:600">NexPOS Cloud</span>
+    </div>
   </div>
+
 </div>
 
 <!-- ═══ APP SHELL ═══ -->
@@ -443,7 +448,7 @@
                   <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
                     <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
                       <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Hours</div>
-                      <div style="font-size:18px; font-weight:700" id="kpi-hr-hours">0h</div>
+                      <div style="font-size:18px; font-weight:700" id="kpi-hr-hours">0.0 hrs</div>
                     </div>
                     <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
                       <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Payroll</div>
@@ -487,85 +492,9 @@
               </div>
             </div>
           </div>
-
-            <!-- HR & Operations -->
-            <div class="card">
-              <div class="card-body">
-                <div class="section-header">👥 HR & Operations Insight</div>
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px">
-                  <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
-                    <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Hours Worked</div>
-                    <div style="font-size:18px; font-weight:700" id="kpi-hr-hours">0h</div>
-                  </div>
-                  <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
-                    <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Payroll Cost</div>
-                    <div style="font-size:18px; font-weight:700" id="kpi-hr-cost">0.00</div>
-                  </div>
-                </div>
-                <div id="hr-insight-text" style="margin-top:12px; font-size:13px; color:var(--text-secondary)"></div>
-              </div>
-            </div>
-
-            <!-- Inventory Intelligence -->
-            <div class="card">
-              <div class="card-body">
-                <div class="section-header">📦 Inventory Intelligence</div>
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px">
-                  <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
-                    <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Total Stock Value</div>
-                    <div style="font-size:18px; font-weight:700" id="kpi-inv-value">0.00</div>
-                  </div>
-                  <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)">
-                    <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Low Stock Items</div>
-                    <div style="font-size:18px; font-weight:700; color:var(--danger)" id="kpi-inv-low">0</div>
-                  </div>
-                </div>
-                <div id="inv-insight-text" style="margin-top:12px"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Detailed Breakdowns -->
-          <div id="report-breakdowns"></div>
-
-          <!-- Top Products Table -->
-          <div class="card" style="margin-top:20px">
-            <div class="card-body">
-              <div class="section-header">Top Selling Products</div>
-              <div class="data-table-wrap">
-                <table class="data-table">
-                  <thead><tr><th>Rank</th><th>Product</th><th>Units Sold</th><th>Revenue</th></tr></thead>
-                  <tbody id="report-top-products-tbody"></tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          <!-- AI Intelligence Section -->
-          <div class="card" style="margin-top:20px">
-            <div class="card-body">
-              <!-- Hidden div for PDF generation -->
-              <div id="ai-content" style="display:none"></div>
-              
-              <div id="ai-ready" style="display:none; text-align:center; padding:30px">
-                <div style="font-size:40px; margin-bottom:15px">📊</div>
-                <div class="section-header" style="justify-content:center">AI Analysis Complete!</div>
-                <div class="text-muted" style="margin-bottom:20px">Your professional business report is ready for download.</div>
-                <button class="btn btn-primary btn-full" onclick="downloadPDFReport()" id="btn-download-pdf-big">⬇ Download PDF Report</button>
-                <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="generateAIInsight()">🔄 Regenerate</button>
-              </div>
-
-              <div id="ai-empty" style="text-align:center; padding:30px">
-                <div style="font-size:40px; margin-bottom:15px">✨</div>
-                <div class="section-header" style="justify-content:center">Business Intelligence</div>
-                <div class="text-muted" style="margin-bottom:20px">Get deep insights and recommendations for your business performance.</div>
-                <button class="btn btn-primary btn-full" onclick="generateAIInsight()">Generate AI Report</button>
-              </div>
-            </div>
-          </div>
-
         </div> <!-- /page -->
       </div> <!-- /screen-ai-reports -->
+
 
     </div><!-- /main -->
   </div><!-- /app-body -->
@@ -624,4 +553,4 @@
 <script src="app.js"></script>
 </body>
 </html>
-</html>
+
