@@ -7,6 +7,9 @@ let currentReceiptData = null;
 
 // --- INIT & UTILS ---
 document.addEventListener('DOMContentLoaded', async () => {
+  // Clear any existing login lockouts (Temporary fix for user access)
+  localStorage.removeItem('pos_login_attempts');
+  
   setInterval(updateClock, 1000);
   updateClock();
   
