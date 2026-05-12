@@ -21,8 +21,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   
   // Listen for online/offline status
-  window.addEventListener('online', syncOfflineSales);
-  window.addEventListener('offline', () => showToast('info', 'Working offline — data will sync when connected'));
+  updateConnectionBadge();
+  window.addEventListener('online', () => { updateConnectionBadge(); syncOfflineSales(); });
+  window.addEventListener('offline', () => { updateConnectionBadge(); showToast('info', 'Working offline — data will sync when connected'); });
   
   // Physical Barcode Scanner Listener
   initPhysicalScanner();
@@ -48,6 +49,15 @@ async function syncOfflineSales() {
   }
   localStorage.removeItem('nexpos_offline_queue');
   showToast('success', 'Offline sales synced successfully');
+}
+
+function updateConnectionBadge() {
+  const el = document.getElementById('connection-status');
+  if (!el) return;
+  const isOnline = navigator.onLine;
+  el.classList.toggle('online', isOnline);
+  el.classList.toggle('offline', !isOnline);
+  el.innerHTML = `<span class="status-dot"></span> ${isOnline ? 'Online' : 'Offline'}`;
 }
 
 function updateClock() {
@@ -171,6 +181,8 @@ async function doLogin() {
   document.getElementById('user-avatar').textContent = user.display_name.charAt(0).toUpperCase();
   document.getElementById('user-name').textContent = user.display_name;
   document.getElementById('role-badge').textContent = user.role;
+  const sidebarRoleBadge = document.getElementById('sidebar-role-badge');
+  if (sidebarRoleBadge) sidebarRoleBadge.textContent = user.role;
   
   // Apply role restrictions
   document.getElementById('nav-pos').style.display = 'none';
@@ -396,14 +408,25 @@ async function renderPosGrid() {
   
   const grid = document.getElementById('pos-grid');
   grid.innerHTML = products.map(p => {
+    const isOutOfStock = p.stock_qty <= 0;
     const isLowStock = p.stock_qty > 0 && p.stock_qty <= (p.low_stock_threshold || 5);
+    const stockLabel = isOutOfStock ? 'Out of stock' : `${p.stock_qty} ${p.unit || ''}`.trim();
+    const stockState = isOutOfStock ? 'out' : (isLowStock ? 'low' : 'normal');
     return `
-      <div class="pos-product-card ${p.stock_qty<=0?'out-of-stock':''}" onclick="addToCart(${p.id})" style="position:relative">
-        ${isLowStock ? '<div style="position:absolute; top:5px; right:5px; background:var(--warning); color:white; font-size:9px; font-weight:800; padding:2px 6px; border-radius:10px; letter-spacing:0.5px">LOW STOCK</div>' : ''}
-        <div class="pos-prod-icon">${getIcon(p.category)}</div>
-        <div class="pos-prod-name" title="${p.name}">${p.name}</div>
-        <div class="pos-prod-price">${formatMoney(p.retail_price)}</div>
-        <div class="pos-prod-stock" style="${isLowStock?'color:var(--warning);font-weight:700':''}">${p.stock_qty>0 ? p.stock_qty+' '+p.unit : 'Out of stock'}</div>
+      <div class="pos-product-card ${isOutOfStock?'out-of-stock':''} ${isLowStock?'low-stock':''}" onclick="addToCart(${p.id})">
+        <div class="pos-card-topline">
+          <span class="pos-category-label">${p.category || 'General'}</span>
+          <span class="stock-badge ${stockState}">${isLowStock ? 'Low stock' : stockLabel}</span>
+        </div>
+        <div class="pos-prod-icon-wrap"><div class="pos-prod-icon">${getIcon(p.category)}</div></div>
+        <div class="pos-prod-content">
+          <div class="pos-prod-name" title="${p.name}">${p.name}</div>
+          <div class="pos-prod-meta">${p.sku || p.barcode || 'Retail item'}</div>
+        </div>
+        <div class="pos-prod-footer">
+          <div class="pos-prod-price">${formatMoney(p.retail_price)}</div>
+          <div class="pos-prod-stock ${stockState}">${stockLabel}</div>
+        </div>
       </div>
     `;
   }).join('');
@@ -447,24 +470,30 @@ let manualDiscount = 0;
 function renderCart() {
   const cEl = document.getElementById('cart-items');
   if(cart.length === 0) {
-    cEl.innerHTML = `<div class="cart-empty"><div class="cart-empty-icon">🛒</div><div>Cart is empty</div></div>`;
+    cEl.innerHTML = `
+      <div class="cart-empty">
+        <div class="cart-empty-icon"><i class="fa-solid fa-basket-shopping"></i></div>
+        <div class="cart-empty-title">Cart is Empty</div>
+        <div class="cart-empty-subtitle">Select products to start a new order</div>
+      </div>`;
     updateTotals();
     return;
   }
   
   cEl.innerHTML = cart.map((item, i) => `
     <div class="cart-item">
+      <div class="cart-item-avatar"><i class="fa-solid fa-box-open"></i></div>
       <div class="cart-item-info">
         <div class="cart-item-name" title="${item.name}">${item.name}</div>
         <div class="cart-item-price">@ ${formatMoney(item.unit_price)}</div>
       </div>
       <div class="cart-item-qty">
-        <button onclick="updateCartQty(${i}, -1)">-</button>
+        <button onclick="updateCartQty(${i}, -1)" aria-label="Decrease quantity">−</button>
         <span>${item.quantity}</span>
-        <button onclick="updateCartQty(${i}, 1)">+</button>
+        <button onclick="updateCartQty(${i}, 1)" aria-label="Increase quantity">+</button>
       </div>
       <div class="cart-item-total">${formatMoney(item.quantity * item.unit_price)}</div>
-      <button class="cart-item-del" onclick="removeCartItem(${i})">✕</button>
+      <button class="cart-item-del" onclick="removeCartItem(${i})" aria-label="Remove item"><i class="fa-solid fa-xmark"></i></button>
     </div>
   `).join('');
   updateTotals();
