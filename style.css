@@ -594,3 +594,22 @@ body { font-family: var(--font); background: var(--surface-2); color: var(--text
 .letter-spacing-1 { letter-spacing: 0.5px; }
 .td-mono { font-family: var(--mono) !important; font-size: 12px; }
 .td-right { text-align: right; }
+
+/* REPORT ENHANCEMENTS */
+#report-executive-summary {
+  background: linear-gradient(to right, rgba(91, 95, 199, 0.05), transparent);
+  border-left: 4px solid var(--brand) !important;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 24px;
+}
+
+#executive-summary-content b {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.spinner-lg {
+  width: 48px;
+  height: 48px;
+  border-width: 5px;
+}

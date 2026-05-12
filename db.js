@@ -135,6 +135,7 @@ const db = {
   payroll:       new SupaTable('payroll'),
   advances:      new SupaTable('advances'),
   pos_shifts:    new SupaTable('pos_shifts'),
+  shift_closures: new SupaTable('shift_closures'),
   audit_log:     new SupaTable('audit_log'),
 };
 

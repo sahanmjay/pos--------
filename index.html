@@ -215,18 +215,45 @@
       <div class="screen" id="screen-sales-history">
         <div class="page">
           <div class="page-header">
-            <div><div class="page-title">Sales History</div><div class="page-subtitle">View all transactions</div></div>
-            <div class="page-actions"><button class="btn btn-secondary btn-sm" onclick="exportSalesCSV()">⬇ Export CSV</button></div>
+            <div><div class="page-title">Sales & Shifts</div><div class="page-subtitle">View transactions and session closures</div></div>
+            <div class="page-actions" style="display:flex; gap:10px">
+              <div class="btn-group">
+                <button class="btn btn-ghost btn-sm active" id="tab-sales-list" onclick="toggleSalesTab('sales')">Transactions</button>
+                <button class="btn btn-ghost btn-sm" id="tab-shifts-list" onclick="toggleSalesTab('shifts')">Shift History</button>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="exportSalesCSV()">⬇ Export CSV</button>
+            </div>
           </div>
           <div class="card">
-            <div class="filter-bar">
-              <input type="date" class="filter-select" id="sale-date-from">
-              <span style="color:var(--text-muted);font-size:13px">to</span>
-              <input type="date" class="filter-select" id="sale-date-to">
-              <button class="btn btn-primary btn-sm" onclick="renderSalesHistory()">Apply</button>
-              <div class="filter-spacer"></div>
+            <div id="sales-list-view">
+              <div class="filter-bar">
+                <input type="date" class="filter-select" id="sale-date-from">
+                <span style="color:var(--text-muted);font-size:13px">to</span>
+                <input type="date" class="filter-select" id="sale-date-to">
+                <button class="btn btn-primary btn-sm" onclick="renderSalesHistory()">Apply</button>
+                <div class="filter-spacer"></div>
+              </div>
+              <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Sale #</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Status</th><th>Actions</th></tr></thead><tbody id="sales-tbody"></tbody></table></div>
             </div>
-            <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Sale #</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Status</th><th>Actions</th></tr></thead><tbody id="sales-tbody"></tbody></table></div>
+            
+            <div id="shifts-list-view" style="display:none">
+              <div class="data-table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Closed Date/Time</th>
+                      <th>Closed By</th>
+                      <th>Expected Cash</th>
+                      <th>Counted Cash</th>
+                      <th>Variance</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="shift-closures-tbody"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -418,13 +445,21 @@
 
           <!-- Active Report Content (Hidden until loaded) -->
           <div id="report-main-content" style="display:none; flex-direction:column; gap:24px">
+            <!-- Executive Summary Section -->
+            <div id="report-executive-summary" class="card" style="display:none; border-left:4px solid var(--brand)">
+              <div class="card-body">
+                <div class="section-header" style="color:var(--brand)">📈 Executive Summary & Insights</div>
+                <div id="executive-summary-content" style="font-size:14px; line-height:1.6; color:var(--text-secondary)"></div>
+              </div>
+            </div>
+
             <!-- KPI Cards -->
             <div class="summary-grid" id="report-kpi-grid"></div>
 
             <!-- Secondary Metrics -->
             <div id="report-secondary-metrics"></div>
 
-            <!-- Charts Row -->
+            <!-- Charts Row 1: Trends -->
             <div class="dash-grid">
               <div class="card">
                 <div class="card-body">
@@ -434,8 +469,24 @@
               </div>
               <div class="card">
                 <div class="card-body">
+                  <div class="section-header">Hourly Sales (Peak Activity)</div>
+                  <div style="height:250px"><canvas id="chart-hourly-peak"></canvas></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Charts Row 2: Analytics -->
+            <div class="dash-grid" style="margin-top:20px">
+              <div class="card">
+                <div class="card-body">
                   <div class="section-header">Payment Methods</div>
                   <div style="height:250px"><canvas id="chart-payments"></canvas></div>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-body">
+                  <div class="section-header">Customer Loyalty (New vs Repeat)</div>
+                  <div style="height:250px"><canvas id="chart-loyalty"></canvas></div>
                 </div>
               </div>
             </div>

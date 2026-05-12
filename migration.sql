@@ -114,6 +114,18 @@ CREATE TABLE public.attendance (
   organization_id UUID REFERENCES public.organizations(id)
 );
 
+CREATE TABLE public.shift_closures (
+  id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  closed_by TEXT,
+  close_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  expected_cash DECIMAL(12,2),
+  counted_cash DECIMAL(12,2),
+  variance DECIMAL(12,2),
+  denominations TEXT,
+  notes TEXT,
+  organization_id UUID REFERENCES public.organizations(id)
+);
+
 CREATE TABLE public.held_carts (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
