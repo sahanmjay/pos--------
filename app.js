@@ -1494,41 +1494,89 @@ window.setReportPeriod = (period) => {
   if (period !== 'custom') renderAIReports();
 };
 
-window.refreshReport = () => renderAIReports();
-
 window.renderAIReports = async () => {
-  await loadSettings(); 
-  const period = document.querySelector('.btn-group .btn.active').id.replace('btn-period-', '');
-  let start, end;
-  const now = new Date();
-  
-  if (period === 'today') {
-    start = new Date(now.setHours(0,0,0,0)).toISOString();
-    end = new Date(now.setHours(23,59,59,999)).toISOString();
-  } else if (period === 'week') {
-    const day = now.getDay() || 7;
-    const firstDay = new Date(now);
-    firstDay.setDate(now.getDate() - (day - 1));
-    firstDay.setHours(0,0,0,0);
-    start = firstDay.toISOString();
-    end = new Date().toISOString();
-  } else if (period === 'month') {
-    start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    end = new Date().toISOString();
-  } else {
-    start = document.getElementById('report-start-date').value;
-    end = document.getElementById('report-end-date').value;
-    if (!start || !end) return;
-    start = new Date(start).toISOString();
-    end = new Date(end).toISOString();
-  }
-
-  const data = await fetchReportData(start, end);
-  currentReportData = data;
-  
-  // Show content
   const mainContent = document.getElementById('report-main-content');
-  if (mainContent) mainContent.style.display = 'flex';
+  try {
+    await loadSettings(); 
+    const activeBtn = document.querySelector('#report-period-group .btn.active');
+    if (!activeBtn) return;
+    
+    const period = activeBtn.id.replace('btn-period-', '');
+    let start, end;
+    const now = new Date();
+    
+    if (period === 'today') {
+      start = new Date(new Date(now).setHours(0,0,0,0)).toISOString();
+      end = new Date(new Date(now).setHours(23,59,59,999)).toISOString();
+    } else if (period === 'week') {
+      const day = now.getDay() || 7;
+      const firstDay = new Date(now);
+      firstDay.setDate(now.getDate() - day + 1);
+      start = new Date(firstDay.setHours(0,0,0,0)).toISOString();
+      end = new Date(new Date(now).setHours(23,59,59,999)).toISOString();
+    } else if (period === 'month') {
+      start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+    } else if (period === 'custom') {
+      start = document.getElementById('report-start-date').value;
+      end = document.getElementById('report-end-date').value;
+      if (!start || !end) return showToast('info', 'Please select a date range');
+      start = new Date(start).toISOString();
+      end = new Date(new Date(end).setHours(23,59,59,999)).toISOString();
+    }
+
+    if (mainContent) {
+      mainContent.innerHTML = `<div class="spinner-lg" style="margin: 50px auto;"></div>`;
+      mainContent.style.display = 'flex';
+    }
+
+    const data = await fetchReportData(start, end);
+    if (!data) throw new Error("Could not calculate report data");
+    
+    currentReportData = data;
+    
+    // Clear spinner and render
+    mainContent.innerHTML = `
+      <div id="report-executive-summary" class="card" style="display:none; border-left:4px solid var(--brand)">
+        <div class="card-body">
+          <div class="section-header" style="color:var(--brand)">📈 Executive Summary & Insights</div>
+          <div id="executive-summary-content" style="font-size:14px; line-height:1.6; color:var(--text-secondary)"></div>
+        </div>
+      </div>
+      <div class="summary-grid" id="report-kpi-grid"></div>
+      <div id="report-secondary-metrics"></div>
+      <div class="dash-grid">
+        <div class="card"><div class="card-body"><div class="section-header">Revenue Trend</div><div style="height:250px"><canvas id="chart-revenue-trend"></canvas></div></div></div>
+        <div class="card"><div class="card-body"><div class="section-header">Hourly Sales (Peak Activity)</div><div style="height:250px"><canvas id="chart-hourly-peak"></canvas></div></div></div>
+      </div>
+      <div class="dash-grid" style="margin-top:20px">
+        <div class="card"><div class="card-body"><div class="section-header">Payment Methods</div><div style="height:250px"><canvas id="chart-payments"></canvas></div></div></div>
+        <div class="card"><div class="card-body"><div class="section-header">Customer Loyalty</div><div style="height:250px"><canvas id="chart-loyalty"></canvas></div></div></div>
+      </div>
+      <div class="dash-grid">
+        <div class="card">
+          <div class="card-body">
+            <div class="section-header">👥 HR & Operations</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
+              <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)"><div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Hours</div><div style="font-size:18px; font-weight:700" id="kpi-hr-hours">0</div></div>
+              <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)"><div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Payroll</div><div style="font-size:18px; font-weight:700" id="kpi-hr-cost">0</div></div>
+            </div>
+            <div id="hr-insight-text" style="margin-top:12px; font-size:12px"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <div class="section-header">📦 Inventory</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
+              <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)"><div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Stock Value</div><div style="font-size:18px; font-weight:700" id="kpi-inv-value">0</div></div>
+              <div style="padding:12px; background:var(--surface-2); border-radius:var(--radius)"><div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Low Stock</div><div style="font-size:18px; font-weight:700; color:var(--danger)" id="kpi-inv-low">0</div></div>
+            </div>
+            <div id="inv-insight-text" style="margin-top:12px; font-size:12px"></div>
+          </div>
+        </div>
+      </div>
+      <div id="report-breakdowns"></div>
+    `;
 
   // 0. Update Executive Summary
   const execSummary = document.getElementById('report-executive-summary');
@@ -1667,6 +1715,10 @@ window.renderAIReports = async () => {
 
   // 7. Render Charts
   renderReportCharts(data);
+  } catch (err) {
+    console.error(err);
+    if(mainContent) mainContent.innerHTML = `<div class="error-state">Failed to load report. Please try again.</div>`;
+  }
 };
 
 window.generateAIInsight = async () => {
@@ -1718,35 +1770,78 @@ window.generateAIInsight = async () => {
 };
 
 window.renderReportCharts = (data) => {
+  if (!window.reportCharts) window.reportCharts = {};
+  
   const ctxTrend = document.getElementById('chart-revenue-trend');
+  const ctxHourly = document.getElementById('chart-hourly-peak');
   const ctxPay = document.getElementById('chart-payments');
-  if (!ctxTrend || !ctxPay) return;
+  const ctxLoyalty = document.getElementById('chart-loyalty');
 
-  // Cleanup old charts
-  if (window.reportCharts) {
+  // 1. Revenue Trend
+  if (ctxTrend) {
     if (window.reportCharts.trend) window.reportCharts.trend.destroy();
-    if (window.reportCharts.pay) window.reportCharts.pay.destroy();
-  } else {
-    window.reportCharts = {};
+    const trendLabels = Object.keys(data.dailyRev).sort();
+    window.reportCharts.trend = new Chart(ctxTrend, {
+      type: 'line',
+      data: {
+        labels: trendLabels,
+        datasets: [{ 
+          label: 'Revenue', 
+          data: trendLabels.map(l => data.dailyRev[l]), 
+          borderColor: '#5B5FC7', 
+          tension: 0.3, 
+          fill: true, 
+          backgroundColor: 'rgba(91,95,199,0.1)' 
+        }]
+      },
+      options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+    });
   }
 
-  window.reportCharts.trend = new Chart(ctxTrend, {
-    type: 'line',
-    data: {
-      labels: data.revenueTrend.map(d => d.date),
-      datasets: [{ label: 'Revenue', data: data.revenueTrend.map(d => d.rev), borderColor: '#5B5FC7', tension: 0.3, fill: true, backgroundColor: 'rgba(91,95,199,0.1)' }]
-    },
-    options: { maintainAspectRatio: false, plugins: { legend: { display: false } } }
-  });
+  // 2. Hourly Peak
+  if (ctxHourly) {
+    if (window.reportCharts.hourly) window.reportCharts.hourly.destroy();
+    window.reportCharts.hourly = new Chart(ctxHourly, {
+      type: 'bar',
+      data: {
+        labels: Array.from({length: 24}, (_, i) => `${i}:00`),
+        datasets: [{ label: 'Transactions', data: data.hourlySales, backgroundColor: 'rgba(245, 158, 11, 0.8)' }]
+      },
+      options: { maintainAspectRatio: false, plugins: { legend: { display: false } } }
+    });
+  }
 
-  window.reportCharts.pay = new Chart(ctxPay, {
-    type: 'doughnut',
-    data: {
-      labels: Object.keys(data.payments),
-      datasets: [{ data: Object.values(data.payments), backgroundColor: ['#5B5FC7', '#10B981', '#F59E0B', '#EF4444'] }]
-    },
-    options: { maintainAspectRatio: false, cutout: '70%' }
-  });
+  // 3. Payment Methods
+  if (ctxPay) {
+    if (window.reportCharts.pay) window.reportCharts.pay.destroy();
+    window.reportCharts.pay = new Chart(ctxPay, {
+      type: 'doughnut',
+      data: {
+        labels: ['Cash', 'Card', 'Credit'],
+        datasets: [{ 
+          data: [data.payments.cash, data.payments.card, data.payments.credit], 
+          backgroundColor: ['#10B981', '#5B5FC7', '#F59E0B'] 
+        }]
+      },
+      options: { maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'bottom' } } }
+    });
+  }
+
+  // 4. Loyalty
+  if (ctxLoyalty) {
+    if (window.reportCharts.loyalty) window.reportCharts.loyalty.destroy();
+    window.reportCharts.loyalty = new Chart(ctxLoyalty, {
+      type: 'pie',
+      data: {
+        labels: ['New', 'Repeat'],
+        datasets: [{ 
+          data: [data.uniqueCustomers - data.repeatCount, data.repeatCount], 
+          backgroundColor: ['#5B5FC7', '#10B981'] 
+        }]
+      },
+      options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+    });
+  }
 };
 
 window.downloadPDFReport = async () => {
@@ -2776,6 +2871,12 @@ window.toggleMobileMenu = () => {
       <button class="btn btn-secondary" onclick="nav('payroll'); closeModal()">💰 Pay</button>
       <button class="btn btn-secondary" onclick="nav('user-mgmt'); closeModal()">👥 Staff</button>
       <button class="btn btn-secondary" onclick="nav('settings'); closeModal()">⚙️ Sett</button>
+      <div class="btn-group" id="report-period-group">
+        <button class="btn btn-ghost btn-sm active" id="btn-period-today" onclick="setReportPeriod('today')">Daily Report</button>
+        <button class="btn btn-ghost btn-sm" id="btn-period-week" onclick="setReportPeriod('week')">Weekly Report</button>
+        <button class="btn btn-ghost btn-sm" id="btn-period-month" onclick="setReportPeriod('month')">Monthly Report</button>
+        <button class="btn btn-ghost btn-sm" id="btn-period-custom" onclick="setReportPeriod('custom')">Custom Range</button>
+      </div>
       <button class="btn btn-primary" onclick="signOut(); closeModal()" style="grid-column: span 2; background:var(--danger)">🚪 Sign Out</button>
     </div>
   `;
