@@ -161,7 +161,7 @@ async function doLogin() {
     
   if(!user) {
     // 3. Fallback for offline or unseeded database
-    if (u === 'admin' && p === '123') {
+    if (u === 'admin' && p === '231') {
       console.warn('Logging in via emergency offline fallback.');
       user = {
         id: 0,
