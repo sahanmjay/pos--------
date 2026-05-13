@@ -791,6 +791,8 @@ body {
 .sidebar-brand-name { color: white; font-size: 18px; font-weight: 850; letter-spacing: -0.04em; }
 .sidebar-brand-sub { color: #94A3B8; font-size: 11px; font-weight: 600; }
 .sidebar-role-badge { color: #C4B5FD; background: rgba(99,102,241,0.14); border: 1px solid rgba(129,140,248,0.26); border-radius: 999px; padding: 4px 8px; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.sidebar-reveal-btn { display: none; width: 100%; min-height: 38px; border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; background: rgba(255,255,255,0.06); color: #E0E7FF; font-size: 18px; font-weight: 900; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }
+.sidebar-reveal-btn:active { transform: scale(0.98); }
 .sidebar-section { padding: 8px 0; }
 .sidebar-label { color: #64748B; padding: 12px 12px 7px; font-size: 10px; letter-spacing: 0.14em; }
 .sidebar-divider { background: rgba(255,255,255,0.07); margin: 8px 4px; }
@@ -1019,20 +1021,31 @@ body {
 
 /* Better tablet landscape checkout density */
 @media screen and (min-width: 641px) and (max-width: 1180px) and (orientation: landscape) {
-  :root { --sidebar-w: 64px; }
+  :root { --sidebar-w: 52px; }
   .topbar { padding: 0 14px; gap: 10px; }
   .topbar-actions { gap: 8px; }
   .status-pill { padding: 0 10px; }
   .user-chip { padding-right: 8px; }
   .user-name { max-width: 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sidebar { padding: 10px 8px; }
-  .sidebar-brand { padding-bottom: 10px; }
+  .sidebar { padding: 8px 6px; overflow-x: hidden; z-index: 70; transition: width 0.22s ease, box-shadow 0.22s ease; touch-action: manipulation; }
+  .sidebar.revealed { width: 220px; box-shadow: 24px 0 60px rgba(15, 23, 42, 0.32); }
+  .sidebar-brand { grid-template-columns: 1fr; justify-items: center; gap: 0; padding-bottom: 8px; }
+  .sidebar.revealed .sidebar-brand { grid-template-columns: 38px 1fr auto; justify-items: stretch; gap: 10px; }
   .sidebar-logo-mark { width: 38px; height: 38px; border-radius: 12px; }
+  .sidebar-brand > div:nth-child(2), .sidebar-role-badge, .sidebar-label, .nav-item { white-space: nowrap; }
+  .sidebar.revealed .sidebar-brand > div:nth-child(2), .sidebar.revealed .sidebar-role-badge, .sidebar.revealed .sidebar-label { font-size: revert; }
+  .sidebar.revealed .sidebar-brand-sub { font-size: 11px; }
+  .sidebar.revealed .sidebar-brand-name { font-size: 18px; }
+  .sidebar.revealed .sidebar-role-badge { font-size: 10px; }
+  .sidebar.revealed .nav-item { justify-content: flex-start; font-size: 13px; gap: 8px; }
+  .sidebar-reveal-btn { display: grid; place-items: center; margin: 0 0 6px; }
+  .sidebar.revealed .sidebar-reveal-btn { width: 38px; margin-left: auto; }
   .sidebar-section { padding: 4px 0; }
   .sidebar-divider { margin: 4px 2px; }
-  .nav-item { min-height: 42px; padding: 10px; margin: 2px 0; }
-  .nav-icon { font-size: 18px; }
-  .pos-layout { gap: 10px; padding: 10px; }
+  .nav-item { min-height: 42px; padding: 10px 8px; margin: 2px 0; font-size: 0; }
+  .nav-icon { width: 100%; font-size: 20px; }
+  .sidebar.revealed .nav-icon { width: 22px; font-size: 18px; }
+  .pos-layout { gap: 8px; padding: 8px; }
   .pos-search-bar { padding: 12px; gap: 10px; }
   .pos-toolbar-title { min-width: 118px; }
   .pos-toolbar-title .eyebrow, .cart-header .eyebrow { display: none; }
@@ -1040,13 +1053,13 @@ body {
   .search-input { min-height: 40px; }
   .pos-cat-filters { gap: 6px; }
   .pos-cat-filters .cat-pill { padding: 6px 11px; font-size: 12px; }
-  .pos-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 10px; }
+  .pos-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 8px; }
   .pos-product-card { min-height: 172px; padding: 10px; border-radius: 18px; }
   .pos-product-card .pos-prod-icon { width: 52px; height: 52px; font-size: 26px; border-radius: 16px; }
   .pos-prod-icon-wrap { padding: 8px 0 6px; }
   .pos-product-card .pos-prod-price { font-size: 16px; }
   .pos-product-card .pos-prod-name { font-size: 13px; }
-  .pos-cart-wrap { flex-basis: 292px; }
+  .pos-cart-wrap { flex-basis: 282px; }
   .pos-cart-panel { border-radius: 20px; }
   .cart-header { padding: 12px; }
   .cart-header h3 { font-size: 16px; margin: 0; }
