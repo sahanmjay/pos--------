@@ -613,3 +613,54 @@ body { font-family: var(--font); background: var(--surface-2); color: var(--text
   height: 48px;
   border-width: 5px;
 }
+
+/* THEMES */
+[data-theme="ocean"] {
+  --brand: #0284c7;
+  --brand-light: #e0f2fe;
+  --brand-dark: #0369a1;
+}
+
+[data-theme="emerald"] {
+  --brand: #10b981;
+  --brand-light: #d1fae5;
+  --brand-dark: #047857;
+}
+
+[data-theme="rose"] {
+  --brand: #e11d48;
+  --brand-light: #ffe4e6;
+  --brand-dark: #be123c;
+}
+
+[data-theme="midnight"] {
+  --brand: #8b5cf6;
+  --brand-light: #ede9fe;
+  --brand-dark: #6d28d9;
+  --surface: #1e1e2d;
+  --surface-2: #151521;
+  --surface-3: #2b2b40;
+  --border: #32324b;
+  --border-strong: #47476b;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #64748b;
+  --text-inverse: #ffffff;
+}
+
+.theme-btn { 
+  width: 32px; 
+  height: 32px; 
+  border-radius: 50%; 
+  cursor: pointer; 
+  border: 2px solid transparent; 
+  transition: transform 0.2s ease, box-shadow 0.2s ease; 
+}
+
+.theme-btn:hover { 
+  transform: scale(1.1); 
+}
+
+.theme-btn.active { 
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text-primary); 
+}

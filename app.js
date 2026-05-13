@@ -68,6 +68,12 @@ async function loadSettings() {
   if(bType) bType.textContent = currentSettings.biz_type || 'Point of Sale';
   
   document.title = `${bizTitle} — Universal Point of Sale`;
+  
+  if (currentSettings.theme && currentSettings.theme !== 'default') {
+    document.documentElement.setAttribute('data-theme', currentSettings.theme);
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
 }
 
 function formatMoney(num) {
@@ -2448,7 +2454,33 @@ window.loadSettingsForm = () => {
   document.getElementById('set-tax').value = currentSettings.tax_rate || '0';
   document.getElementById('set-phone').value = currentSettings.phone || '';
   document.getElementById('set-address').value = currentSettings.address || '';
+  
+  const theme = currentSettings.theme || 'default';
+  const themeSelect = document.getElementById('set-theme');
+  if (themeSelect) themeSelect.value = theme;
+  
+  document.querySelectorAll('.theme-btn').forEach(btn => {
+    if (btn.dataset.theme === theme) btn.classList.add('active');
+    else btn.classList.remove('active');
+  });
+
   renderBizTemplates();
+};
+
+window.setTheme = (theme) => {
+  const themeSelect = document.getElementById('set-theme');
+  if (themeSelect) themeSelect.value = theme;
+  
+  if (theme && theme !== 'default') {
+    document.documentElement.setAttribute('data-theme', theme);
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  
+  document.querySelectorAll('.theme-btn').forEach(btn => {
+    if (btn.dataset.theme === theme) btn.classList.add('active');
+    else btn.classList.remove('active');
+  });
 };
 
 window.saveSettings = async () => {
@@ -2465,7 +2497,8 @@ window.saveSettings = async () => {
       currency: document.getElementById('set-currency').value,
       tax_rate: document.getElementById('set-tax').value,
       phone: document.getElementById('set-phone').value,
-      address: document.getElementById('set-address').value
+      address: document.getElementById('set-address').value,
+      theme: document.getElementById('set-theme') ? document.getElementById('set-theme').value : 'default'
     };
 
     const existing = await db.settings.toArray();
