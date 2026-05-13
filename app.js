@@ -328,6 +328,7 @@ const SCREENS = {
   'products': 'Inventory / Products',
   'categories': 'Inventory / Categories',
   'sales-history': 'Sales / History',
+  'customers': 'Sales / Customers',
   'attendance': 'HR / Attendance',
   'advances': 'HR / Advances',
   'payroll': 'HR / Payroll',
@@ -375,7 +376,7 @@ function nav(screenId) {
   // Close mobile cart when navigating away from POS
   if(screenId !== 'pos') document.getElementById('screen-pos').querySelector('.pos-cart-wrap')?.classList.remove('active');
   
-  const parts = SCREENS[screenId].split(' / ');
+  const parts = (SCREENS[screenId] || screenId).split(' / ');
   let bc = `<span>NexPOS</span>`;
   parts.forEach((p, i) => {
     bc += `<span class="sep">/</span><span class="${i===parts.length-1?'current':''}">${p}</span>`;
