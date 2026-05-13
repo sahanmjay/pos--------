@@ -429,11 +429,9 @@ body { font-family: var(--font); background: var(--surface-2); color: var(--text
 .payment-btns .btn { padding: 14px; font-size: 15px; border-radius: 12px; }
 .cart-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--text-muted); text-align:center; padding:32px; }
 
-/* Mobile Menu Helper */
 .mobile-only-inline { display: none; }
 @media screen and (max-width: 1024px) {
   .mobile-only-inline { display: inline-flex; }
-  .topbar-spacer { display: none; } /* Hide spacer on small screens to make room */
 }
 .cart-empty-icon { font-size:48px; margin-bottom:16px; opacity: 0.5; }
 
