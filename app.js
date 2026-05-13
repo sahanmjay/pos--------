@@ -395,6 +395,7 @@ function nav(screenId) {
   if(screenId === 'payroll') renderPayroll();
   if(screenId === 'ai-reports') renderAIReports();
   if(screenId === 'settings') loadSettingsForm();
+  collapseSidebarAfterNav();
 }
 
 window.toggleSalesTab = (tab) => {
@@ -2693,6 +2694,19 @@ window.toggleMobileCart = () => {
   document.getElementById('pos-cart-wrap').classList.toggle('active');
 };
 
+window.toggleSidebarReveal = (force) => {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  const shouldReveal = typeof force === 'boolean' ? force : !sidebar.classList.contains('revealed');
+  sidebar.classList.toggle('revealed', shouldReveal);
+};
+
+function collapseSidebarAfterNav() {
+  if (!window.matchMedia('(min-width: 641px) and (max-width: 1180px)').matches) return;
+  document.getElementById('sidebar')?.classList.remove('revealed');
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+}
+
 window.toggleMobileMenu = () => {
   const html = `
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:10px">
@@ -2811,10 +2825,64 @@ async function startNativeBarcodeDetector(videoElement, constraints) {
   return true;
 }
 
-function createZXingReader() {
-  const ZXingLib = window.ZXingBrowser || window.ZXing || window.ZXingLibrary;
-  if (!ZXingLib) throw new Error('Scanner library not loaded. Connect to internet once and reload.');
+function getZXingLibrary() {
+  return window.ZXingBrowser || window.ZXing || window.ZXingLibrary;
+}
 
+function loadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    const loaded = document.querySelector(`script[src="${src}"][data-loaded="true"]`);
+    if (loaded) {
+      resolve();
+      return;
+    }
+
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+      script.remove();
+      reject(new Error(`Timed out loading ${src}`));
+    }, 8000);
+
+    script.src = src;
+    script.async = true;
+    script.onload = () => {
+      clearTimeout(timeout);
+      script.dataset.loaded = 'true';
+      resolve();
+    };
+    script.onerror = () => {
+      clearTimeout(timeout);
+      script.remove();
+      reject(new Error(`Failed to load ${src}`));
+    };
+
+    document.head.appendChild(script);
+  });
+}
+
+async function ensureZXingLibrary() {
+  if (getZXingLibrary()) return getZXingLibrary();
+
+  const scannerScripts = [
+    'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js',
+    'https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js'
+  ];
+
+  setScannerStatus('Loading scanner library…');
+  for (const src of scannerScripts) {
+    try {
+      await loadScriptOnce(src);
+      if (getZXingLibrary()) return getZXingLibrary();
+    } catch (err) {
+      console.warn('Scanner library fallback failed:', err);
+    }
+  }
+
+  throw new Error('Scanner library could not load. Check internet, disable content blockers, then try again.');
+}
+
+async function createZXingReader() {
+  const ZXingLib = await ensureZXingLibrary();
   const ReaderClass = ZXingLib.BrowserMultiFormatReader || ZXingLib.BrowserMultiFormatCodeReader;
   if (!ReaderClass) throw new Error('Scanner reader is unavailable. Reload the page.');
 
@@ -2838,7 +2906,7 @@ window.openBarcodeScanner = async () => {
 
     if (await startNativeBarcodeDetector(videoElement, constraints)) return;
 
-    codeReader = createZXingReader();
+    codeReader = await createZXingReader();
     setScannerStatus('Align the barcode or Data Matrix inside the box');
     await codeReader.decodeFromConstraints(constraints, videoElement, (result) => {
       if (result) onBarcodeScanned(result.text);
