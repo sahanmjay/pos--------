@@ -2685,6 +2685,11 @@ window.openBarcodeScanner = async () => {
   
   try {
     const videoInputDevices = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
+    if (!videoInputDevices || videoInputDevices.length === 0) {
+      showToast('error', 'No cameras found. Please check device permissions.');
+      closeBarcodeScanner();
+      return;
+    }
     const selectedDeviceId = videoInputDevices[0].deviceId;
     
     codeReader = new ZXingBrowser.BrowserMultiFormatCodeReader();
@@ -2698,7 +2703,7 @@ window.openBarcodeScanner = async () => {
     });
   } catch (err) {
     console.error(err);
-    showToast('error', 'Camera access failed');
+    showToast('error', 'Camera access failed or blocked by browser.');
     closeBarcodeScanner();
   }
 };

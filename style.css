@@ -917,11 +917,13 @@ body {
   background: var(--surface);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .cart-header { padding: 18px 18px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
 .cart-header h3 { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 18px; font-weight: 850; letter-spacing: -0.04em; color: var(--text-primary); }
 .cart-customer { padding: 12px 16px; background: var(--surface-3); }
-.cart-items { padding: 14px; }
+.cart-items { padding: 14px; flex: 1; overflow-y: auto; min-height: 0; }
 .cart-item { gap: 10px; padding: 11px; margin-bottom: 10px; border-radius: 18px; border: 1px solid var(--border); box-shadow: var(--shadow-sm); transition: all 0.2s ease; background: var(--surface); }
 .cart-item:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
 .cart-item-avatar { width: 34px; height: 34px; border-radius: 12px; display: grid; place-items: center; color: var(--brand-dark); background: var(--brand-light); flex: 0 0 auto; }
@@ -955,7 +957,7 @@ body {
 /* Tablet: slimmer sidebar, 3-column POS grid, slightly narrower cart */
 @media screen and (min-width: 641px) and (max-width: 1180px) {
   :root { --sidebar-w: 86px; }
-  .sidebar { display: flex !important; padding: 14px 10px; }
+  .sidebar { display: flex !important; flex-direction: column !important; padding: 14px 10px; }
   .sidebar-brand { grid-template-columns: 1fr; justify-items: center; }
   .sidebar-brand > div:nth-child(2), .sidebar-role-badge, .sidebar-label, .nav-item:not(.active) { font-size: 0; }
   .nav-item { justify-content: center; padding: 12px; }
