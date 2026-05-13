@@ -146,7 +146,7 @@ function createEmergencyAdminUser() {
     id: 0,
     username: 'admin',
     password: '231',
-    display_name: 'Administrator (Offline)',
+    display_name: 'Administrator',
     role: 'Admin',
     organization_id: '00000000-0000-0000-0000-000000000001'
   };
@@ -164,7 +164,7 @@ async function doLogin() {
     console.warn('Logging in via built-in local admin fallback.');
     err.style.display = 'none';
     await completeLogin(createEmergencyAdminUser(), { audit: false });
-    showToast('info', 'Logged in with built-in local admin');
+    showToast('success', 'Logged in as Administrator');
     return;
   }
   
@@ -2727,71 +2727,148 @@ renderCart = async () => {
 
 // Barcode Scanning
 let codeReader = null;
+let nativeBarcodeLoop = null;
 let scannerTargetInputId = null;
+
+const BARCODE_FORMATS = [
+  'aztec', 'codabar', 'code_39', 'code_93', 'code_128', 'data_matrix',
+  'ean_8', 'ean_13', 'itf', 'pdf417', 'qr_code', 'upc_a', 'upc_e'
+];
 
 window.openBarcodeScannerForInput = (inputId) => {
   scannerTargetInputId = inputId;
   openBarcodeScanner();
 };
 
+function setScannerStatus(message) {
+  const status = document.getElementById('scanner-status');
+  if (status) status.textContent = message;
+}
+
+function isCameraSecureContext() {
+  return window.isSecureContext || ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+}
+
+async function selectBackCameraId() {
+  if (!navigator.mediaDevices?.enumerateDevices) return null;
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cameras = devices.filter(device => device.kind === 'videoinput');
+  const backCamera = cameras.find(camera => /back|rear|environment/i.test(camera.label));
+  return backCamera?.deviceId || null;
+}
+
+function buildScannerConstraints(deviceId = null) {
+  const video = {
+    facingMode: { ideal: 'environment' },
+    width: { ideal: 1920, min: 640 },
+    height: { ideal: 1080, min: 480 },
+    frameRate: { ideal: 30 },
+    advanced: [
+      { focusMode: 'continuous' },
+      { exposureMode: 'continuous' },
+      { zoom: 1.5 }
+    ]
+  };
+
+  if (deviceId) {
+    delete video.facingMode;
+    video.deviceId = { exact: deviceId };
+  }
+
+  return { video };
+}
+
+async function startNativeBarcodeDetector(videoElement, constraints) {
+  if (!('BarcodeDetector' in window)) return false;
+
+  const supportedFormats = await window.BarcodeDetector.getSupportedFormats?.().catch(() => []) || [];
+  const formats = BARCODE_FORMATS.filter(format => supportedFormats.includes(format));
+  if (!formats.length) return false;
+
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  videoElement.srcObject = stream;
+  videoElement.setAttribute('playsinline', 'true');
+  await videoElement.play();
+
+  const detector = new window.BarcodeDetector({ formats });
+  setScannerStatus('Align the barcode or Data Matrix inside the box');
+
+  const scan = async () => {
+    if (!videoElement.srcObject) return;
+    try {
+      const results = await detector.detect(videoElement);
+      if (results.length) {
+        onBarcodeScanned(results[0].rawValue);
+        return;
+      }
+    } catch (err) {
+      console.debug('Native barcode frame skipped:', err);
+    }
+    nativeBarcodeLoop = requestAnimationFrame(scan);
+  };
+
+  nativeBarcodeLoop = requestAnimationFrame(scan);
+  return true;
+}
+
+function createZXingReader() {
+  const ZXingLib = window.ZXingBrowser || window.ZXing || window.ZXingLibrary;
+  if (!ZXingLib) throw new Error('Scanner library not loaded. Connect to internet once and reload.');
+
+  const ReaderClass = ZXingLib.BrowserMultiFormatReader || ZXingLib.BrowserMultiFormatCodeReader;
+  if (!ReaderClass) throw new Error('Scanner reader is unavailable. Reload the page.');
+
+  return new ReaderClass();
+}
+
 window.openBarcodeScanner = async () => {
   const container = document.getElementById('scanner-container');
   const videoElement = document.getElementById('scanner-video');
-  
+
   container.style.display = 'flex';
-  
+  setScannerStatus('Starting camera…');
+
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      throw new Error("HTTPS required for camera access");
+    if (!isCameraSecureContext() || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Camera needs HTTPS or localhost. Open the POS with https:// on phones/tablets.');
     }
 
-    // Try multiple possible global export names for ZXing Browser UMD
-    const ZXingLib = window.ZXingBrowser || window.ZXing || window.ZXingLibrary;
-    if (!ZXingLib) {
-      throw new Error("Scanner Library not loaded. Please check your internet connection.");
-    }
+    const deviceId = await selectBackCameraId();
+    const constraints = buildScannerConstraints(deviceId);
 
-    // Correct class name is usually BrowserMultiFormatReader in @zxing/browser
-    const ReaderClass = ZXingLib.BrowserMultiFormatReader || ZXingLib.BrowserMultiFormatCodeReader;
-    if (!ReaderClass) {
-      throw new Error("Could not find Scanner Reader class in library.");
-    }
+    if (await startNativeBarcodeDetector(videoElement, constraints)) return;
 
-    codeReader = new ReaderClass();
-    
-    const constraints = { 
-      video: { 
-        facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      } 
-    };
-
-    // decodeFromConstraints is the modern way to start scanning
-    await codeReader.decodeFromConstraints(constraints, videoElement, (result, err) => {
-      if (result) {
-        onBarcodeScanned(result.text);
-      }
-      // err is thrown for every frame that doesn't have a barcode, so we ignore most errors
+    codeReader = createZXingReader();
+    setScannerStatus('Align the barcode or Data Matrix inside the box');
+    await codeReader.decodeFromConstraints(constraints, videoElement, (result) => {
+      if (result) onBarcodeScanned(result.text);
     });
-    
   } catch (err) {
-    console.error("Scanner Initialization Failure:", err);
-    let msg = err.message || 'Unknown Error';
-    if (err.name === 'NotAllowedError') msg = 'Camera access denied by user or browser.';
-    if (err.name === 'NotFoundError') msg = 'No suitable camera found.';
-    if (err.name === 'NotReadableError') msg = 'Camera hardware is busy or locked.';
-    
+    console.error('Scanner Initialization Failure:', err);
+    let msg = err.message || 'Unknown error';
+    if (err.name === 'NotAllowedError') msg = 'Camera permission is blocked. Allow camera permission in browser/site settings.';
+    if (err.name === 'NotFoundError') msg = 'No back camera found on this device.';
+    if (err.name === 'NotReadableError') msg = 'Camera is busy. Close other camera apps and try again.';
+
     showToast('error', `Scanner: ${msg}`);
-    closeBarcodeScanner();
+    setScannerStatus(msg);
   }
 };
 
 window.closeBarcodeScanner = () => {
-  if(codeReader) {
-    document.getElementById('scanner-video').srcObject?.getTracks().forEach(track => track.stop());
-  }
+  if (nativeBarcodeLoop) cancelAnimationFrame(nativeBarcodeLoop);
+  nativeBarcodeLoop = null;
+
+  if (codeReader?.reset) codeReader.reset();
+  if (codeReader?.stopContinuousDecode) codeReader.stopContinuousDecode();
+  codeReader = null;
+
+  const video = document.getElementById('scanner-video');
+  video.srcObject?.getTracks().forEach(track => track.stop());
+  video.srcObject = null;
+
   document.getElementById('scanner-container').style.display = 'none';
+  setScannerStatus('');
 };
 
 async function onBarcodeScanned(barcode) {
