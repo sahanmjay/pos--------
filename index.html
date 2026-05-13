@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NexPOS — Universal Point of Sale</title>
 <meta name="description" content="Customizable POS system for retail shops, bookshops, meat shops, grocery stores and more">
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta name="theme-color" content="#5B5FC7">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -56,17 +57,22 @@
   <div class="topbar">
     <div class="topbar-logo">
       <div class="topbar-logo-icon">NP</div>
-      <span class="topbar-logo-name" id="topbar-biz-name">NexPOS</span>
+      <div class="topbar-shop">
+        <span class="topbar-logo-name" id="topbar-biz-name">NexPOS</span>
+        <span id="topbar-biz-type" class="topbar-biz-type">Point of Sale</span>
+      </div>
     </div>
-    <div class="topbar-divider"></div>
-    <span id="topbar-biz-type" style="font-size:13px;color:var(--text-muted)">Point of Sale</span>
+    <div class="topbar-breadcrumb" aria-label="Breadcrumb">
+      <span>NexPOS</span><span class="sep">/</span><strong>Checkout</strong>
+    </div>
     <div class="topbar-spacer"></div>
     <div class="topbar-actions">
-      <span id="topbar-clock" style="font-size:13px;color:var(--text-secondary);font-family:var(--mono)"></span>
-      <div class="topbar-divider"></div>
+      <span class="status-pill online" id="connection-status"><span class="status-dot"></span> Online</span>
+      <button class="icon-btn" type="button" title="Notifications" aria-label="Notifications"><i class="fa-regular fa-bell"></i></button>
+      <span id="topbar-clock" class="date-pill"></span>
       <div class="user-chip">
         <div class="user-avatar" id="user-avatar">A</div>
-        <div style="display:flex; flex-direction:column; line-height:1.2">
+        <div class="user-meta">
           <span class="user-name" id="user-name">Admin</span>
           <span class="role-badge" id="role-badge">Admin</span>
         </div>
@@ -82,6 +88,14 @@
   <div class="app-body">
     <!-- SIDEBAR -->
     <div class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="sidebar-logo-mark">NP</div>
+        <div>
+          <div class="sidebar-brand-name">NexPOS</div>
+          <div class="sidebar-brand-sub">Premium Retail Suite</div>
+        </div>
+        <span class="sidebar-role-badge" id="sidebar-role-badge">Admin</span>
+      </div>
       <div class="sidebar-section" id="nav-pos">
         <div class="nav-item active" onclick="nav('pos')"><span class="nav-icon">🛒</span> Point of Sale</div>
         <div class="nav-item" onclick="nav('dashboard')"><span class="nav-icon">⊞</span> Dashboard</div>
@@ -124,10 +138,14 @@
         <div class="pos-layout">
           <div class="pos-products-panel">
             <div class="pos-search-bar">
-              <div class="search-input-wrap" style="flex:1; position:relative">
-                <span class="search-icon">🔍</span>
-                <input class="search-input" id="pos-search" placeholder="Search products by name, SKU, or barcode..." style="width:100%">
-                <button id="scan-btn" onclick="openBarcodeScanner()" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:18px" title="Scan Barcode">📷</button>
+              <div class="pos-toolbar-title">
+                <span class="eyebrow">Retail checkout</span>
+                <strong>Product Catalogue</strong>
+              </div>
+              <div class="search-input-wrap pos-search-wrap">
+                <span class="search-icon"><i class="fa-solid fa-magnifying-glass"></i></span>
+                <input class="search-input" id="pos-search" placeholder="Search products by name, SKU, or barcode...">
+                <button id="scan-btn" class="scan-btn" onclick="openBarcodeScanner()" title="Scan Barcode" aria-label="Scan barcode"><i class="fa-solid fa-barcode"></i></button>
               </div>
               <div id="pos-cat-filters" class="pos-cat-filters"></div>
             </div>
@@ -136,8 +154,11 @@
           <div class="pos-cart-wrap" id="pos-cart-wrap">
             <div class="pos-cart-panel">
               <div class="cart-header">
-                <h3>🛒 Current Order</h3>
-                <button class="btn btn-ghost btn-sm" onclick="clearCart()" title="Clear Cart">🗑️ Clear</button>
+                <div>
+                  <span class="eyebrow">Checkout</span>
+                  <h3><i class="fa-solid fa-bag-shopping"></i> Current Order</h3>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="clearCart()" title="Clear Cart"><i class="fa-regular fa-trash-can"></i> Clear</button>
               </div>
               <div class="cart-customer">
                 <button class="btn btn-secondary btn-full btn-sm" onclick="openCustomerSelect()">
@@ -155,10 +176,10 @@
                   <button class="btn btn-secondary" onclick="applyDiscount()">🏷️ Discount</button>
                 </div>
                 <div class="payment-btns">
-                  <button class="btn btn-primary btn-full" onclick="payNow('cash')" style="padding:14px;font-size:16px">💵 Cash Payment</button>
-                  <div style="display:flex;gap:8px">
-                    <button class="btn btn-secondary" style="flex:1" onclick="payNow('card')">💳 Card</button>
-                    <button class="btn btn-secondary" style="flex:1" onclick="payNow('credit')">📝 Credit</button>
+                  <button class="btn btn-primary btn-full cash-payment-btn" onclick="payNow('cash')"><i class="fa-solid fa-money-bill-wave"></i> Cash Payment</button>
+                  <div class="secondary-payment-row">
+                    <button class="btn btn-secondary" onclick="payNow('card')"><i class="fa-regular fa-credit-card"></i> Card</button>
+                    <button class="btn btn-secondary" onclick="payNow('credit')"><i class="fa-regular fa-note-sticky"></i> Credit</button>
                   </div>
                 </div>
               </div> <!-- /cart-totals -->
