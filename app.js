@@ -2684,16 +2684,42 @@ window.openBarcodeScanner = async () => {
   container.style.display = 'flex';
   
   try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("MediaDevices API not available (requires HTTPS)");
+    }
+
+    // 1. Force the browser to ask for camera permission FIRST
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    } catch (permErr) {
+      console.warn("Permission denied or no camera found:", permErr);
+      throw new Error("Permission denied");
+    }
+
+    // 2. Now that we have permission, we can list the devices
     const videoInputDevices = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
+    
+    // Stop the temporary stream tracks so ZXing can cleanly take over
+    stream.getTracks().forEach(track => track.stop());
+
     if (!videoInputDevices || videoInputDevices.length === 0) {
-      showToast('error', 'No cameras found. Please check device permissions.');
+      showToast('error', 'No cameras found.');
       closeBarcodeScanner();
       return;
     }
-    const selectedDeviceId = videoInputDevices[0].deviceId;
+    
+    // Select the back camera if available, otherwise pick the first one
+    let selectedDeviceId = videoInputDevices[0].deviceId;
+    const backCamera = videoInputDevices.find(d => 
+      d.label.toLowerCase().includes('back') || 
+      d.label.toLowerCase().includes('environment')
+    );
+    if (backCamera) {
+      selectedDeviceId = backCamera.deviceId;
+    }
     
     codeReader = new ZXingBrowser.BrowserMultiFormatCodeReader();
-    
     const videoElement = document.getElementById('scanner-video');
     
     codeReader.decodeFromVideoDevice(selectedDeviceId, videoElement, (result, error) => {
@@ -2703,7 +2729,7 @@ window.openBarcodeScanner = async () => {
     });
   } catch (err) {
     console.error(err);
-    showToast('error', 'Camera access failed or blocked by browser.');
+    showToast('error', 'Camera blocked (Check permissions & HTTPS).');
     closeBarcodeScanner();
   }
 };
