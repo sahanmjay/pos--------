@@ -1,8 +1,44 @@
 const SUPABASE_URL = 'https://rakklmxpukcehbyjuxjy.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJha2tsbXhwdWtjZWhieWp1eGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNjY0MjgsImV4cCI6MjA5Mzc0MjQyOH0.05GCQVOXhH1CGWjgQkpu9mMKipT4wcPht4u3nf6c8Rc';
 
-const { createClient } = supabase;
-const supa = createClient(SUPABASE_URL, SUPABASE_KEY);
+let supa;
+if (typeof supabase !== 'undefined') {
+  const { createClient } = supabase;
+  supa = createClient(SUPABASE_URL, SUPABASE_KEY);
+} else {
+  console.error("Supabase script not loaded. Running in offline/mock mode.");
+  // Mock supa client to prevent crashes
+  supa = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            eq: () => ({
+              limit: () => ({
+                maybeSingle: async () => ({ data: null, error: { message: "Offline mode" } })
+              })
+            })
+          })
+        }),
+        order: () => ({
+          eq: () => ({ data: [], error: { message: "Offline mode" } }),
+          then: (cb) => cb({ data: [], error: { message: "Offline mode" } })
+        })
+      }),
+      insert: () => ({
+        select: () => ({ single: async () => ({ data: { id: 0 }, error: null }) }),
+        then: (cb) => cb({ error: null })
+      }),
+      update: () => ({
+        eq: async () => ({ error: null })
+      }),
+      delete: () => ({
+        eq: async () => ({ error: null }),
+        neq: async () => ({ error: null })
+      })
+    })
+  };
+}
 
 let currentOrgId = null;
 
