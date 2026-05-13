@@ -894,7 +894,13 @@ window.openProductForm = async (id = null) => {
         <select class="form-input" id="f-prod-cat">${cats.map(c=>`<option value="${c.name}" ${p.category===c.name?'selected':''}>${c.name}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label class="form-label">SKU</label><input class="form-input" id="f-prod-sku" value="${p.sku}"></div>
-      <div class="form-group"><label class="form-label">Barcode</label><input class="form-input" id="f-prod-barcode" value="${p.barcode}"></div>
+      <div class="form-group">
+        <label class="form-label">Barcode</label>
+        <div style="position:relative;">
+          <input class="form-input" id="f-prod-barcode" value="${p.barcode}" style="padding-right: 40px;">
+          <button class="btn btn-ghost btn-icon" onclick="openBarcodeScannerForInput('f-prod-barcode')" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); color:var(--text-muted);" title="Scan Barcode"><i class="fa-solid fa-camera"></i></button>
+        </div>
+      </div>
       <div class="form-group"><label class="form-label">Retail Price</label><input class="form-input" type="number" step="0.01" id="f-prod-retail" value="${p.retail_price}"></div>
       <div class="form-group"><label class="form-label">Cost Price</label><input class="form-input" type="number" step="0.01" id="f-prod-cost" value="${p.cost_price}"></div>
       <div class="form-group"><label class="form-label">Stock Qty</label><input class="form-input" type="number" step="0.01" id="f-prod-stock" value="${p.stock_qty}"></div>
@@ -2666,6 +2672,12 @@ renderCart = async () => {
 
 // Barcode Scanning
 let codeReader = null;
+let scannerTargetInputId = null;
+
+window.openBarcodeScannerForInput = (inputId) => {
+  scannerTargetInputId = inputId;
+  openBarcodeScanner();
+};
 
 window.openBarcodeScanner = async () => {
   const container = document.getElementById('scanner-container');
@@ -2700,6 +2712,16 @@ window.closeBarcodeScanner = () => {
 
 async function onBarcodeScanned(barcode) {
   closeBarcodeScanner();
+  
+  if (scannerTargetInputId) {
+    const inputEl = document.getElementById(scannerTargetInputId);
+    if (inputEl) {
+      inputEl.value = barcode;
+    }
+    scannerTargetInputId = null;
+    return;
+  }
+  
   const products = await db.products.toArray();
   const product = products.find(p => p.barcode === barcode);
   
