@@ -143,14 +143,25 @@ async function doLogin() {
   }
 
   // 2. Query users
-  let { data: user, error: dbError } = await supa
-    .from('users')
-    .select('*')
-    .eq('username', u)
-    .eq('password', p)
-    .eq('is_active', true)
-    .limit(1)
-    .maybeSingle();
+  let user = null;
+  let dbError = null;
+  
+  try {
+    const res = await supa
+      .from('users')
+      .select('*')
+      .eq('username', u)
+      .eq('password', p)
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+      
+    user = res.data;
+    dbError = res.error;
+  } catch (err) {
+    console.error('Caught exception during Supabase query:', err);
+    dbError = { message: err.message || 'Network exception' };
+  }
   
   if(dbError) {
     console.error('Supabase Login Error:', dbError);
