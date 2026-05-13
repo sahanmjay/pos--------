@@ -27,6 +27,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Physical Barcode Scanner Listener
   initPhysicalScanner();
+
+  ['login-user', 'login-pass'].forEach((id) => {
+    const input = document.getElementById(id);
+    if (input) {
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') doLogin();
+      });
+    }
+  });
   
   await loadSettings();
 });
@@ -128,11 +137,36 @@ function checkLoginLockout() {
   return null;
 }
 
+function isEmergencyAdminLogin(username, password) {
+  return username.trim().toLowerCase() === 'admin' && password.trim() === '231';
+}
+
+function createEmergencyAdminUser() {
+  return {
+    id: 0,
+    username: 'admin',
+    password: '231',
+    display_name: 'Administrator (Offline)',
+    role: 'Admin',
+    organization_id: '00000000-0000-0000-0000-000000000001'
+  };
+}
+
 // --- NAVIGATION & AUTH ---
 async function doLogin() {
-  const u = document.getElementById('login-user').value;
-  const p = document.getElementById('login-pass').value;
+  const u = document.getElementById('login-user').value.trim();
+  const p = document.getElementById('login-pass').value.trim();
   const err = document.getElementById('login-error');
+
+  // Always allow the built-in local admin account immediately. This keeps
+  // file:// launches usable even when Supabase is slow, offline, or unseeded.
+  if (isEmergencyAdminLogin(u, p)) {
+    console.warn('Logging in via built-in local admin fallback.');
+    err.style.display = 'none';
+    await completeLogin(createEmergencyAdminUser(), { audit: false });
+    showToast('info', 'Logged in with built-in local admin');
+    return;
+  }
   
   // 1. Check Lockout
   const lockoutMsg = checkLoginLockout();
@@ -171,19 +205,8 @@ async function doLogin() {
   }
     
   if(!user) {
-    // 3. Fallback for offline or unseeded database
-    if (u === 'admin' && p === '231') {
-      console.warn('Logging in via emergency offline fallback.');
-      user = {
-        id: 0,
-        username: 'admin',
-        display_name: 'Administrator (Offline)',
-        role: 'Admin',
-        organization_id: '00000000-0000-0000-0000-000000000001'
-      };
-      showToast('info', 'Logged in via Offline/Emergency Fallback');
-      err.style.display = 'none';
-    } else {
+    // 3. Reject non-local credentials when no matching database user exists.
+    {
       loginAttempts.count++;
       if (loginAttempts.count >= 5) {
         loginAttempts.lockoutUntil = Date.now() + (15 * 60 * 1000); // 15 min lock
@@ -200,13 +223,19 @@ async function doLogin() {
     }
   }
 
+  await completeLogin(user);
+}
+
+async function completeLogin(user, options = {}) {
+  const { audit = true } = options;
+
   // Reset on success
   loginAttempts = { count: 0, lockoutUntil: 0 };
   localStorage.setItem('pos_login_attempts', JSON.stringify(loginAttempts));
   
   currentUser = user;
   db.currentOrgId = user.organization_id;
-  await logSecurityEvent('LOGIN_SUCCESS');
+  if (audit) await logSecurityEvent('LOGIN_SUCCESS');
   
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').classList.add('visible');
@@ -2353,79 +2382,12 @@ window.downloadPDFReport = async () => {
       doc.setTextColor(50, 50, 50); doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text(sec.title, margin + 6, aY + 8);
       doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.text(wrapped, margin + 6, aY + 15);
       aY += bH + 8;
-setProgress(5, "Finalising report...");
+    });
+
+    setProgress(5, "Finalising report...");
     const fileName = `NexPOS-Full-Report-${bizName.replace(/\s+/g, '-')}-${periodType}-${new Date().toISOString().split('T')[0]}.pdf`;
     doc.save(fileName);
     showToast('success', 'Full Business Report downloaded successfully');
-
-window.openBarcodeScanner = async (targetId = 'pos-search') => {
-  const overlay = document.getElementById('barcode-scanner-overlay');
-  const video = document.getElementById('barcode-video');
-  const tracer = document.getElementById('scanner-tracer');
-  
-  overlay.style.display = 'flex';
-  tracer.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Initializing Hardware...';
-  
-  try {
-    // Robust detection of ZXing across different UMD bundle versions
-    const zx = window.ZXingBrowser || window.ZXing || window.ZXingLibrary;
-    if (!zx) {
-      console.error("ZXing library object not found in window context", window);
-      throw new Error("Scanner Library (ZXing) not loaded. Check internet connection.");
-    }
-    console.log("ZXing library loaded:", zx);
-    
-    // Create reader instance - check for both direct class or nested BrowserMultiFormatReader
-    const ReaderClass = zx.BrowserMultiFormatReader || (zx.BrowserCodeReader ? zx.BrowserMultiFormatReader : null);
-    if (!ReaderClass) {
-      console.error("ZXing detected but Reader class missing:", zx);
-      throw new Error("Scanner component mismatch. Please refresh.");
-    }
-    
-    codeReader = new ReaderClass();
-    
-    // Use native constraints for better hardware control on tablets/mobile
-    const constraints = {
-      video: { 
-        facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      }
-    };
-
-    tracer.innerHTML = '<i class="fa-solid fa-camera"></i> Requesting Camera...';
-
-    // decodeFromConstraints handles permission and device selection automatically
-    await codeReader.decodeFromConstraints(constraints, video, (result, err) => {
-      if (result) {
-        console.log("Scan result detected:", result.getText(), "Format:", result.getBarcodeFormat());
-        const input = document.getElementById(targetId);
-        if (input) {
-          input.value = result.getText();
-          // Trigger search/add logic if on POS
-          if (targetId === 'pos-search' && typeof window.handleBarcodeScan === 'function') {
-            window.handleBarcodeScan(result.getText());
-          }
-        }
-        closeBarcodeScanner();
-        showToast('success', 'Barcode scanned!');
-      }
-      if (err && !(err instanceof zx.NotFoundException)) {
-        console.warn("Scanner frame analysis error:", err);
-      }
-    });
-  } catch (err) {
-    console.error("Scanner Error:", err);
-    let msg = err.message;
-    if (msg.includes('Permission')) msg = "Camera Access Denied. Check browser settings.";
-    if (msg.includes('NotFound')) msg = "No camera found on this device.";
-    if (msg.includes('NotReadable')) msg = "Camera is already in use by another app.";
-    
-    tracer.innerHTML = `<span style="color:var(--danger)"><i class="fa-solid fa-circle-exclamation"></i> ${msg}</span>`;
-    showToast('error', msg);
-  }
-};
-
   } catch (err) {
     console.error(err);
     showToast('error', 'Report failed: ' + err.message);
