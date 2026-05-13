@@ -653,34 +653,34 @@ function showReceipt(sale, items, change, tendered) {
   const phone = currentSettings.phone || '';
   
   let html = `
-    <div style="text-align:center;margin-bottom:15px;border-bottom:1px dashed #ccc;padding-bottom:10px">
-      <h2 style="margin:0;font-size:18px">${shopName}</h2>
-      <div>${address}</div>
-      <div>${phone}</div>
+    <div style="text-align:center;margin-bottom:15px;border-bottom:1px dashed var(--border);padding-bottom:10px">
+      <h2 style="margin:0;font-size:18px;color:var(--text-primary)">${shopName}</h2>
+      <div style="color:var(--text-muted);font-size:12px">${address}</div>
+      <div style="color:var(--text-muted);font-size:12px">${phone}</div>
     </div>
-    <div style="margin-bottom:10px">
-      <div>Receipt: #${sale.id}</div>
+    <div style="margin-bottom:10px;color:var(--text-primary);font-size:12px">
+      <div>Receipt: <span class="fw-600">#${sale.id}</span></div>
       <div>Date: ${new Date(sale.date).toLocaleString()}</div>
       <div>Cashier: ${sale.cashier}</div>
-      <div>Pay Method: ${sale.payment_type.toUpperCase()}</div>
+      <div>Pay Method: <span class="badge badge-completed" style="font-size:10px">${sale.payment_type.toUpperCase()}</span></div>
     </div>
-    <table style="width:100%;text-align:left;border-bottom:1px dashed #ccc;margin-bottom:10px">
-      <tr><th>Item</th><th>Qty</th><th style="text-align:right">Total</th></tr>
+    <table style="width:100%;text-align:left;border-bottom:1px dashed var(--border);margin-bottom:10px;color:var(--text-primary)">
+      <tr style="color:var(--text-muted);font-size:11px;text-transform:uppercase"><th>Item</th><th>Qty</th><th style="text-align:right">Total</th></tr>
   `;
   
   items.forEach(i => {
-    html += `<tr><td>${i.product_name}</td><td>${i.quantity}</td><td style="text-align:right">${formatMoney(i.line_total)}</td></tr>`;
+    html += `<tr style="border-bottom:1px solid var(--surface-2)"><td style="padding:4px 0">${i.product_name}</td><td>${i.quantity}</td><td style="text-align:right" class="td-mono">${formatMoney(i.line_total)}</td></tr>`;
   });
   
   html += `</table>
-    <div style="text-align:right">
-      <div>Subtotal: ${formatMoney(sale.subtotal)}</div>
-      ${sale.discount>0 ? `<div>Discount: -${formatMoney(sale.discount)}</div>` : ''}
-      ${sale.tax>0 ? `<div>Tax: ${formatMoney(sale.tax)}</div>` : ''}
-      <h3 style="margin:5px 0">Total: ${formatMoney(sale.total_amount)}</h3>
-      ${sale.payment_type==='cash' ? `<div>Tendered: ${formatMoney(tendered)}</div><div>Change: ${formatMoney(change)}</div>` : ''}
+    <div style="text-align:right;color:var(--text-primary)">
+      <div style="color:var(--text-muted)">Subtotal: ${formatMoney(sale.subtotal)}</div>
+      ${sale.discount>0 ? `<div style="color:var(--danger)">Discount: -${formatMoney(sale.discount)}</div>` : ''}
+      ${sale.tax>0 ? `<div style="color:var(--text-muted)">Tax: ${formatMoney(sale.tax)}</div>` : ''}
+      <h3 style="margin:5px 0;color:var(--brand);font-size:20px">Total: ${formatMoney(sale.total_amount)}</h3>
+      ${sale.payment_type==='cash' ? `<div style="font-size:12px">Tendered: ${formatMoney(tendered)}</div><div style="font-weight:700;color:var(--success)">Change: ${formatMoney(change)}</div>` : ''}
     </div>
-    <div style="text-align:center;margin-top:15px;border-top:1px dashed #ccc;padding-top:10px">Thank you for your business!</div>
+    <div style="text-align:center;margin-top:15px;border-top:1px dashed var(--border);padding-top:10px;color:var(--text-muted);font-style:italic">Thank you for your business!</div>
   `;
   
   currentReceiptData = { sale, items };
@@ -2326,12 +2326,78 @@ window.downloadPDFReport = async () => {
       doc.setTextColor(50, 50, 50); doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text(sec.title, margin + 6, aY + 8);
       doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.text(wrapped, margin + 6, aY + 15);
       aY += bH + 8;
-    });
-
-    setProgress(5, "Finalising report...");
+setProgress(5, "Finalising report...");
     const fileName = `NexPOS-Full-Report-${bizName.replace(/\s+/g, '-')}-${periodType}-${new Date().toISOString().split('T')[0]}.pdf`;
     doc.save(fileName);
     showToast('success', 'Full Business Report downloaded successfully');
+
+window.openBarcodeScanner = async (targetId = 'pos-search') => {
+  const overlay = document.getElementById('barcode-scanner-overlay');
+  const video = document.getElementById('barcode-video');
+  const tracer = document.getElementById('scanner-tracer');
+  
+  overlay.style.display = 'flex';
+  tracer.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Initializing Hardware...';
+  
+  try {
+    // Robust detection of ZXing across different UMD bundle versions
+    const zx = window.ZXingBrowser || window.ZXing || window.ZXingLibrary;
+    if (!zx) {
+      console.error("ZXing library object not found in window context", window);
+      throw new Error("Scanner Library (ZXing) not loaded. Check internet connection.");
+    }
+    console.log("ZXing library loaded:", zx);
+    
+    // Create reader instance - check for both direct class or nested BrowserMultiFormatReader
+    const ReaderClass = zx.BrowserMultiFormatReader || (zx.BrowserCodeReader ? zx.BrowserMultiFormatReader : null);
+    if (!ReaderClass) {
+      console.error("ZXing detected but Reader class missing:", zx);
+      throw new Error("Scanner component mismatch. Please refresh.");
+    }
+    
+    codeReader = new ReaderClass();
+    
+    // Use native constraints for better hardware control on tablets/mobile
+    const constraints = {
+      video: { 
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    };
+
+    tracer.innerHTML = '<i class="fa-solid fa-camera"></i> Requesting Camera...';
+
+    // decodeFromConstraints handles permission and device selection automatically
+    await codeReader.decodeFromConstraints(constraints, video, (result, err) => {
+      if (result) {
+        console.log("Scan result detected:", result.getText(), "Format:", result.getBarcodeFormat());
+        const input = document.getElementById(targetId);
+        if (input) {
+          input.value = result.getText();
+          // Trigger search/add logic if on POS
+          if (targetId === 'pos-search' && typeof window.handleBarcodeScan === 'function') {
+            window.handleBarcodeScan(result.getText());
+          }
+        }
+        closeBarcodeScanner();
+        showToast('success', 'Barcode scanned!');
+      }
+      if (err && !(err instanceof zx.NotFoundException)) {
+        console.warn("Scanner frame analysis error:", err);
+      }
+    });
+  } catch (err) {
+    console.error("Scanner Error:", err);
+    let msg = err.message;
+    if (msg.includes('Permission')) msg = "Camera Access Denied. Check browser settings.";
+    if (msg.includes('NotFound')) msg = "No camera found on this device.";
+    if (msg.includes('NotReadable')) msg = "Camera is already in use by another app.";
+    
+    tracer.innerHTML = `<span style="color:var(--danger)"><i class="fa-solid fa-circle-exclamation"></i> ${msg}</span>`;
+    showToast('error', msg);
+  }
+};
 
   } catch (err) {
     console.error(err);
@@ -2681,34 +2747,53 @@ window.openBarcodeScannerForInput = (inputId) => {
 
 window.openBarcodeScanner = async () => {
   const container = document.getElementById('scanner-container');
+  const videoElement = document.getElementById('scanner-video');
+  
   container.style.display = 'flex';
   
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      throw new Error("No Media API (HTTPS required)");
+      throw new Error("HTTPS required for camera access");
     }
 
-    codeReader = new ZXingBrowser.BrowserMultiFormatCodeReader();
-    const videoElement = document.getElementById('scanner-video');
+    // Try multiple possible global export names for ZXing Browser UMD
+    const ZXingLib = window.ZXingBrowser || window.ZXing || window.ZXingLibrary;
+    if (!ZXingLib) {
+      throw new Error("Scanner Library not loaded. Please check your internet connection.");
+    }
+
+    // Correct class name is usually BrowserMultiFormatReader in @zxing/browser
+    const ReaderClass = ZXingLib.BrowserMultiFormatReader || ZXingLib.BrowserMultiFormatCodeReader;
+    if (!ReaderClass) {
+      throw new Error("Could not find Scanner Reader class in library.");
+    }
+
+    codeReader = new ReaderClass();
     
-    // decodeFromConstraints automatically requests camera permission and picks the best camera
-    await codeReader.decodeFromConstraints(
-      { video: { facingMode: "environment" } },
-      videoElement,
-      (result, error) => {
-        if (result) {
-          onBarcodeScanned(result.text);
-        }
+    const constraints = { 
+      video: { 
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      } 
+    };
+
+    // decodeFromConstraints is the modern way to start scanning
+    await codeReader.decodeFromConstraints(constraints, videoElement, (result, err) => {
+      if (result) {
+        onBarcodeScanned(result.text);
       }
-    );
-  } catch (err) {
-    console.error("Camera Init Error:", err);
-    let msg = err.message || 'Unknown';
-    if (err.name === 'NotAllowedError') msg = 'Permission Denied in Browser Settings';
-    if (err.name === 'NotFoundError') msg = 'No back camera found';
-    if (err.name === 'NotReadableError') msg = 'Camera is in use by another app';
+      // err is thrown for every frame that doesn't have a barcode, so we ignore most errors
+    });
     
-    showToast('error', `Cam Error: ${msg}`);
+  } catch (err) {
+    console.error("Scanner Initialization Failure:", err);
+    let msg = err.message || 'Unknown Error';
+    if (err.name === 'NotAllowedError') msg = 'Camera access denied by user or browser.';
+    if (err.name === 'NotFoundError') msg = 'No suitable camera found.';
+    if (err.name === 'NotReadableError') msg = 'Camera hardware is busy or locked.';
+    
+    showToast('error', `Scanner: ${msg}`);
     closeBarcodeScanner();
   }
 };
