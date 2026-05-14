@@ -135,7 +135,16 @@ CREATE TABLE public.held_carts (
   organization_id UUID REFERENCES public.organizations(id)
 );
 
--- 4. DISABLE RLS FOR NOW (Will enable after Supabase Auth setup)
+-- 4. PERFORMANCE INDEXES
+CREATE INDEX IF NOT EXISTS idx_customers_org_id ON public.customers (organization_id, id);
+CREATE INDEX IF NOT EXISTS idx_sales_org_customer ON public.sales (organization_id, customer_id);
+CREATE INDEX IF NOT EXISTS idx_sales_org_date ON public.sales (organization_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_sale_items_org_sale ON public.sale_items (organization_id, sale_id);
+CREATE INDEX IF NOT EXISTS idx_products_org_active ON public.products (organization_id, is_active, id DESC);
+CREATE INDEX IF NOT EXISTS idx_products_org_barcode ON public.products (organization_id, barcode) WHERE barcode IS NOT NULL AND barcode <> '';
+CREATE INDEX IF NOT EXISTS idx_products_org_sku ON public.products (organization_id, sku) WHERE sku IS NOT NULL AND sku <> '';
+
+-- 5. DISABLE RLS FOR NOW (Will enable after Supabase Auth setup)
 ALTER TABLE public.organizations DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.categories DISABLE ROW LEVEL SECURITY;
@@ -147,11 +156,11 @@ ALTER TABLE public.settings DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.held_carts DISABLE ROW LEVEL SECURITY;
 
--- 5. SEED DEFAULT ORGANIZATION
+-- 6. SEED DEFAULT ORGANIZATION
 INSERT INTO public.organizations (id, name, slug, business_type, currency)
 VALUES ('00000000-0000-0000-0000-000000000001', 'My Shop', 'my-shop', 'Retail Shop', 'Rs.');
 
--- 6. SEED DEFAULT USERS (linked to the default org)
+-- 7. SEED DEFAULT USERS (linked to the default org)
 INSERT INTO public.users (username, password, display_name, role, organization_id)
 VALUES ('admin', '123', 'Administrator', 'Admin', '00000000-0000-0000-0000-000000000001');
 
@@ -164,11 +173,11 @@ VALUES ('hr', '123', 'HR Manager', 'HR', '00000000-0000-0000-0000-000000000001')
 INSERT INTO public.users (username, password, display_name, role, organization_id)
 VALUES ('inv', '123', 'Inventory Manager', 'Inventory', '00000000-0000-0000-0000-000000000001');
 
--- 7. SEED DEFAULT CUSTOMER
+-- 8. SEED DEFAULT CUSTOMER
 INSERT INTO public.customers (name, phone, email, outstanding_balance, organization_id)
 VALUES ('Walk-in Customer', '', '', 0, '00000000-0000-0000-0000-000000000001');
 
--- 8. SEED DEFAULT SETTINGS
+-- 9. SEED DEFAULT SETTINGS
 INSERT INTO public.settings (key, value, organization_id) VALUES ('biz_name', 'My Shop', '00000000-0000-0000-0000-000000000001');
 INSERT INTO public.settings (key, value, organization_id) VALUES ('biz_type', 'Retail Shop', '00000000-0000-0000-0000-000000000001');
 INSERT INTO public.settings (key, value, organization_id) VALUES ('currency', 'Rs.', '00000000-0000-0000-0000-000000000001');
