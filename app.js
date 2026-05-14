@@ -5,6 +5,15 @@ let currentSettings = {};
 let posCategory = '';
 let currentReceiptData = null;
 
+function runInBackground(label, task) {
+  Promise.resolve()
+    .then(task)
+    .catch(err => {
+      console.error(`${label} failed:`, err);
+      showToast('error', `${label} failed. Please refresh and check data.`);
+    });
+}
+
 // --- INIT & UTILS ---
 const IS_ELECTRON = typeof window.electronDB !== 'undefined';
 
@@ -667,19 +676,33 @@ window.payNow = async (paymentType) => {
   }));
 
   try {
+    const checkoutCart = cart.map(item => ({ ...item }));
     const saleId = await db.sales.add(sale);
     await db.sale_items.bulkAdd(saleItems.map(si => ({...si, sale_id: saleId})));
-    
-    // Update local stock
-    for(let item of cart) {
-      const p = await db.products.get(item.product_id);
-      if(p) await db.products.update(p.id, { stock_qty: p.stock_qty - item.quantity });
-    }
-    
-    if(paymentType === 'credit') {
-      const c = await db.customers.get(cartCustomerId);
-      await db.customers.update(c.id, { outstanding_balance: c.outstanding_balance + total });
-    }
+
+    // Finalize immediately after the sale record and receipt items are saved.
+    // Slow follow-up updates run in the background so the cashier sees the
+    // receipt without waiting for one network request per product/customer.
+    cart = []; manualDiscount = 0; cartCustomerId = 1;
+    renderCart(); updateCartCustomer();
+    showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?parseFloat(total+change):total);
+
+    runInBackground('Post-sale database update', async () => {
+      await Promise.all(checkoutCart.map(async item => {
+        const p = await db.products.get(item.product_id);
+        if(p) await db.products.update(p.id, { stock_qty: p.stock_qty - item.quantity });
+      }));
+
+      if(paymentType === 'credit') {
+        const c = await db.customers.get(sale.customer_id);
+        if(c) await db.customers.update(c.id, { outstanding_balance: (c.outstanding_balance || 0) + total });
+      }
+
+      await Promise.all([
+        renderPosGrid(),
+        logSecurityEvent('SALE_COMPLETED', { sale_id: saleId, total: total, type: paymentType })
+      ]);
+    });
 
     // Try to sync with Supabase (Background)
     if(!navigator.onLine) {
@@ -688,13 +711,6 @@ window.payNow = async (paymentType) => {
       localStorage.setItem('nexpos_offline_queue', JSON.stringify(queue));
       showToast('info', 'Sale saved offline. Will sync when online.');
     }
-
-    // Finalize
-    cart = []; manualDiscount = 0; cartCustomerId = 1;
-    renderCart(); updateCartCustomer(); renderPosGrid();
-    showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?parseFloat(total+change):total);
-    
-    await logSecurityEvent('SALE_COMPLETED', { sale_id: saleId, total: total, type: paymentType });
 
     // Close mobile cart
     document.querySelector('.pos-cart-wrap')?.classList.remove('active');
@@ -1075,17 +1091,29 @@ window.viewSaleDetails = async (id) => {
 
 // --- CUSTOMERS ---
 window.renderCustomersTable = async () => {
-  let custs = await db.customers.toArray();
+  const tbody = document.getElementById('customers-tbody');
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">Loading customers...</td></tr>';
+
+  let [custs, sales] = await Promise.all([
+    db.customers.toArray(),
+    db.sales.toArray()
+  ]);
+
+  const purchasesByCustomer = sales.reduce((map, sale) => {
+    const customerId = sale.customer_id;
+    if(customerId) map[customerId] = (map[customerId] || 0) + (Number(sale.total_amount) || 0);
+    return map;
+  }, {});
+
   const term = document.getElementById('customer-search').value.toLowerCase();
-  if(term) custs = custs.filter(c => c.name.toLowerCase().includes(term) || c.phone.includes(term));
+  if(term) custs = custs.filter(c => (c.name || '').toLowerCase().includes(term) || (c.phone || '').includes(term));
+
+  custs = custs.map(c => ({
+    ...c,
+    total_purchases: purchasesByCustomer[c.id] || 0
+  }));
   
-  // Calculate total purchases per customer (lazy load for MVP)
-  for(let c of custs) {
-    const s = await db.sales.where('customer_id').equals(c.id).toArray();
-    c.total_purchases = s.reduce((sum, x)=>sum+x.total_amount, 0);
-  }
-  
-  document.getElementById('customers-tbody').innerHTML = custs.map(c => `
+  tbody.innerHTML = custs.map(c => `
     <tr>
       <td class="fw-600">${c.name}</td>
       <td>${c.phone||'-'}</td>
