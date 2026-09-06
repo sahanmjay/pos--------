@@ -529,29 +529,277 @@ body { font-family: var(--font); background: var(--surface-2); color: var(--text
   .btn, .form-input, .mobile-tab, .nav-item { min-height: 48px; }
 }
 
+/* ═════════════════════════════════════════════════ */
+/* 80mm THERMAL RECEIPT PRINT STYLES                 */
+/* ═════════════════════════════════════════════════ */
 @media print {
-  body * {
-    visibility: hidden;
-  }
-  #receipt-body, #receipt-body * {
-    visibility: visible;
-  }
-  #receipt-body {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 80mm;
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 12px;
-    color: black;
-  }
   @page {
     size: 80mm auto;
-    margin: 0;
+    margin: 0 !important;
   }
-  .modal-overlay, .modal-header, .modal-footer {
+
+  html, body {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  #receipt-overlay,
+  #receipt-overlay .modal,
+  #receipt-body,
+  #receipt-body * {
+    visibility: visible !important;
+  }
+
+  #receipt-overlay {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 80mm !important;
+    background: transparent !important;
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  #receipt-overlay .modal {
+    position: static !important;
+    width: 72mm !important;
+    max-width: 72mm !important;
+    margin: 0 auto !important;
+    padding: 3mm 2mm 5mm 2mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    border: none !important;
+    box-shadow: none !important;
+    transform: none !important;
+    border-radius: 0 !important;
+  }
+
+  .modal-header,
+  .modal-footer,
+  #receipt-status-banner,
+  .modal-close,
+  #app,
+  #login-screen,
+  .toast-container,
+  #scanner-container {
     display: none !important;
   }
+
+  #receipt-body {
+    display: block !important;
+    width: 100% !important;
+    font-family: 'Courier New', Courier, Consolas, monospace !important;
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+    color: #000000 !important;
+    background: #ffffff !important;
+    word-break: break-word !important;
+  }
+
+  #receipt-body h2 {
+    font-size: 16px !important;
+    color: #000000 !important;
+    margin-bottom: 2px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+  }
+
+  #receipt-body table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    color: #000000 !important;
+  }
+
+  #receipt-body th, 
+  #receipt-body td {
+    color: #000000 !important;
+    padding: 2px 0 !important;
+  }
+
+  .thermal-dashed {
+    border-top: 1px dashed #000000 !important;
+    margin: 5px 0 !important;
+  }
+
+  /* Compact Thermal Branding for Univerzlk */
+  .thermal-univerzlk-footer {
+    margin-top: 8px !important;
+    padding-top: 6px !important;
+    border-top: 1px dashed #000000 !important;
+    text-align: center !important;
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 9.5px !important;
+    line-height: 1.25 !important;
+    color: #000000 !important;
+  }
+
+  .thermal-univerzlk-footer .univerzlk-title {
+    font-weight: bold !important;
+    font-size: 10.5px !important;
+    letter-spacing: 0.3px !important;
+  }
+
+  .thermal-univerzlk-footer .univerzlk-tagline {
+    font-size: 9px !important;
+    text-transform: uppercase !important;
+  }
+
+  .thermal-univerzlk-footer .univerzlk-contact {
+    font-weight: bold !important;
+    font-size: 9.5px !important;
+    margin-top: 1px !important;
+  }
+}
+
+/* ─── CASH PAYMENT MODAL & DENOMINATION BUTTONS ─── */
+.cash-modal-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cash-due-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.cash-due-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+.cash-due-val {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--brand);
+}
+.cash-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.cash-tendered-input {
+  flex: 1;
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  padding: 10px 14px !important;
+  color: var(--text-primary) !important;
+  text-align: right;
+  letter-spacing: 0.5px;
+}
+.denom-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.denom-grid-notes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.denom-grid-coins {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.denom-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.denom-btn:hover {
+  border-color: var(--brand);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+  background: var(--surface-2);
+}
+.denom-btn:active {
+  transform: translateY(0);
+}
+.denom-note {
+  border-left: 3px solid var(--brand);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.denom-note-tag {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+.denom-coin {
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text-primary);
+  padding: 8px 4px;
+}
+.denom-coin:hover {
+  background: var(--surface-3);
+  border-color: var(--brand);
+}
+.cash-calc-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  transition: all 0.2s ease;
+}
+.cash-calc-status {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.cash-calc-val {
+  font-size: 22px;
+  font-weight: 800;
+}
+.cash-calc-change {
+  color: var(--success);
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.08);
+}
+.cash-calc-short {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.08);
 }
 
 /* SCANNER OVERLAY */

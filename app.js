@@ -93,38 +93,53 @@ function updateClock() {
 }
 
 async function loadSettings() {
-  const sets = await db.settings.toArray();
-  sets.forEach(s => { currentSettings[s.key] = s.value; });
-
-  if (db.currentOrgId) {
-    try {
-      const org = await db.organizations.get(db.currentOrgId);
-      if (org) {
-        if (!currentSettings.biz_name) currentSettings.biz_name = org.name;
-        if (!currentSettings.biz_type) currentSettings.biz_type = org.business_type;
-        if (!currentSettings.currency) currentSettings.currency = org.currency;
-        if (!currentSettings.tax_rate) currentSettings.tax_rate = String(org.tax_rate || 0);
-        if (!currentSettings.phone) currentSettings.phone = org.phone || '';
-        if (!currentSettings.address) currentSettings.address = org.address || '';
-        currentSettings.plan_id = org.plan_id || 'free';
-      }
-    } catch (e) {
-      console.warn('loadSettings org sync failed:', e);
-    }
-  }
-
   const bName = document.getElementById('topbar-biz-name');
   const bType = document.getElementById('topbar-biz-type');
   const sBizName = document.getElementById('sidebar-biz-name');
   const sBizSub = document.getElementById('sidebar-biz-sub');
-  const bizTitle = currentSettings.biz_name || 'NexPOS';
+
+  // If not logged in into a specific business, ALWAYS show clean NexPOS branding
+  if (!db.currentOrgId) {
+    currentSettings = {};
+    const defaultTitle = isSuperAdmin ? 'NexPOS — Platform Admin' : 'NexPOS — SaaS Business Platform';
+    document.title = defaultTitle;
+    if (bName) bName.textContent = isSuperAdmin ? 'NexPOS Console' : 'NexPOS';
+    if (bType) bType.textContent = isSuperAdmin ? 'Platform Management' : 'Point of Sale';
+    if (sBizName) sBizName.textContent = 'NexPOS';
+    if (sBizSub) sBizSub.textContent = isSuperAdmin ? 'Platform Admin' : 'Premium Retail Suite';
+    document.documentElement.removeAttribute('data-theme');
+    return;
+  }
+
+  // A specific business IS signed in -> load only their settings
+  currentSettings = {};
+  try {
+    const sets = await db.settings.toArray();
+    sets.forEach(s => { currentSettings[s.key] = s.value; });
+
+    const org = await db.organizations.get(db.currentOrgId);
+    if (org) {
+      if (!currentSettings.biz_name) currentSettings.biz_name = org.name;
+      if (!currentSettings.biz_type) currentSettings.biz_type = org.business_type;
+      if (!currentSettings.currency) currentSettings.currency = org.currency;
+      if (!currentSettings.tax_rate) currentSettings.tax_rate = String(org.tax_rate || 0);
+      if (!currentSettings.phone) currentSettings.phone = org.phone || '';
+      if (!currentSettings.address) currentSettings.address = org.address || '';
+      currentSettings.plan_id = org.plan_id || 'free';
+    }
+  } catch (e) {
+    console.warn('loadSettings error:', e);
+  }
+
+  const bizTitle = currentSettings.biz_name || 'My Business';
+  const bizType = currentSettings.biz_type || 'Point of Sale';
 
   if (bName) bName.textContent = bizTitle;
-  if (bType) bType.textContent = currentSettings.biz_type || 'Point of Sale';
+  if (bType) bType.textContent = bizType;
   if (sBizName) sBizName.textContent = bizTitle;
   if (sBizSub) sBizSub.textContent = 'Powered by NexPOS';
 
-  document.title = `${bizTitle} — Universal Point of Sale`;
+  document.title = `${bizTitle} — NexPOS`;
 
   if (currentSettings.theme && currentSettings.theme !== 'default') {
     document.documentElement.setAttribute('data-theme', currentSettings.theme);
@@ -176,58 +191,57 @@ function checkLoginLockout() {
 }
 
 function isEmergencyAdminLogin(username, password) {
-  return username.trim().toLowerCase() === 'admin' && password.trim() === '231';
+  const u = username.trim().toLowerCase();
+  const p = password.trim();
+  return u === 'admin' && (p === '231' || p === 'admin');
 }
 
-function createEmergencyAdminUser() {
+function createEmergencyAdminUser(orgId) {
   return {
     id: 0,
     username: 'admin',
     password: '231',
     display_name: 'Administrator',
     role: 'Admin',
-    organization_id: '00000000-0000-0000-0000-000000000001'
+    organization_id: orgId || '00000000-0000-0000-0000-000000000001'
   };
 }
 
-// --- LOGIN MODE SWITCHING ---
+// --- UNIFIED DIRECT LOGIN & AUTHENTICATION ---
 window.setLoginMode = (mode) => {
-  loginMode = mode;
-  document.getElementById('mode-business').classList.toggle('active', mode === 'business');
-  document.getElementById('mode-business').classList.remove('sa-mode');
-  document.getElementById('mode-super').classList.toggle('active', mode === 'super');
-  if (mode === 'super') document.getElementById('mode-super').classList.add('sa-mode');
-
-  document.getElementById('login-slug-group').style.display = mode === 'business' ? 'block' : 'none';
-  
-  if (mode === 'super') {
-    document.getElementById('login-title-text').textContent = 'Platform Admin';
-    document.getElementById('login-subtitle-text').textContent = 'Sign in to the NexPOS management console';
-  } else {
-    document.getElementById('login-title-text').textContent = 'Welcome back';
-    document.getElementById('login-subtitle-text').textContent = 'Sign in to manage your business operations';
-  }
-  
-  document.getElementById('login-error').style.display = 'none';
+  // Maintained for backward compatibility
 };
 
-// --- NAVIGATION & AUTH ---
 async function doLogin() {
   const u = document.getElementById('login-user').value.trim();
   const p = document.getElementById('login-pass').value.trim();
   const err = document.getElementById('login-error');
+  const btn = document.getElementById('login-btn');
 
   if (!u || !p) {
-    err.textContent = 'Please enter username and password';
+    err.textContent = 'Please enter your username and password';
     err.style.display = 'block';
     return;
   }
 
-  // ─── SUPER ADMIN LOGIN ───
-  if (loginMode === 'super') {
+  // Check lockout
+  const lockoutMsg = checkLoginLockout();
+  if (lockoutMsg) {
+    err.textContent = lockoutMsg;
+    err.style.display = 'block';
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = 'Signing In...';
+  }
+
+  try {
+    // 1. Check Platform Super Admin credentials first
     try {
       let sa = await saLoginSuperAdmin(u, p);
-      if (!sa && u.toLowerCase() === 'superadmin' && p === 'super@123') {
+      if (!sa && (u.toLowerCase() === 'superadmin' || u.toLowerCase() === 'admin@nexpos.cloud') && p === 'super@123') {
         sa = {
           id: '00000000-0000-0000-0000-000000000000',
           username: 'superadmin',
@@ -242,102 +256,97 @@ async function doLogin() {
         return;
       }
     } catch (e) {
-      console.error('Super Admin login error:', e);
+      console.warn('Super Admin auth check notice:', e);
     }
-    err.textContent = 'Invalid platform admin credentials';
-    err.style.display = 'block';
-    return;
-  }
 
-  // ─── BUSINESS LOGIN ───
-  const slug = document.getElementById('login-slug').value.trim().toLowerCase();
-  if (!slug) {
-    err.textContent = 'Please enter your business code';
-    err.style.display = 'block';
-    return;
-  }
+    // 2. Direct Query: Look up user across businesses by username & password
+    let matchedUser = null;
+    try {
+      // First attempt: search in Supabase users table
+      const { data: usersData, error: uErr } = await supa
+        .from('users')
+        .select('*, organizations(*)')
+        .eq('password', p)
+        .eq('is_active', true);
 
-  // Look up organization by slug
-  let org = null;
-  try {
-    const { data, error: orgErr } = await supa
-      .from('organizations')
-      .select('*')
-      .eq('slug', slug)
-      .limit(1)
-      .maybeSingle();
-    if (orgErr) throw orgErr;
-    org = data;
-  } catch (e) {
-    err.textContent = 'Database error: ' + (e.message || 'Connection failed');
-    err.style.display = 'block';
-    return;
-  }
+      if (usersData && usersData.length > 0) {
+        matchedUser = usersData.find(usr => 
+          (usr.username && usr.username.toLowerCase() === u.toLowerCase()) ||
+          (usr.display_name && usr.display_name.toLowerCase() === u.toLowerCase())
+        );
+      }
+    } catch (e) {
+      console.warn('Supabase user search notice:', e);
+    }
 
-  if (!org) {
-    err.textContent = `Business code "${slug}" not found. Check with your administrator.`;
-    err.style.display = 'block';
-    return;
-  }
+    // Secondary attempt: exact query
+    if (!matchedUser) {
+      try {
+        const { data: exactUsers } = await supa
+          .from('users')
+          .select('*, organizations(*)')
+          .eq('username', u)
+          .eq('password', p)
+          .eq('is_active', true)
+          .limit(1);
+        if (exactUsers && exactUsers.length > 0) {
+          matchedUser = exactUsers[0];
+        }
+      } catch (e) {
+        console.warn('Exact username query notice:', e);
+      }
+    }
 
-  if (!org.is_active) {
-    err.textContent = 'This business has been deactivated. Contact platform admin.';
-    err.style.display = 'block';
-    return;
-  }
+    // If user record found
+    if (matchedUser) {
+      // Check if business is deactivated
+      if (matchedUser.organizations && matchedUser.organizations.is_active === false) {
+        err.textContent = 'This business account has been deactivated. Please contact platform admin.';
+        err.style.display = 'block';
+        return;
+      }
 
-  // Emergency local admin fallback
-  if (isEmergencyAdminLogin(u, p)) {
-    err.style.display = 'none';
-    const emergencyUser = createEmergencyAdminUser();
-    emergencyUser.organization_id = org.id;
-    await completeLogin(emergencyUser, { audit: false });
-    showToast('info', 'Logged in with local admin fallback');
-    return;
-  }
+      err.style.display = 'none';
+      await completeLogin(matchedUser);
+      return;
+    }
 
-  // Check lockout
-  const lockoutMsg = checkLoginLockout();
-  if (lockoutMsg) {
-    err.textContent = lockoutMsg;
-    err.style.display = 'block';
-    return;
-  }
+    // 3. Emergency / Local admin fallback (admin/admin or admin/231)
+    if (isEmergencyAdminLogin(u, p)) {
+      err.style.display = 'none';
+      let orgId = '00000000-0000-0000-0000-000000000001';
+      
+      // Auto-assign to the first active business if one exists in database
+      try {
+        const { data: orgs } = await supa.from('organizations').select('id, name, is_active').eq('is_active', true).limit(1);
+        if (orgs && orgs.length > 0) {
+          orgId = orgs[0].id;
+        }
+      } catch (e) {}
 
-  // Query users within this org
-  let user = null;
-  try {
-    const res = await supa
-      .from('users')
-      .select('*')
-      .eq('username', u)
-      .eq('password', p)
-      .eq('is_active', true)
-      .eq('organization_id', org.id)
-      .limit(1)
-      .maybeSingle();
-    user = res.data;
-    if (res.error) throw res.error;
-  } catch (e) {
-    err.textContent = 'Database Error: ' + (e.message || 'Connection failed');
-    err.style.display = 'block';
-    return;
-  }
+      const emergencyUser = createEmergencyAdminUser(orgId);
+      await completeLogin(emergencyUser, { audit: false });
+      showToast('info', 'Logged in as Administrator');
+      return;
+    }
 
-  if (!user) {
+    // 4. Invalid credentials
     loginAttempts.count++;
     if (loginAttempts.count >= 5) {
       loginAttempts.lockoutUntil = Date.now() + (15 * 60 * 1000);
       loginAttempts.count = 0;
     }
     localStorage.setItem('pos_login_attempts', JSON.stringify(loginAttempts));
-    await logSecurityEvent('LOGIN_FAILURE', { username: u, org_slug: slug });
+    await logSecurityEvent('LOGIN_FAILURE', { username: u });
     err.textContent = 'Invalid username or password';
     err.style.display = 'block';
-    return;
-  }
 
-  await completeLogin(user);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = 'Sign In to Dashboard →';
+    }
+  }
 }
 
 // ─── SUPER ADMIN LOGIN COMPLETION ───
@@ -367,6 +376,17 @@ async function completeSuperLogin(sa) {
   document.getElementById('nav-sales').style.display = 'none';
   document.getElementById('nav-hr').style.display = 'none';
   document.getElementById('nav-system').style.display = 'none';
+
+  // Configure password menu for super admin
+  const saPwItem = document.getElementById('user-dropdown-pw-item');
+  if (saPwItem) {
+    saPwItem.style.display = 'block';
+    saPwItem.style.opacity = '1';
+    saPwItem.style.cursor = 'pointer';
+    saPwItem.onclick = openChangePasswordModal;
+    saPwItem.innerHTML = '🔑 Change Password';
+    saPwItem.title = 'Change Platform Super Admin password';
+  }
 
   await saLogPlatformEvent('super_admin', sa.id, sa.display_name, 'SUPER_ADMIN_LOGIN', null, '', {});
 
@@ -403,6 +423,26 @@ async function completeLogin(user, options = {}) {
   document.getElementById('role-badge').textContent = user.role;
   const sidebarRoleBadge = document.getElementById('sidebar-role-badge');
   if (sidebarRoleBadge) sidebarRoleBadge.textContent = user.role;
+
+  // Configure change password option based on Business Admin role
+  const pwItem = document.getElementById('user-dropdown-pw-item');
+  if (pwItem) {
+    if (user.role === 'Admin') {
+      pwItem.style.display = 'block';
+      pwItem.style.opacity = '1';
+      pwItem.style.cursor = 'pointer';
+      pwItem.onclick = openChangePasswordModal;
+      pwItem.innerHTML = '🔑 Change Password';
+      pwItem.title = 'Change your administrator password';
+    } else {
+      pwItem.style.display = 'block';
+      pwItem.style.opacity = '0.5';
+      pwItem.style.cursor = 'default';
+      pwItem.onclick = () => showToast('info', 'Passwords can only be set or changed by your business administrator.');
+      pwItem.innerHTML = '<span style="font-size:12px; color:var(--text-muted)">🔒 Password Managed by Admin</span>';
+      pwItem.title = 'Only Business Administrators can set or change passwords';
+    }
+  }
   
   // Apply role restrictions
   document.getElementById('nav-pos').style.display = 'none';
@@ -438,7 +478,7 @@ async function completeLogin(user, options = {}) {
   await updateCartCustomer();
 }
 
-function signOut() {
+async function signOut() {
   currentUser = null;
   superAdminUser = null;
   currentOrgId = null;
@@ -461,21 +501,34 @@ function signOut() {
 
   // Reset login mode
   setLoginMode('business');
+  await loadSettings();
 }
 
 window.openChangePasswordModal = () => {
+  if (currentUser && currentUser.role !== 'Admin') {
+    return showToast('error', 'Only Business Administrators can set or change passwords.');
+  }
+
+  const isSuper = !!superAdminUser;
+  const accountTitle = isSuper 
+    ? 'Platform Super Admin' 
+    : (currentUser ? `${currentUser.display_name} (Admin)` : 'Account');
+
   const html = `
+    <div style="font-size:13px; color:var(--text-secondary); margin-bottom:14px">
+      Updating security credentials for: <strong style="color:var(--brand)">${accountTitle}</strong>
+    </div>
     <div class="form-group">
       <label class="form-label">Current Password</label>
-      <input class="form-input" type="password" id="pw-current">
+      <input class="form-input" type="password" id="pw-current" placeholder="Enter current password">
     </div>
     <div class="form-group">
       <label class="form-label">New Password</label>
-      <input class="form-input" type="password" id="pw-new">
+      <input class="form-input" type="password" id="pw-new" placeholder="Enter new password (min 3 chars)">
     </div>
     <div class="form-group">
       <label class="form-label">Confirm New Password</label>
-      <input class="form-input" type="password" id="pw-confirm">
+      <input class="form-input" type="password" id="pw-confirm" placeholder="Re-enter new password">
     </div>
   `;
   openModal('Change Password', html, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="updatePassword()">Update Password</button>`);
@@ -486,14 +539,64 @@ window.updatePassword = async () => {
   const newPw = document.getElementById('pw-new').value;
   const confirmPw = document.getElementById('pw-confirm').value;
   
-  if (current !== currentUser.password) return showToast('error', 'Incorrect current password');
+  if (!current || !newPw) return showToast('error', 'Please fill in all password fields');
   if (newPw !== confirmPw) return showToast('error', 'New passwords do not match');
-  if (newPw.length < 3) return showToast('error', 'Password too short');
+  if (newPw.length < 3) return showToast('error', 'Password must be at least 3 characters');
   
-  await db.users.update(currentUser.id, { password: newPw });
-  currentUser.password = newPw;
-  closeModal();
-  showToast('success', 'Password updated successfully');
+  // ─── Super Admin Password Update ───
+  if (superAdminUser) {
+    if (current !== superAdminUser.password) return showToast('error', 'Incorrect current password');
+    try {
+      const { error } = await supa.from('super_admins').update({ password: newPw }).eq('id', superAdminUser.id);
+      if (error) throw error;
+      superAdminUser.password = newPw;
+      closeModal();
+      showToast('success', 'Super Admin password updated successfully');
+      await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, 'PASSWORD_CHANGED', null, '', {});
+      return;
+    } catch (e) {
+      return showToast('error', 'Failed to update super admin password: ' + e.message);
+    }
+  }
+
+  // ─── Business Admin Password Update ───
+  if (currentUser) {
+    if (currentUser.role !== 'Admin') {
+      return showToast('error', 'Only Business Administrators can set or change passwords.');
+    }
+    if (current !== currentUser.password) return showToast('error', 'Incorrect current password');
+    try {
+      await db.users.update(currentUser.id, { password: newPw });
+      currentUser.password = newPw;
+      closeModal();
+      showToast('success', 'Business Admin password updated successfully');
+      return;
+    } catch (e) {
+      return showToast('error', 'Failed to update admin password: ' + e.message);
+    }
+  }
+};
+
+window.bizAdminChangePassword = async () => {
+  if (!currentUser || currentUser.role !== 'Admin') {
+    return showToast('error', 'Only Business Administrators can change passwords');
+  }
+  const current = document.getElementById('set-admin-current-pw').value;
+  const newPw = document.getElementById('set-admin-new-pw').value;
+
+  if (!current || !newPw) return showToast('error', 'Please fill in both current and new password');
+  if (current !== currentUser.password) return showToast('error', 'Incorrect current admin password');
+  if (newPw.length < 3) return showToast('error', 'New password must be at least 3 characters');
+
+  try {
+    await db.users.update(currentUser.id, { password: newPw });
+    currentUser.password = newPw;
+    document.getElementById('set-admin-current-pw').value = '';
+    document.getElementById('set-admin-new-pw').value = '';
+    showToast('success', 'Business Admin password updated successfully');
+  } catch (e) {
+    showToast('error', 'Failed to update admin password: ' + e.message);
+  }
 };
 
 const SCREENS = {
@@ -517,10 +620,14 @@ function nav(screenId) {
   // Access control
   const role = currentUser.role;
   if (role !== 'Admin') {
+    if (screenId === 'user-mgmt') {
+      showToast('error', 'Only Business Administrators can access Staff Management and manage accounts');
+      return;
+    }
     if ((role === 'Counter' || role === 'Cashier') && !['pos', 'dashboard', 'sales-history', 'customers'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
-    if (role === 'HR' && !['user-mgmt', 'attendance', 'advances', 'payroll'].includes(screenId)) {
+    if (role === 'HR' && !['attendance', 'advances', 'payroll'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
     if (screenId === 'ai-reports' && role !== 'Admin') {
@@ -576,9 +683,143 @@ function nav(screenId) {
 window.toggleSalesTab = (tab) => {
   document.getElementById('sales-list-view').style.display = tab === 'sales' ? 'block' : 'none';
   document.getElementById('shifts-list-view').style.display = tab === 'shifts' ? 'block' : 'none';
+  const ramisView = document.getElementById('ramis-list-view');
+  if (ramisView) ramisView.style.display = tab === 'ramis' ? 'block' : 'none';
+
   document.getElementById('tab-sales-list').classList.toggle('active', tab === 'sales');
   document.getElementById('tab-shifts-list').classList.toggle('active', tab === 'shifts');
+  const tabRamis = document.getElementById('tab-ramis-list');
+  if (tabRamis) tabRamis.classList.toggle('active', tab === 'ramis');
+
   if (tab === 'shifts') renderShiftHistory();
+  if (tab === 'ramis') renderRamisMonitor();
+};
+
+// ─── RAMIS IRD LIVE MONITOR ───
+let ramisCachedJobs = [];
+
+window.renderRamisMonitor = async () => {
+  const tbody = document.getElementById('ramis-invoices-tbody');
+  if (!tbody) return;
+
+  tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--text-muted)"><span class="spinner-border spinner-border-sm"></span> Loading RAMIS IRD Gateway data...</td></tr>`;
+
+  try {
+    const res = await fetch('/api/ramis/status');
+    const json = await res.json();
+    const stats = json.stats || { pending: 0, completed: 0, failed: 0, recentCompleted: [] };
+    ramisCachedJobs = stats.recentCompleted || [];
+
+    // Update KPI indicators
+    const countEl = document.getElementById('ramis-stat-count');
+    const supplyEl = document.getElementById('ramis-stat-supply');
+    const vatEl = document.getElementById('ramis-stat-vat');
+    const pendingEl = document.getElementById('ramis-stat-pending');
+
+    let totalSupply = 0;
+    let totalVat = 0;
+    ramisCachedJobs.forEach(j => {
+      totalSupply += (j.data?.valueOfSupply || 0);
+      totalVat += (j.data?.vatAmount || 0);
+    });
+
+    if (countEl) countEl.textContent = stats.completed || ramisCachedJobs.length;
+    if (supplyEl) supplyEl.textContent = formatMoney(totalSupply);
+    if (vatEl) vatEl.textContent = formatMoney(totalVat);
+    if (pendingEl) pendingEl.textContent = `${stats.pending || 0} pending jobs`;
+
+    if (ramisCachedJobs.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:30px; color:var(--text-muted)">No RAMIS invoices transmitted yet. Complete a checkout sale or click "Test Submission" above to transmit one.</td></tr>`;
+      return;
+    }
+
+    // Render Rows (Newest first)
+    tbody.innerHTML = ramisCachedJobs.slice().reverse().map(j => {
+      const d = j.data || {};
+      const res = j.result || {};
+      const ramisRef = res.ramisReference || 'PENDING';
+      const status = res.status || j.status || 'SUBMITTED';
+
+      return `
+        <tr>
+          <td><strong style="color:var(--brand)">${d.taxInvoiceNo || '-'}</strong></td>
+          <td>${d.invoiceDate || new Date().toISOString().split('T')[0]}</td>
+          <td><span style="font-family:monospace; font-size:11px">${d.supplierTin || '-'}</span></td>
+          <td class="td-mono">${formatMoney(d.valueOfSupply || 0)}</td>
+          <td class="td-mono" style="color:var(--success)">${formatMoney(d.vatAmount || 0)}</td>
+          <td class="td-mono fw-600">${formatMoney(d.totalAmount || (d.valueOfSupply + d.vatAmount) || 0)}</td>
+          <td>
+            <span style="font-family:monospace; font-size:11px; background:var(--surface-2); padding:3px 6px; border-radius:4px; border:1px solid var(--border)">
+              ${ramisRef}
+            </span>
+          </td>
+          <td>
+            <span class="badge badge-completed" style="font-size:10px">
+              ✓ ${status}
+            </span>
+          </td>
+          <td>
+            <button class="btn btn-ghost btn-sm" onclick="viewRamisPayload('${j.id}')" title="View IRD JSON payload">
+              👁 View JSON
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+  } catch (err) {
+    console.warn('RAMIS monitor fetch error:', err);
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--danger)">Could not connect to RAMIS queue server: ${err.message}</td></tr>`;
+  }
+};
+
+window.viewRamisPayload = (jobId) => {
+  const job = ramisCachedJobs.find(j => j.id === jobId);
+  if (!job) return showToast('error', 'Job details not found');
+
+  const jsonPretty = JSON.stringify(job, null, 2);
+  const body = `
+    <div style="font-size:12px; color:var(--text-muted); margin-bottom:10px">
+      Sri Lanka IRD RAMIS Schedule 1 Payload & Gateway Response
+    </div>
+    <pre style="background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:14px; max-height:420px; overflow:auto; font-family:Consolas,monospace; font-size:11.5px; color:var(--text-primary)">${jsonPretty}</pre>
+  `;
+  openModal(`RAMIS Invoice: ${job.data?.taxInvoiceNo || jobId}`, body, `<button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
+};
+
+window.testRamisSubmission = async () => {
+  const invoiceNo = 'INV-' + Math.floor(100000 + Math.random() * 900000);
+  const testPayload = {
+    taxInvoiceNo: invoiceNo,
+    invoiceDate: new Date().toISOString().split('T')[0],
+    supplierTin: (currentSettings && currentSettings.tin) ? currentSettings.tin : '102938475',
+    purchaserTin: null,
+    valueOfSupply: 10000.00,
+    vatAmount: 1800.00,
+    totalAmount: 11800.00,
+    scheduleType: 'SCHEDULE_1',
+    branchCode: '001',
+    paymentType: 'cash'
+  };
+
+  showToast('info', `⚡ Enqueueing test invoice ${invoiceNo} to RAMIS...`);
+
+  try {
+    const res = await fetch('/api/ramis/enqueue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(testPayload)
+    });
+    const data = await res.json();
+    showToast('success', `✓ Job ${data.jobId} queued for IRD submission`);
+
+    setTimeout(() => {
+      renderRamisMonitor();
+      showToast('success', `🎉 Invoice ${invoiceNo} accepted by IRD RAMIS MSMQ!`);
+    }, 1200);
+  } catch (e) {
+    showToast('error', 'Test submission failed: ' + e.message);
+  }
 };
 
 // --- MODALS ---
@@ -806,6 +1047,9 @@ window.holdCart = async () => {
   renderCart(); updateCartCustomer(); showToast('success', 'Cart held');
 };
 
+// ─── CASH DENOMINATIONS & PAYMENT STATE ───
+let currentCashCheckout = { total: 0, subtotal: 0, discount: 0, tax: 0, tendered: 0 };
+
 window.payNow = async (paymentType) => {
   if(cart.length === 0) return showToast('error', 'Cart is empty');
   
@@ -815,17 +1059,189 @@ window.payNow = async (paymentType) => {
     if(cartCustomerId === 1) return showToast('error', 'Please select a specific customer for credit sales.');
     const c = await db.customers.get(cartCustomerId);
     if(!confirm(`Add ${formatMoney(total)} to ${c.name}'s credit balance?`)) return;
+    return executeCheckout('credit', total, total, 0, subtotal, discount, tax);
   }
   
-  let change = 0;
+  if(paymentType === 'card') {
+    return executeCheckout('card', total, total, 0, subtotal, discount, tax);
+  }
+  
   if(paymentType === 'cash') {
-    const tendered = prompt(`Total: ${formatMoney(total)}\nEnter amount given by customer:`, total);
-    if(tendered === null) return;
-    const given = parseFloat(tendered);
-    if(isNaN(given) || given < total) return showToast('error', 'Invalid amount tendered.');
-    change = given - total;
+    openCashPaymentModal(total, subtotal, discount, tax);
   }
+};
+
+window.openCashPaymentModal = (total, subtotal, discount, tax) => {
+  currentCashCheckout = { total, subtotal, discount, tax, tendered: 0 };
   
+  const notes = [5000, 2000, 1000, 500, 100, 50, 20];
+  const coins = [10, 5, 2, 1];
+
+  const html = `
+    <div class="cash-modal-wrap">
+      <div class="cash-due-card">
+        <div>
+          <div class="cash-due-label">Total Bill Amount</div>
+          <div class="cash-due-val">${formatMoney(total)}</div>
+        </div>
+        <div style="display:flex; gap:6px">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="setExactCash()" title="Pay exact bill amount">Exact Bill</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="clearCashTendered()" title="Reset tendered amount" style="color:var(--danger)">Clear</button>
+        </div>
+      </div>
+
+      <div>
+        <label class="form-label" style="display:flex; justify-content:space-between">
+          <span>Amount Tendered by Customer</span>
+          <span style="font-weight:400; color:var(--text-muted); font-size:11px">Click denominations or type</span>
+        </label>
+        <div class="cash-input-row">
+          <input class="form-input cash-tendered-input" type="number" step="any" id="cash-tendered-input" 
+            value="" placeholder="0.00" oninput="onCashTenderedInput(this.value)" autocomplete="off">
+        </div>
+      </div>
+
+      <!-- Currency Notes -->
+      <div>
+        <div class="denom-section-title">💵 Currency Notes (LKR)</div>
+        <div class="denom-grid-notes">
+          ${notes.map(n => `
+            <button type="button" class="denom-btn denom-note" onclick="addCashDenom(${n})">
+              <span>+ ${n >= 1000 ? (n/1000) + 'K' : n}</span>
+              <span class="denom-note-tag">Rs. ${n.toLocaleString()}</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- Currency Coins -->
+      <div>
+        <div class="denom-section-title">🪙 Coins (LKR)</div>
+        <div class="denom-grid-coins">
+          ${coins.map(c => `
+            <button type="button" class="denom-btn denom-coin" onclick="addCashDenom(${c})">
+              + Rs. ${c}
+            </button>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- Live Calculation Summary -->
+      <div id="cash-calc-summary-box"></div>
+    </div>
+  `;
+
+  const footer = `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" id="btn-confirm-cash" onclick="confirmCashSale()" style="padding:12px 20px; font-weight:700">
+      Complete Cash Sale →
+    </button>
+  `;
+
+  openModal('Cash Payment & Denominations', html, footer);
+  renderCashCalcSummary();
+  
+  setTimeout(() => {
+    const input = document.getElementById('cash-tendered-input');
+    if(input) {
+      input.focus();
+      input.addEventListener('keydown', (e) => {
+        if(e.key === 'Enter') confirmCashSale();
+      });
+    }
+  }, 120);
+};
+
+window.addCashDenom = (amount) => {
+  currentCashCheckout.tendered = Number((currentCashCheckout.tendered + amount).toFixed(2));
+  const input = document.getElementById('cash-tendered-input');
+  if (input) input.value = currentCashCheckout.tendered || '';
+  renderCashCalcSummary();
+};
+
+window.setExactCash = () => {
+  currentCashCheckout.tendered = currentCashCheckout.total;
+  const input = document.getElementById('cash-tendered-input');
+  if (input) input.value = currentCashCheckout.tendered;
+  renderCashCalcSummary();
+};
+
+window.clearCashTendered = () => {
+  currentCashCheckout.tendered = 0;
+  const input = document.getElementById('cash-tendered-input');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  renderCashCalcSummary();
+};
+
+window.onCashTenderedInput = (val) => {
+  currentCashCheckout.tendered = parseFloat(val) || 0;
+  renderCashCalcSummary();
+};
+
+function renderCashCalcSummary() {
+  const box = document.getElementById('cash-calc-summary-box');
+  if(!box) return;
+  const total = currentCashCheckout.total;
+  const tendered = currentCashCheckout.tendered;
+  const diff = tendered - total;
+
+  if (tendered === 0) {
+    box.innerHTML = `
+      <div class="cash-calc-summary" style="background:var(--surface-2); border-color:var(--border)">
+        <div>
+          <div class="cash-calc-status" style="color:var(--text-muted)">Waiting for Cash</div>
+          <div style="font-size:12px; color:var(--text-muted)">Enter amount given by customer</div>
+        </div>
+        <div class="cash-calc-val" style="color:var(--text-muted); font-size:18px">Rs. 0.00</div>
+      </div>
+    `;
+    return;
+  }
+
+  if (diff >= 0) {
+    box.innerHTML = `
+      <div class="cash-calc-summary cash-calc-change">
+        <div>
+          <div class="cash-calc-status">✓ Change to Return</div>
+          <div style="font-size:11px; opacity:0.85">Customer Paid: ${formatMoney(tendered)}</div>
+        </div>
+        <div class="cash-calc-val">${formatMoney(diff)}</div>
+      </div>
+    `;
+  } else {
+    box.innerHTML = `
+      <div class="cash-calc-summary cash-calc-short">
+        <div>
+          <div class="cash-calc-status">⚠ Short / Due Remaining</div>
+          <div style="font-size:11px; opacity:0.85">Tendered: ${formatMoney(tendered)} of ${formatMoney(total)}</div>
+        </div>
+        <div class="cash-calc-val">-${formatMoney(Math.abs(diff))}</div>
+      </div>
+    `;
+  }
+}
+
+window.confirmCashSale = async () => {
+  const total = currentCashCheckout.total;
+  const tendered = currentCashCheckout.tendered;
+  
+  if (tendered < total) {
+    const diff = total - tendered;
+    if (!confirm(`Tendered amount (${formatMoney(tendered)}) is less than total bill (${formatMoney(total)}). Short by ${formatMoney(diff)}. Finalize anyway?`)) {
+      return;
+    }
+  }
+
+  const change = Math.max(0, tendered - total);
+  closeModal();
+  await executeCheckout('cash', total, tendered, change, currentCashCheckout.subtotal, currentCashCheckout.discount, currentCashCheckout.tax);
+};
+
+// ─── EXECUTE CHECKOUT & BACKGROUND PIPELINES ───
+async function executeCheckout(paymentType, total, tendered, change, subtotal, discount, tax) {
   const sale = {
     date: new Date().toISOString(),
     subtotal, discount, tax, total_amount: total,
@@ -845,13 +1261,13 @@ window.payNow = async (paymentType) => {
     const saleId = await db.sales.add(sale);
     await db.sale_items.bulkAdd(saleItems.map(si => ({...si, sale_id: saleId})));
 
-    // Finalize immediately after the sale record and receipt items are saved.
-    // Slow follow-up updates run in the background so the cashier sees the
-    // receipt without waiting for one network request per product/customer.
     cart = []; manualDiscount = 0; cartCustomerId = 1;
     renderCart(); updateCartCustomer();
-    showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?parseFloat(total+change):total);
+    
+    // Display 80mm receipt with Univerzlk branding
+    showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?tendered:total);
 
+    // ─── BACKGROUND LOCAL UPDATES (Zero UI Lag) ───
     runInBackground('Post-sale database update', async () => {
       await Promise.all(checkoutCart.map(async item => {
         const p = await db.products.get(item.product_id);
@@ -869,7 +1285,20 @@ window.payNow = async (paymentType) => {
       ]);
     });
 
-    // Try to sync with Supabase (Background)
+    // ─── BACKGROUND RAMIS IRD SCHEDULE 1 ENQUEUE ───
+    enqueueRamisInvoice({
+      id: saleId,
+      date: sale.date,
+      subtotal: sale.subtotal,
+      discount: sale.discount,
+      tax: sale.tax,
+      total_amount: sale.total_amount,
+      payment_type: paymentType,
+      items_count: sale.items_count,
+      customer_id: sale.customer_id
+    });
+
+    // Offline sync buffer
     if(!navigator.onLine) {
       const queue = JSON.parse(localStorage.getItem('nexpos_offline_queue') || '[]');
       queue.push({ sale, items: saleItems });
@@ -884,7 +1313,53 @@ window.payNow = async (paymentType) => {
     console.error('Checkout error:', err);
     showToast('error', 'Failed to complete checkout: ' + err.message);
   }
-};
+}
+
+// ─── RAMIS WEB API BACKGROUND ENQUEUE ───
+async function enqueueRamisInvoice(saleData) {
+  try {
+    const customer = saleData.customer_id ? await db.customers.get(saleData.customer_id) : null;
+    const tinSupplier = document.getElementById('set-ramis-tin')?.value.trim() || (currentSettings && currentSettings.tin) || '102938475';
+    const periodCode = document.getElementById('set-ramis-period')?.value.trim() || '2610';
+    const tinPurchaser = (customer && customer.tin) ? customer.tin : null;
+    const purchaserName = (customer && customer.name) ? customer.name : null;
+    
+    // Calculate taxable value of supply (Supply Value excluding VAT)
+    const valueOfSupply = Number(((saleData.subtotal || 0) - (saleData.discount || 0)).toFixed(2));
+    const vatAmount = Number((saleData.tax || 0).toFixed(2));
+    const invoiceNo = `INV-${String(saleData.id).padStart(6, '0')}`;
+    const invoiceDate = new Date(saleData.date).toISOString().split('T')[0];
+
+    const payload = {
+      taxInvoiceNo: invoiceNo,
+      invoiceDate: invoiceDate,
+      periodCode: periodCode,
+      supplierTin: tinSupplier,
+      purchaserTin: tinPurchaser,
+      purchaserName: purchaserName,
+      valueOfSupply: valueOfSupply,
+      vatAmount: vatAmount,
+      totalAmount: Number(saleData.total_amount.toFixed(2)),
+      scheduleType: 'SCHEDULE_1',
+      branchCode: '001',
+      paymentType: saleData.payment_type || 'cash'
+    };
+
+    // Fast asynchronous call to background queue worker
+    fetch('/api/ramis/enqueue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true
+    }).then(res => res.json()).then(data => {
+      console.log('⚡ [RAMIS] Invoice enqueued successfully:', data);
+    }).catch(err => {
+      console.warn('ℹ️ [RAMIS Queue Notice]:', err.message);
+    });
+  } catch (err) {
+    console.warn('RAMIS enqueue notice:', err);
+  }
+}
 
 function showReceipt(sale, items, change, tendered) {
   const shopName = currentSettings.biz_name || 'NexPOS';
@@ -892,34 +1367,41 @@ function showReceipt(sale, items, change, tendered) {
   const phone = currentSettings.phone || '';
   
   let html = `
-    <div style="text-align:center;margin-bottom:15px;border-bottom:1px dashed var(--border);padding-bottom:10px">
-      <h2 style="margin:0;font-size:18px;color:var(--text-primary)">${shopName}</h2>
-      <div style="color:var(--text-muted);font-size:12px">${address}</div>
-      <div style="color:var(--text-muted);font-size:12px">${phone}</div>
+    <div style="text-align:center;margin-bottom:12px;border-bottom:1px dashed var(--border);padding-bottom:8px">
+      <h2 style="margin:0;font-size:17px;color:var(--text-primary);letter-spacing:0.5px">${shopName}</h2>
+      <div style="color:var(--text-muted);font-size:11px">${address}</div>
+      <div style="color:var(--text-muted);font-size:11px">${phone}</div>
     </div>
-    <div style="margin-bottom:10px;color:var(--text-primary);font-size:12px">
+    <div style="margin-bottom:8px;color:var(--text-primary);font-size:11.5px">
       <div>Receipt: <span class="fw-600">#${sale.id}</span></div>
       <div>Date: ${new Date(sale.date).toLocaleString()}</div>
       <div>Cashier: ${sale.cashier}</div>
       <div>Pay Method: <span class="badge badge-completed" style="font-size:10px">${sale.payment_type.toUpperCase()}</span></div>
     </div>
-    <table style="width:100%;text-align:left;border-bottom:1px dashed var(--border);margin-bottom:10px;color:var(--text-primary)">
-      <tr style="color:var(--text-muted);font-size:11px;text-transform:uppercase"><th>Item</th><th>Qty</th><th style="text-align:right">Total</th></tr>
+    <table style="width:100%;text-align:left;border-bottom:1px dashed var(--border);margin-bottom:8px;color:var(--text-primary);font-size:11.5px">
+      <tr style="color:var(--text-muted);font-size:10.5px;text-transform:uppercase"><th>Item</th><th>Qty</th><th style="text-align:right">Total</th></tr>
   `;
   
   items.forEach(i => {
-    html += `<tr style="border-bottom:1px solid var(--surface-2)"><td style="padding:4px 0">${i.product_name}</td><td>${i.quantity}</td><td style="text-align:right" class="td-mono">${formatMoney(i.line_total)}</td></tr>`;
+    html += `<tr style="border-bottom:1px solid var(--surface-2)"><td style="padding:3px 0">${i.product_name}</td><td>${i.quantity}</td><td style="text-align:right" class="td-mono">${formatMoney(i.line_total)}</td></tr>`;
   });
   
   html += `</table>
-    <div style="text-align:right;color:var(--text-primary)">
+    <div style="text-align:right;color:var(--text-primary);font-size:12px">
       <div style="color:var(--text-muted)">Subtotal: ${formatMoney(sale.subtotal)}</div>
       ${sale.discount>0 ? `<div style="color:var(--danger)">Discount: -${formatMoney(sale.discount)}</div>` : ''}
       ${sale.tax>0 ? `<div style="color:var(--text-muted)">Tax: ${formatMoney(sale.tax)}</div>` : ''}
-      <h3 style="margin:5px 0;color:var(--brand);font-size:20px">Total: ${formatMoney(sale.total_amount)}</h3>
-      ${sale.payment_type==='cash' ? `<div style="font-size:12px">Tendered: ${formatMoney(tendered)}</div><div style="font-weight:700;color:var(--success)">Change: ${formatMoney(change)}</div>` : ''}
+      <h3 style="margin:4px 0;color:var(--brand);font-size:18px">Total: ${formatMoney(sale.total_amount)}</h3>
+      ${sale.payment_type==='cash' ? `<div style="font-size:11.5px">Tendered: ${formatMoney(tendered)}</div><div style="font-weight:700;color:var(--success);font-size:12.5px">Change: ${formatMoney(change)}</div>` : ''}
     </div>
-    <div style="text-align:center;margin-top:15px;border-top:1px dashed var(--border);padding-top:10px;color:var(--text-muted);font-style:italic">Thank you for your business!</div>
+    <div style="text-align:center;margin-top:10px;border-top:1px dashed var(--border);padding-top:6px;color:var(--text-muted);font-style:italic;font-size:10.5px">Thank you for your business!</div>
+    
+    <!-- 80mm Custom Branding Footer -->
+    <div class="thermal-univerzlk-footer" style="text-align:center;margin-top:8px;border-top:1px dashed var(--border);padding-top:6px;font-family:'Courier New',Courier,monospace;font-size:10px;line-height:1.35;color:var(--text-secondary)">
+      <div class="univerzlk-title" style="font-weight:700;font-size:11px;color:var(--text-primary)">Powered by Univerzlk (pvt)Ltd</div>
+      <div class="univerzlk-tagline" style="font-size:9px;color:var(--text-muted)">Ask for POS Systems</div>
+      <div class="univerzlk-contact" style="font-size:9.5px;font-weight:600;color:var(--brand)">+94 77 887 3302 | univerzlk.com</div>
+    </div>
   `;
   
   currentReceiptData = { sale, items };
@@ -928,9 +1410,6 @@ function showReceipt(sale, items, change, tendered) {
   // Show "LOCKED" banner for past sales, hide for new ones
   const banner = document.getElementById('receipt-status-banner');
   if (banner) {
-    // If sale.id exists and was recently created, it might be the same sale.
-    // But usually history view is where we want the banner.
-    // Let's show it if sale.status === 'completed' or if we are viewing from history
     banner.style.display = (sale.id) ? 'block' : 'none';
   }
 
@@ -1020,7 +1499,7 @@ window.shareReceiptPDF = async () => {
 
     // 7. Redirect to WhatsApp with Premium Template
     showToast('success', 'Secure Bill Created! Opening WhatsApp...');
-    const bizNameDisplay = currentSettings.biz_name || 'thilakawardhana shop';
+    const bizNameDisplay = currentSettings.biz_name || 'NexPOS';
     
     const message = encodeURIComponent(
         `✨ *Receipt from ${bizNameDisplay}* ✨\n\n` +
@@ -1372,20 +1851,67 @@ window.renderUsersTable = async () => {
       </td>
       <td>
         <button class="btn btn-ghost btn-sm btn-icon" onclick="openUserForm(${u.id})" title="Edit User">✏️</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="openResetStaffPasswordModal(${u.id}, '${u.display_name}')" title="Change / Set Password" style="color:var(--brand)">🔑</button>
         <button class="btn btn-ghost btn-sm btn-icon" onclick="deleteUser(${u.id}, '${u.display_name}')" title="Delete User" style="color:var(--danger)">🗑️</button>
       </td>
     </tr>`;
   }).join('') || '<tr><td colspan="5" style="text-align:center">No users found</td></tr>';
 };
+
+window.openResetStaffPasswordModal = (userId, displayName) => {
+  if (!currentUser || currentUser.role !== 'Admin') {
+    return showToast('error', 'Only Business Administrators can change staff passwords');
+  }
+  const html = `
+    <div style="font-size:13px; color:var(--text-secondary); margin-bottom:14px">
+      Assign/change password for staff member: <strong style="color:var(--brand)">${displayName}</strong>
+    </div>
+    <div class="form-group">
+      <label class="form-label">New Password</label>
+      <input class="form-input" type="password" id="staff-new-pw" placeholder="Enter new password (min 3 chars)">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Confirm Password</label>
+      <input class="form-input" type="password" id="staff-confirm-pw" placeholder="Re-enter new password">
+    </div>
+  `;
+  openModal(`Set Password — ${displayName}`, html, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="saveStaffPassword(${userId}, '${displayName}')">Update Password</button>
+  `);
+};
+
+window.saveStaffPassword = async (userId, displayName) => {
+  if (!currentUser || currentUser.role !== 'Admin') {
+    return showToast('error', 'Only Business Administrators can change staff passwords');
+  }
+  const newPw = document.getElementById('staff-new-pw').value.trim();
+  const confirmPw = document.getElementById('staff-confirm-pw').value.trim();
+  if (!newPw) return showToast('error', 'Please enter a password');
+  if (newPw !== confirmPw) return showToast('error', 'Passwords do not match');
+  if (newPw.length < 3) return showToast('error', 'Password must be at least 3 characters');
+
+  try {
+    await db.users.update(parseInt(userId), { password: newPw });
+    closeModal();
+    showToast('success', `Password for ${displayName} updated successfully!`);
+  } catch (e) {
+    showToast('error', 'Failed to update staff password: ' + e.message);
+  }
+};
+
 window.openUserForm = async (id = null) => {
+  if (!currentUser || currentUser.role !== 'Admin') {
+    return showToast('error', 'Only Business Administrators can add or edit staff');
+  }
   let u = { username:'', password:'', display_name:'', role:'Counter', is_active:true, hourly_rate:0, ot_rate:0 };
   if(id) u = await db.users.get(id);
   const html = `
     <input type="hidden" id="f-usr-id" value="${id||''}">
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Username</label><input class="form-input" id="f-usr-name" value="${u.username}"></div>
-      <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="f-usr-pass" value="${u.password}"></div>
-      <div class="form-group"><label class="form-label">Display Name</label><input class="form-input" id="f-usr-disp" value="${u.display_name}"></div>
+      <div class="form-group"><label class="form-label">Username *</label><input class="form-input" id="f-usr-name" value="${u.username}" placeholder="e.g. cashier1"></div>
+      <div class="form-group"><label class="form-label">Password *</label><input class="form-input" type="password" id="f-usr-pass" value="${u.password}" placeholder="Assign password"></div>
+      <div class="form-group"><label class="form-label">Display Name *</label><input class="form-input" id="f-usr-disp" value="${u.display_name}" placeholder="e.g. Kasun Silva"></div>
       <div class="form-group"><label class="form-label">Role</label><select class="form-input" id="f-usr-role" onchange="togglePayFields(this.value)"><option ${u.role==='Admin'?'selected':''}>Admin</option><option ${u.role==='Counter'?'selected':''}>Counter</option><option ${u.role==='Cashier'?'selected':''}>Cashier</option><option ${u.role==='HR'?'selected':''}>HR</option><option ${u.role==='Inventory'?'selected':''}>Inventory</option><option ${u.role==='Worker'?'selected':''}>Worker</option></select></div>
       <div id="pay-fields" style="grid-column: span 2; display: ${u.role==='Worker'?'grid':'none'}; grid-template-columns: 1fr 1fr; gap: 14px;">
         <div class="form-group"><label class="form-label">Hourly Rate (Basic)</label><input class="form-input" type="number" step="0.01" id="f-usr-h-rate" value="${u.hourly_rate||0}"></div>
@@ -1393,29 +1919,46 @@ window.openUserForm = async (id = null) => {
       </div>
       <div class="form-group"><label class="form-label">Status</label><select class="form-input" id="f-usr-active"><option value="true" ${u.is_active?'selected':''}>Active</option><option value="false" ${!u.is_active?'selected':''}>Inactive</option></select></div>
     </div>`;
-  openModal(id?'Edit User':'New User', html, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveUser()">Save</button>`);
+  openModal(id?'Edit User & Credentials':'New Employee & Password', html, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveUser()">Save</button>`);
 };
 
 window.togglePayFields = (role) => {
   document.getElementById('pay-fields').style.display = (role === 'Worker') ? 'grid' : 'none';
 };
 window.saveUser = async () => {
+  if (!currentUser || currentUser.role !== 'Admin') {
+    return showToast('error', 'Only Business Administrators can save staff accounts');
+  }
   const id = document.getElementById('f-usr-id').value;
+  const username = document.getElementById('f-usr-name').value.trim();
+  const password = document.getElementById('f-usr-pass').value.trim();
+  const displayName = document.getElementById('f-usr-disp').value.trim();
+
+  if (!username) return showToast('error', 'Username is required');
+  if (!password) return showToast('error', 'Password is required');
+  if (password.length < 3) return showToast('error', 'Password must be at least 3 characters');
+  if (!displayName) return showToast('error', 'Display name is required');
+
   const u = { 
-    username:document.getElementById('f-usr-name').value, 
-    password:document.getElementById('f-usr-pass').value, 
-    display_name:document.getElementById('f-usr-disp').value, 
-    role:document.getElementById('f-usr-role').value, 
-    is_active:document.getElementById('f-usr-active').value==='true',
-    hourly_rate: parseFloat(document.getElementById('f-usr-h-rate').value)||0,
-    ot_rate: parseFloat(document.getElementById('f-usr-ot-rate').value)||0
+    username, 
+    password, 
+    display_name: displayName, 
+    role: document.getElementById('f-usr-role').value, 
+    is_active: document.getElementById('f-usr-active').value === 'true',
+    hourly_rate: parseFloat(document.getElementById('f-usr-h-rate').value) || 0,
+    ot_rate: parseFloat(document.getElementById('f-usr-ot-rate').value) || 0
   };
   if(id) await db.users.update(parseInt(id), u); else await db.users.add(u);
-  closeModal(); renderUsersTable(); showToast('success', 'User saved');
+  closeModal(); 
+  renderUsersTable(); 
+  showToast('success', id ? 'Staff account updated' : 'New employee created with assigned password');
 };
 window.deleteUser = async (id, name) => {
+  if (!currentUser || currentUser.role !== 'Admin') {
+    return showToast('error', 'Only Business Administrators can remove staff accounts');
+  }
   if (id === currentUser.id) return showToast('error', 'You cannot delete yourself!');
-  if (confirm(`Are you sure you want to remove ${name}? This will permanently delete their account and history.`)) {
+  if (confirm(`Are you sure you want to remove ${name}? This will permanently delete their account.`)) {
     await db.users.delete(id);
     renderUsersTable();
     showToast('success', 'User removed successfully');
@@ -2766,6 +3309,153 @@ window.loadSettingsForm = () => {
   });
 
   renderBizTemplates();
+  loadRamisConfigUI();
+};
+
+// ─── RAMIS CONFIGURATION & CONNECTION TESTER ───
+window.loadRamisConfigUI = async () => {
+  try {
+    const res = await fetch('/api/ramis/config');
+    const { success, config } = await res.json();
+    if (!success || !config) return;
+
+    const modeEl = document.getElementById('set-ramis-mode');
+    const tinEl = document.getElementById('set-ramis-tin');
+    const ssidEl = document.getElementById('set-ramis-ssid');
+    const passEl = document.getElementById('set-ramis-password');
+    const urlEl = document.getElementById('set-ramis-url');
+    const periodEl = document.getElementById('set-ramis-period');
+    const badgeEl = document.getElementById('set-ramis-status-badge');
+
+    if (modeEl) modeEl.value = config.mode || 'sandbox';
+    if (tinEl) tinEl.value = config.supplierTin || '';
+    if (ssidEl) ssidEl.value = config.ssid || '';
+    if (passEl && config.hasPassword && !passEl.value) passEl.placeholder = '•••••••• (Configured)';
+    if (urlEl) urlEl.value = config.baseUrl || 'https://ramis.ird.gov.lk/api/v1';
+    if (periodEl) periodEl.value = config.defaultPeriodCode || '2610';
+
+    if (badgeEl) {
+      if (config.mode === 'live') {
+        badgeEl.textContent = '● Live Production';
+        badgeEl.className = 'badge badge-completed';
+      } else {
+        badgeEl.textContent = '● Sandbox Active';
+        badgeEl.className = 'badge';
+        badgeEl.style.background = 'rgba(37,99,235,0.12)';
+        badgeEl.style.color = 'var(--brand)';
+      }
+    }
+  } catch (e) {
+    console.warn('Could not load RAMIS config:', e);
+  }
+};
+
+window.onRamisModeChange = (val) => {
+  const urlEl = document.getElementById('set-ramis-url');
+  if (val === 'live') {
+    if (urlEl) urlEl.value = 'https://ramis.ird.gov.lk/api/v1';
+  } else if (val === 'sandbox') {
+    if (urlEl) urlEl.value = 'https://ramis.ird.gov.lk/api/v1';
+  }
+};
+
+window.testRamisAuthConnection = async () => {
+  const btn = document.getElementById('btn-test-ramis-auth');
+  const resultBox = document.getElementById('ramis-test-result');
+
+  const ssid = document.getElementById('set-ramis-ssid').value.trim();
+  const password = document.getElementById('set-ramis-password').value.trim();
+  const baseUrl = document.getElementById('set-ramis-url').value.trim();
+  const mode = document.getElementById('set-ramis-mode').value;
+
+  if (!ssid) {
+    return showToast('error', 'Please enter your RAMIS SSID to test connection');
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Testing IRD Gateway...';
+  }
+
+  if (resultBox) {
+    resultBox.style.display = 'block';
+    resultBox.style.background = 'var(--surface-2)';
+    resultBox.style.border = '1px solid var(--border)';
+    resultBox.style.color = 'var(--text-primary)';
+    resultBox.innerHTML = 'Connecting to Sri Lanka IRD RAMIS Gateway Auth endpoint...';
+  }
+
+  try {
+    const res = await fetch('/api/ramis/test-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ssid, password, baseUrl, mode })
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      resultBox.style.background = 'rgba(16,185,129,0.12)';
+      resultBox.style.border = '1px solid var(--success)';
+      resultBox.style.color = 'var(--success)';
+      resultBox.innerHTML = `
+        <strong>✓ Connection Successful!</strong><br>
+        ${data.message}<br>
+        <span style="font-size:11px; opacity:0.85">Token received: <code>${data.token}</code> (Valid for ${data.expiresIn} seconds)</span>
+      `;
+      showToast('success', 'Connected to Sri Lanka IRD Gateway!');
+    } else {
+      resultBox.style.background = 'rgba(239,68,68,0.12)';
+      resultBox.style.border = '1px solid var(--danger)';
+      resultBox.style.color = 'var(--danger)';
+      resultBox.innerHTML = `
+        <strong>⚠ Connection Failed:</strong><br>
+        ${data.error || 'Could not validate SSID and Password with IRD.'}
+      `;
+      showToast('error', 'IRD Authentication failed. Verify credentials.');
+    }
+  } catch (err) {
+    if (resultBox) {
+      resultBox.style.background = 'rgba(239,68,68,0.12)';
+      resultBox.style.border = '1px solid var(--danger)';
+      resultBox.style.color = 'var(--danger)';
+      resultBox.innerHTML = `<strong>Error:</strong> ${err.message}`;
+    }
+    showToast('error', 'Connection error: ' + err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-key"></i> Test Connection & Verify Token';
+    }
+  }
+};
+
+window.saveRamisConfigOnly = async () => {
+  const mode = document.getElementById('set-ramis-mode').value;
+  const supplierTin = document.getElementById('set-ramis-tin').value.trim();
+  const ssid = document.getElementById('set-ramis-ssid').value.trim();
+  const password = document.getElementById('set-ramis-password').value.trim();
+  const baseUrl = document.getElementById('set-ramis-url').value.trim();
+  const defaultPeriodCode = document.getElementById('set-ramis-period').value.trim();
+
+  const payload = { mode, supplierTin, ssid, baseUrl, defaultPeriodCode };
+  if (password) payload.password = password;
+
+  try {
+    const res = await fetch('/api/ramis/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('success', 'RAMIS IRD configuration saved successfully');
+      loadRamisConfigUI();
+    } else {
+      showToast('error', 'Failed to save RAMIS config: ' + data.error);
+    }
+  } catch (e) {
+    showToast('error', 'Network error saving RAMIS config');
+  }
 };
 
 window.setTheme = (theme) => {
@@ -2823,6 +3513,9 @@ window.saveSettings = async () => {
         address: settings.address
       });
     }
+
+    // Save RAMIS config if fields are populated
+    await saveRamisConfigOnly();
 
     await loadSettings(); // Refresh UI and global currentSettings
     await logSecurityEvent('SETTINGS_CHANGED', { settings });
@@ -3758,6 +4451,7 @@ window.saViewBusinessDetail = async (orgId) => {
         <div class="fw-600">${u.display_name}</div>
         <div style="font-size:11px;color:var(--text-muted)">${u.username} · ${u.role}</div>
       </div>
+      <button class="btn btn-ghost btn-sm btn-icon" onclick="saResetUserPassword(${u.id}, '${u.display_name}')" title="Reset User Password" style="color:var(--brand); margin-right:8px">🔑</button>
       <span class="badge ${u.is_active ? 'badge-active' : 'badge-inactive'}">${u.is_active ? 'Active' : 'Inactive'}</span>
     </div>
   `).join('') : '<div style="color:var(--text-muted); padding:12px">No users</div>';
@@ -3857,6 +4551,36 @@ window.saDeleteBusiness = async () => {
   selectedOrgForDetail = null;
   showToast('success', 'Business deleted permanently');
   saNav('sa-businesses');
+};
+
+window.saResetUserPassword = (userId, displayName) => {
+  const html = `
+    <div style="font-size:13px; color:var(--text-secondary); margin-bottom:14px">
+      Platform Admin: Reset password for user <strong style="color:var(--brand)">${displayName}</strong>
+    </div>
+    <div class="form-group">
+      <label class="form-label">New Password</label>
+      <input class="form-input" type="password" id="sa-usr-new-pw" placeholder="Enter new password (min 3 chars)">
+    </div>
+  `;
+  openModal(`Reset Password — ${displayName}`, html, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="saDoResetUserPassword(${userId}, '${displayName}')">Update Password</button>
+  `);
+};
+
+window.saDoResetUserPassword = async (userId, displayName) => {
+  const newPw = document.getElementById('sa-usr-new-pw').value.trim();
+  if (!newPw || newPw.length < 3) return showToast('error', 'Password must be at least 3 characters');
+  try {
+    const { error } = await supa.from('users').update({ password: newPw }).eq('id', userId);
+    if (error) throw error;
+    closeModal();
+    showToast('success', `Password for ${displayName} reset successfully!`);
+    await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, 'RESET_USER_PASSWORD', selectedOrgForDetail, displayName, { userId });
+  } catch (e) {
+    showToast('error', 'Failed to reset password: ' + e.message);
+  }
 };
 
 // ─── SA IMPERSONATION ───

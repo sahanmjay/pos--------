@@ -1,0 +1,19 @@
+{
+  "name": "nexpos",
+  "version": "2.0.0",
+  "description": "NexPOS — Modern Cloud SaaS POS Platform",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
+  "keywords": [
+    "pos",
+    "point-of-sale",
+    "saas",
+    "retail",
+    "inventory"
+  ],
+  "author": "NexPOS Team",
+  "license": "ISC"
+}

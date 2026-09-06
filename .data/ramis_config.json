@@ -1,0 +1,8 @@
+{
+  "baseUrl": "https://ramis.ird.gov.lk/api/v1",
+  "ssid": "DEMO_SSID_102938475",
+  "password": "DEMO_SECURE_PASS_2026",
+  "supplierTin": "300705936",
+  "defaultPeriodCode": "2540",
+  "mode": "sandbox"
+}
