@@ -1072,7 +1072,15 @@ window.payNow = async (paymentType) => {
 };
 
 window.openCashPaymentModal = (total, subtotal, discount, tax) => {
-  currentCashCheckout = { total, subtotal, discount, tax, tendered: 0 };
+  currentCashCheckout = {
+    total,
+    subtotal,
+    discount,
+    tax,
+    tendered: 0,
+    noteCounts: { 5000: 0, 2000: 0, 1000: 0, 500: 0, 100: 0, 50: 0, 20: 0 },
+    coinCounts: { 10: 0, 5: 0, 2: 0, 1: 0 }
+  };
   
   const notes = [5000, 2000, 1000, 500, 100, 50, 20];
   const coins = [10, 5, 2, 1];
@@ -1093,7 +1101,7 @@ window.openCashPaymentModal = (total, subtotal, discount, tax) => {
       <div>
         <label class="form-label" style="display:flex; justify-content:space-between">
           <span>Amount Tendered by Customer</span>
-          <span style="font-weight:400; color:var(--text-muted); font-size:11px">Click denominations or type</span>
+          <span style="font-weight:400; color:var(--text-muted); font-size:11px">Type note counts below or type total</span>
         </label>
         <div class="cash-input-row">
           <input class="form-input cash-tendered-input" type="number" step="any" id="cash-tendered-input" 
@@ -1101,26 +1109,45 @@ window.openCashPaymentModal = (total, subtotal, discount, tax) => {
         </div>
       </div>
 
-      <!-- Currency Notes -->
+      <!-- Currency Notes with Direct Quantity Typing -->
       <div>
-        <div class="denom-section-title">💵 Currency Notes (LKR)</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+          <div class="denom-section-title" style="margin-bottom:0">💵 Currency Notes (LKR)</div>
+          <span style="font-size:11px; color:var(--brand); font-weight:600">Type quantity or click +/-</span>
+        </div>
         <div class="denom-grid-notes">
           ${notes.map(n => `
-            <button type="button" class="denom-btn denom-note" onclick="addCashDenom(${n})">
-              <span>+ ${n >= 1000 ? (n/1000) + 'K' : n}</span>
-              <span class="denom-note-tag">Rs. ${n.toLocaleString()}</span>
-            </button>
+            <div class="denom-note-card" id="note-card-${n}">
+              <div class="denom-note-top" onclick="stepNoteQty(${n}, 1)" title="Click to add 1 note">
+                <span class="denom-note-val">Rs. ${n.toLocaleString()}</span>
+                <span class="denom-note-badge">+ ${n >= 1000 ? (n/1000) + 'K' : n}</span>
+              </div>
+              <div class="denom-qty-control">
+                <button type="button" class="denom-qty-btn" onclick="stepNoteQty(${n}, -1)" title="Remove 1 note">−</button>
+                <input type="number" min="0" max="999" class="denom-qty-input" id="note-qty-${n}" 
+                  placeholder="0" value="" 
+                  oninput="onNoteQtyChange(${n}, this.value)" 
+                  onfocus="this.select()" 
+                  title="Type number of Rs. ${n} notes given">
+                <button type="button" class="denom-qty-btn" onclick="stepNoteQty(${n}, 1)" title="Add 1 note">+</button>
+              </div>
+              <div class="denom-note-subtotal" id="note-subtotal-${n}">Rs. 0</div>
+            </div>
           `).join('')}
         </div>
       </div>
 
       <!-- Currency Coins -->
       <div>
-        <div class="denom-section-title">🪙 Coins (LKR)</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+          <div class="denom-section-title" style="margin-bottom:0">🪙 Coins (LKR)</div>
+          <span style="font-size:11px; color:var(--text-muted)">Click to add coins</span>
+        </div>
         <div class="denom-grid-coins">
           ${coins.map(c => `
-            <button type="button" class="denom-btn denom-coin" onclick="addCashDenom(${c})">
-              + Rs. ${c}
+            <button type="button" class="denom-btn denom-coin" id="coin-btn-${c}" onclick="stepNoteQty(${c}, 1)" title="Add Rs. ${c} coin">
+              <span>+ Rs. ${c}</span>
+              <span id="coin-badge-${c}" style="display:none; margin-left:4px; background:var(--brand); color:#fff; font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px">0</span>
             </button>
           `).join('')}
         </div>
@@ -1152,22 +1179,132 @@ window.openCashPaymentModal = (total, subtotal, discount, tax) => {
   }, 120);
 };
 
-window.addCashDenom = (amount) => {
-  currentCashCheckout.tendered = Number((currentCashCheckout.tendered + amount).toFixed(2));
-  const input = document.getElementById('cash-tendered-input');
-  if (input) input.value = currentCashCheckout.tendered || '';
-  renderCashCalcSummary();
+window.stepNoteQty = (denom, delta) => {
+  if (!currentCashCheckout) return;
+  if (currentCashCheckout.noteCounts && currentCashCheckout.noteCounts[denom] !== undefined) {
+    currentCashCheckout.noteCounts[denom] = Math.max(0, (currentCashCheckout.noteCounts[denom] || 0) + delta);
+    const input = document.getElementById(`note-qty-${denom}`);
+    if (input) input.value = currentCashCheckout.noteCounts[denom] || '';
+  } else if (currentCashCheckout.coinCounts && currentCashCheckout.coinCounts[denom] !== undefined) {
+    currentCashCheckout.coinCounts[denom] = Math.max(0, (currentCashCheckout.coinCounts[denom] || 0) + delta);
+  }
+  recalcCashFromCounts();
 };
 
+window.onNoteQtyChange = (denom, val) => {
+  if (!currentCashCheckout) return;
+  const count = Math.max(0, parseInt(val, 10) || 0);
+  if (currentCashCheckout.noteCounts && currentCashCheckout.noteCounts[denom] !== undefined) {
+    currentCashCheckout.noteCounts[denom] = count;
+  } else if (currentCashCheckout.coinCounts && currentCashCheckout.coinCounts[denom] !== undefined) {
+    currentCashCheckout.coinCounts[denom] = count;
+  }
+  recalcCashFromCounts();
+};
+
+window.addCashDenom = (amount) => {
+  window.stepNoteQty(amount, 1);
+};
+
+function recalcCashFromCounts() {
+  if (!currentCashCheckout) return;
+  let sum = 0;
+  
+  if (currentCashCheckout.noteCounts) {
+    for (const [denom, count] of Object.entries(currentCashCheckout.noteCounts)) {
+      const n = Number(denom);
+      const sub = n * count;
+      sum += sub;
+      const card = document.getElementById(`note-card-${n}`);
+      const subEl = document.getElementById(`note-subtotal-${n}`);
+      const input = document.getElementById(`note-qty-${n}`);
+      if (card) {
+        if (count > 0) card.classList.add('has-qty');
+        else card.classList.remove('has-qty');
+      }
+      if (subEl) {
+        subEl.textContent = count > 0 ? `Rs. ${sub.toLocaleString()}` : `Rs. 0`;
+      }
+      if (input && document.activeElement !== input) {
+        input.value = count || '';
+      }
+    }
+  }
+
+  if (currentCashCheckout.coinCounts) {
+    for (const [denom, count] of Object.entries(currentCashCheckout.coinCounts)) {
+      const c = Number(denom);
+      sum += c * count;
+      const badge = document.getElementById(`coin-badge-${c}`);
+      const btn = document.getElementById(`coin-btn-${c}`);
+      if (badge) {
+        badge.style.display = count > 0 ? 'inline' : 'none';
+        badge.textContent = `x${count}`;
+      }
+      if (btn) {
+        if (count > 0) btn.classList.add('has-qty');
+        else btn.classList.remove('has-qty');
+      }
+    }
+  }
+
+  currentCashCheckout.tendered = Number(sum.toFixed(2));
+  const mainInput = document.getElementById('cash-tendered-input');
+  if (mainInput) mainInput.value = currentCashCheckout.tendered || '';
+  renderCashCalcSummary();
+}
+
 window.setExactCash = () => {
+  if (!currentCashCheckout) return;
   currentCashCheckout.tendered = currentCashCheckout.total;
+  if (currentCashCheckout.noteCounts) {
+    Object.keys(currentCashCheckout.noteCounts).forEach(k => {
+      currentCashCheckout.noteCounts[k] = 0;
+      const input = document.getElementById(`note-qty-${k}`);
+      if (input) input.value = '';
+      const card = document.getElementById(`note-card-${k}`);
+      if (card) card.classList.remove('has-qty');
+      const subEl = document.getElementById(`note-subtotal-${k}`);
+      if (subEl) subEl.textContent = 'Rs. 0';
+    });
+  }
+  if (currentCashCheckout.coinCounts) {
+    Object.keys(currentCashCheckout.coinCounts).forEach(k => {
+      currentCashCheckout.coinCounts[k] = 0;
+      const badge = document.getElementById(`coin-badge-${k}`);
+      if (badge) badge.style.display = 'none';
+      const btn = document.getElementById(`coin-btn-${k}`);
+      if (btn) btn.classList.remove('has-qty');
+    });
+  }
   const input = document.getElementById('cash-tendered-input');
   if (input) input.value = currentCashCheckout.tendered;
   renderCashCalcSummary();
 };
 
 window.clearCashTendered = () => {
+  if (!currentCashCheckout) return;
   currentCashCheckout.tendered = 0;
+  if (currentCashCheckout.noteCounts) {
+    Object.keys(currentCashCheckout.noteCounts).forEach(k => {
+      currentCashCheckout.noteCounts[k] = 0;
+      const input = document.getElementById(`note-qty-${k}`);
+      if (input) input.value = '';
+      const card = document.getElementById(`note-card-${k}`);
+      if (card) card.classList.remove('has-qty');
+      const subEl = document.getElementById(`note-subtotal-${k}`);
+      if (subEl) subEl.textContent = 'Rs. 0';
+    });
+  }
+  if (currentCashCheckout.coinCounts) {
+    Object.keys(currentCashCheckout.coinCounts).forEach(k => {
+      currentCashCheckout.coinCounts[k] = 0;
+      const badge = document.getElementById(`coin-badge-${k}`);
+      if (badge) badge.style.display = 'none';
+      const btn = document.getElementById(`coin-btn-${k}`);
+      if (btn) btn.classList.remove('has-qty');
+    });
+  }
   const input = document.getElementById('cash-tendered-input');
   if (input) {
     input.value = '';
@@ -5200,3 +5337,25 @@ window.saCopyAiReport = () => {
     }
   }
 })();
+
+window.checkAppUpdates = async () => {
+  if (window.electronAPI && window.electronAPI.isElectron) {
+    showToast('info', '🔍 Checking GitHub for NexPOS updates...');
+    try {
+      const res = await window.electronAPI.checkForUpdates();
+      if (res && res.status === 'dev-mode') {
+        showToast('info', 'Running in development mode. In installed mode, updates check GitHub Releases automatically.');
+      } else if (res && res.updateInfo) {
+        showToast('info', `🚀 Update v${res.updateInfo.version} found! Downloading in background...`);
+      } else {
+        setTimeout(() => {
+          showToast('success', '✨ NexPOS is up to date! You have the latest version.');
+        }, 1200);
+      }
+    } catch (e) {
+      showToast('error', 'Update check failed: ' + (e.message || 'Check network connection'));
+    }
+  } else {
+    showToast('info', 'Running in Web mode. Cloud updates apply automatically whenever you refresh.');
+  }
+};

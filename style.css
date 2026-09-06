@@ -721,17 +721,134 @@ body { font-family: var(--font); background: var(--surface-2); color: var(--text
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
 }
+@media (max-width: 650px) {
+  .denom-grid-notes {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
 .denom-grid-coins {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
+}
+.denom-note-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 6px 6px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--brand);
+  border-radius: var(--radius);
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.denom-note-card:hover {
+  border-color: var(--brand);
+  background: var(--surface-2);
+}
+.denom-note-card.has-qty {
+  border-color: var(--brand);
+  background: rgba(99, 102, 241, 0.08);
+  box-shadow: 0 0 0 1px var(--brand);
+}
+.denom-note-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 5px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.denom-note-val {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.denom-note-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--brand);
+}
+.denom-qty-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+}
+.denom-qty-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  transition: all 0.1s ease;
+}
+.denom-qty-btn:hover {
+  background: var(--brand);
+  color: #fff;
+  border-color: var(--brand);
+}
+.denom-qty-input {
+  width: 44px;
+  height: 24px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  padding: 0 2px;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+.denom-qty-input:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+  background: var(--surface-2);
+}
+.denom-qty-input::-webkit-outer-spin-button,
+.denom-qty-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.denom-qty-input[type=number] {
+  -moz-appearance: textfield;
+}
+.denom-note-subtotal {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-top: 4px;
+  text-align: center;
+  width: 100%;
+}
+.denom-note-card.has-qty .denom-note-subtotal {
+  color: var(--brand);
+  font-weight: 700;
 }
 .denom-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 10px 6px;
+  padding: 8px 6px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -748,28 +865,25 @@ body { font-family: var(--font); background: var(--surface-2); color: var(--text
 .denom-btn:active {
   transform: translateY(0);
 }
-.denom-note {
-  border-left: 3px solid var(--brand);
-  font-weight: 700;
-  font-size: 13px;
-  color: var(--text-primary);
-}
-.denom-note-tag {
-  font-size: 9px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  margin-top: 2px;
-}
 .denom-coin {
   border-radius: 999px;
   background: var(--surface-2);
   font-weight: 700;
   font-size: 12px;
   color: var(--text-primary);
-  padding: 8px 4px;
+  padding: 8px 6px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 .denom-coin:hover {
   background: var(--surface-3);
+  border-color: var(--brand);
+}
+.denom-coin.has-qty {
+  background: rgba(99, 102, 241, 0.12);
   border-color: var(--brand);
 }
 .cash-calc-summary {
