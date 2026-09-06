@@ -2,18 +2,101 @@
   "name": "nexpos",
   "version": "2.0.0",
   "description": "NexPOS — Modern Cloud SaaS POS Platform",
-  "main": "server.js",
+  "main": "electron-main.js",
   "scripts": {
     "dev": "node server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "electron:start": "electron .",
+    "build:exe": "electron-builder --win --x64",
+    "build:portable": "electron-builder --win portable --x64",
+    "build:installer": "electron-builder --win nsis --x64"
   },
   "keywords": [
     "pos",
     "point-of-sale",
     "saas",
     "retail",
-    "inventory"
+    "inventory",
+    "electron",
+    "desktop"
   ],
   "author": "NexPOS Team",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "sharp": "^0.35.4"
+  },
+  "build": {
+    "appId": "com.nexpos.pos",
+    "productName": "NexPOS",
+    "copyright": "Copyright © 2024-2026 NexPOS Team",
+    "directories": {
+      "output": "dist",
+      "buildResources": "."
+    },
+    "files": [
+      "electron-main.js",
+      "preload.js",
+      "server.js",
+      "app.js",
+      "db.js",
+      "index.html",
+      "bill.html",
+      "style.css",
+      "sw.js",
+      "manifest.json",
+      "ramis-queue.js",
+      "ramis-service.js",
+      "favicon.*",
+      "favicon-96x96.png",
+      "apple-touch-icon.png",
+      "web-app-manifest-*.png",
+      ".data/**"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "favicon.ico",
+      "publisherName": "NexPOS Team"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "favicon.ico",
+      "uninstallerIcon": "favicon.ico",
+      "installerHeaderIcon": "favicon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "NexPOS",
+      "artifactName": "NexPOS-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "NexPOS-Portable-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "sahanmjay",
+        "repo": "pos--------"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
 }

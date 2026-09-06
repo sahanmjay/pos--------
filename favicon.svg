@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="50%" stop-color="#4338CA"/>
+      <stop offset="100%" stop-color="#312E81"/>
+    </linearGradient>
+
+    <!-- Glowing Cyan/Indigo Monogram Gradient -->
+    <linearGradient id="neonCyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22D3EE"/>
+      <stop offset="50%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#60A5FA"/>
+    </linearGradient>
+
+    <!-- Gold Chip Gradient -->
+    <linearGradient id="chipGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FDE047"/>
+      <stop offset="100%" stop-color="#D97706"/>
+    </linearGradient>
+
+    <!-- Lightning Gold Gradient -->
+    <linearGradient id="boltGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FEF08A"/>
+      <stop offset="100%" stop-color="#F59E0B"/>
+    </linearGradient>
+
+    <!-- Inner Squircle Bezel Stroke -->
+    <linearGradient id="bezelGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818CF8" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#312E81" stop-opacity="0.2"/>
+    </linearGradient>
+
+    <!-- Top Specular Highlight -->
+    <linearGradient id="specularGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.0"/>
+    </linearGradient>
+
+    <!-- Neon Glow Filter -->
+    <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="10" result="blur1"/>
+      <feGaussianBlur stdDeviation="20" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Drop Shadow for Squircle -->
+    <filter id="iconShadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#090D1A" flood-opacity="0.6"/>
+    </filter>
+  </defs>
+
+  <!-- Outer Squircle with Deep Shadow -->
+  <rect x="28" y="28" width="456" height="456" rx="112" fill="url(#bgGrad)" filter="url(#iconShadow)"/>
+
+  <!-- Bezel Border -->
+  <rect x="28" y="28" width="456" height="456" rx="112" fill="none" stroke="url(#bezelGrad)" stroke-width="4"/>
+
+  <!-- Top Glass Highlight -->
+  <path d="M 28 140 C 28 78 78 28 140 28 L 372 28 C 434 28 484 78 484 140 C 484 200 394 235 256 235 C 118 235 28 200 28 140 Z" fill="url(#specularGrad)"/>
+
+  <!-- Soft Ambient Center Glow -->
+  <circle cx="256" cy="270" r="140" fill="#6366F1" opacity="0.35" filter="url(#neonGlow)"/>
+
+  <!-- MONOGRAM "NP" COMBINED GEOMETRIC PATH -->
+  <g filter="url(#neonGlow)">
+    <!-- Main Neon Outline/Stroke of "NP" -->
+    <!-- N: Left bar (x: 104 to 136, y: 145 to 365) -->
+    <path d="
+      M 108 165
+      C 108 154 116 145 127 145
+      L 133 145
+      C 144 145 152 154 152 165
+      L 152 282
+      L 225 156
+      C 231 147 241 142 252 142
+      L 348 142
+      C 392 142 426 176 426 220
+      C 426 264 392 298 348 298
+      L 272 298
+      L 272 345
+      C 272 356 263 365 252 365
+      L 246 365
+      C 235 365 226 356 226 345
+      L 226 232
+      L 152 358
+      C 146 368 135 373 124 371
+      C 114 369 108 360 108 349
+      Z
+      M 272 178
+      L 272 262
+      L 346 262
+      C 370 262 390 243 390 220
+      C 390 197 370 178 346 178
+      Z
+    " fill="url(#neonCyanGrad)"/>
+
+    <!-- Gold Smart Payment Card Chip inside P's loop -->
+    <g transform="translate(306, 196)">
+      <rect x="0" y="0" width="56" height="46" rx="8" fill="url(#chipGrad)"/>
+      <rect x="2" y="2" width="52" height="42" rx="6" fill="none" stroke="#78350F" stroke-width="1.5" opacity="0.4"/>
+      <!-- Chip contacts lines -->
+      <line x1="0" y1="23" x2="18" y2="23" stroke="#78350F" stroke-width="2" opacity="0.5"/>
+      <line x1="38" y1="23" x2="56" y2="23" stroke="#78350F" stroke-width="2" opacity="0.5"/>
+      <line x1="28" y1="0" x2="28" y2="12" stroke="#78350F" stroke-width="2" opacity="0.5"/>
+      <line x1="28" y1="34" x2="28" y2="46" stroke="#78350F" stroke-width="2" opacity="0.5"/>
+      <rect x="18" y="12" width="20" height="22" rx="3" fill="none" stroke="#78350F" stroke-width="2" opacity="0.5"/>
+    </g>
+
+    <!-- Lightning Bolt / Energy Spark ⚡ on upper edge of P -->
+    <path d="
+      M 390 114
+      L 366 156
+      L 386 156
+      L 378 190
+      L 412 144
+      L 392 144
+      Z
+    " fill="url(#boltGrad)" stroke="#B45309" stroke-width="1.5"/>
+  </g>
+</svg>

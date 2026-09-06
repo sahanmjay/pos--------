@@ -8,9 +8,14 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<meta name="theme-color" content="#5B5FC7">
+<meta name="theme-color" content="#6366F1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="icon" type="image/png" sizes="96x96" href="favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
+<link rel="shortcut icon" href="favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.json">
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -51,6 +56,7 @@
     </button>
     <div style="margin-top:24px; text-align:center; font-size:13px; color:var(--text-muted)">
       Securely powered by <span style="color:var(--brand); font-weight:600">NexPOS Cloud</span>
+      <span id="electron-edition-badge" style="display:none; margin-left:8px; background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; padding:2px 8px; border-radius:6px; font-size:10px; font-weight:700; vertical-align:middle">⚡ Desktop Edition</span>
     </div>
   </div>
 
@@ -448,9 +454,10 @@
                   <div class="form-group" style="grid-column: span 2">
                     <label class="form-label">Platform API Key *</label>
                     <div style="display:flex; gap:8px">
-                      <input class="form-input" type="password" id="sa-ai-api-key" placeholder="Enter provider API key (e.g. AIzaSy... or sk-...)">
+                      <input class="form-input" type="password" id="sa-ai-api-key" placeholder="Enter provider API key (e.g. AIzaSy... or sk-...)" oninput="saOnAiApiKeyInput(this.value)">
                       <button class="btn btn-secondary btn-sm" type="button" onclick="saToggleApiKeyVisibility()" id="sa-ai-key-toggle-btn" title="Show/Hide">👁️</button>
                     </div>
+                    <div id="sa-ai-key-hint" style="display:none; margin-top:6px; font-size:12px; padding:6px 10px; border-radius:6px; background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe"></div>
                     <div style="font-size:11px; color:var(--text-muted); margin-top:4px">
                       Stored securely in platform settings. Used for report generation & platform intelligence.
                     </div>

@@ -1418,8 +1418,26 @@ function showReceipt(sale, items, change, tendered) {
 
 window.closeReceipt = () => document.getElementById('receipt-overlay').classList.remove('open');
 
-window.printReceipt = () => {
-  window.print();
+window.printReceipt = async () => {
+  // If running inside Electron desktop app, use silent thermal printing
+  if (window.electronAPI && window.electronAPI.isElectron) {
+    try {
+      showToast('info', '🖨️ Sending to thermal printer...');
+      const result = await window.electronAPI.silentPrint();
+      if (result.success) {
+        showToast('success', `✅ Printed silently to ${result.printer || 'default printer'}`);
+      } else {
+        showToast('error', `Print failed: ${result.error || 'Unknown error'}. Falling back to browser print.`);
+        window.print();
+      }
+    } catch (err) {
+      console.error('Electron print error:', err);
+      window.print();
+    }
+  } else {
+    // Browser mode — standard print dialog
+    window.print();
+  }
 };
 
 window.shareReceiptPDF = async () => {
@@ -4846,12 +4864,62 @@ window.saToggleApiKeyVisibility = () => {
   }
 };
 
+window.saOnAiApiKeyInput = (val) => {
+  val = (val || '').trim();
+  const provEl = document.getElementById('sa-ai-provider');
+  const modelEl = document.getElementById('sa-ai-model');
+  const hintEl = document.getElementById('sa-ai-key-hint');
+
+  if (val.startsWith('sk-or-v1-') || val.startsWith('sk-or-')) {
+    if (provEl && provEl.value !== 'openrouter') {
+      provEl.value = 'openrouter';
+      if (modelEl) modelEl.value = 'google/gemini-flash-1.5';
+    }
+    if (hintEl) {
+      hintEl.style.display = 'block';
+      hintEl.innerHTML = '✨ <strong>OpenRouter Key Detected:</strong> Engine automatically switched to <strong>OpenRouter</strong> with model <code>google/gemini-flash-1.5</code>.';
+    }
+  } else if (val.startsWith('AIzaSy')) {
+    if (provEl && provEl.value !== 'google') {
+      provEl.value = 'google';
+      if (modelEl) modelEl.value = 'gemini-1.5-flash';
+    }
+    if (hintEl) {
+      hintEl.style.display = 'block';
+      hintEl.innerHTML = '✨ <strong>Google Gemini Key Detected:</strong> Engine set to <strong>Google Gemini</strong> with model <code>gemini-1.5-flash</code>.';
+    }
+  } else if (hintEl) {
+    hintEl.style.display = 'none';
+  }
+};
+
 window.saSaveAiSettings = async () => {
-  const provider = document.getElementById('sa-ai-provider').value;
+  let provider = document.getElementById('sa-ai-provider').value;
   const apiKey = document.getElementById('sa-ai-api-key').value.trim();
-  const model = document.getElementById('sa-ai-model').value.trim();
+  let model = document.getElementById('sa-ai-model').value.trim();
   const planReq = document.getElementById('sa-ai-plan-req').value;
   const isEnabled = document.getElementById('sa-ai-enabled').checked ? 'true' : 'false';
+
+  // Smart Auto-Correction: If OpenRouter key was pasted while left on Google
+  if ((apiKey.startsWith('sk-or-v1-') || apiKey.startsWith('sk-or-')) && provider !== 'openrouter') {
+    provider = 'openrouter';
+    document.getElementById('sa-ai-provider').value = 'openrouter';
+    if (!model || model === 'gemini-1.5-flash') {
+      model = 'google/gemini-flash-1.5';
+      document.getElementById('sa-ai-model').value = model;
+    }
+  }
+
+  // Model ID normalization for OpenRouter
+  if (provider === 'openrouter') {
+    if (!model || model === 'gemini-1.5-flash') {
+      model = 'google/gemini-flash-1.5';
+      document.getElementById('sa-ai-model').value = model;
+    } else if (!model.includes('/')) {
+      model = 'google/' + model;
+      document.getElementById('sa-ai-model').value = model;
+    }
+  }
 
   const btn = document.getElementById('sa-ai-save-btn');
   btn.disabled = true;
@@ -4879,9 +4947,9 @@ window.saSaveAiSettings = async () => {
 };
 
 window.saTestAiConnection = async () => {
-  const provider = document.getElementById('sa-ai-provider').value;
+  let provider = document.getElementById('sa-ai-provider').value;
   const apiKey = document.getElementById('sa-ai-api-key').value.trim();
-  const model = document.getElementById('sa-ai-model').value.trim();
+  let model = document.getElementById('sa-ai-model').value.trim();
   const box = document.getElementById('sa-ai-test-box');
 
   if (!apiKey) {
@@ -4891,6 +4959,32 @@ window.saTestAiConnection = async () => {
     box.style.border = '1px solid #fecaca';
     box.innerHTML = '<strong>❌ Key Required:</strong> Please enter an API key to test the connection.';
     return;
+  }
+
+  // Smart Auto-Correction: If user pasted OpenRouter key with Google provider
+  if (apiKey.startsWith('sk-or-v1-') || apiKey.startsWith('sk-or-')) {
+    if (provider !== 'openrouter') {
+      provider = 'openrouter';
+      const provEl = document.getElementById('sa-ai-provider');
+      if (provEl) provEl.value = 'openrouter';
+      showToast('info', 'Detected OpenRouter key: Auto-switched provider to OpenRouter');
+    }
+    if (!model || model === 'gemini-1.5-flash') {
+      model = 'google/gemini-flash-1.5';
+      const modelEl = document.getElementById('sa-ai-model');
+      if (modelEl) modelEl.value = model;
+    }
+  }
+
+  // If OpenRouter, normalize model ID
+  if (provider === 'openrouter') {
+    if (!model || model === 'gemini-1.5-flash') {
+      model = 'google/gemini-flash-1.5';
+    } else if (!model.includes('/')) {
+      model = 'google/' + model;
+    }
+    const modelEl = document.getElementById('sa-ai-model');
+    if (modelEl) modelEl.value = model;
   }
 
   box.style.display = 'block';
@@ -4937,11 +5031,16 @@ window.saTestAiConnection = async () => {
     } else if (provider === 'openrouter') {
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': window.location.origin,
+          'X-Title': 'NexPOS'
+        },
         body: JSON.stringify({ model: model || 'google/gemini-flash-1.5', messages: [{ role: 'user', content: testPrompt }], max_tokens: 10 })
       });
       const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
       resultText = data.choices?.[0]?.message?.content?.trim() || 'OK';
     }
 
@@ -5071,4 +5170,33 @@ window.saCopyAiReport = () => {
   });
 };
 
+// ─── ELECTRON DESKTOP APP DETECTION ───
+(function detectElectronDesktop() {
+  if (window.electronAPI && window.electronAPI.isElectron) {
+    console.log('⚡ NexPOS Desktop Edition detected');
 
+    // Show desktop badge on login screen
+    const badge = document.getElementById('electron-edition-badge');
+    if (badge) badge.style.display = 'inline';
+
+    // Log app info
+    window.electronAPI.getAppInfo().then(info => {
+      console.log('App Info:', info);
+    }).catch(() => {});
+
+    // Listen for Auto-Update events from GitHub Releases
+    if (window.electronAPI.onUpdateStatus) {
+      window.electronAPI.onUpdateStatus((update) => {
+        if (update.status === 'available') {
+          showToast('info', `🚀 New NexPOS v${update.version} update found! Downloading in background...`);
+        } else if (update.status === 'downloading') {
+          // Update badge if available
+          if (badge) badge.textContent = `⚡ Updating ${update.percent}%`;
+        } else if (update.status === 'downloaded') {
+          if (badge) badge.textContent = `⚡ Restart to update (v${update.version})`;
+          showToast('success', `✅ NexPOS v${update.version} is ready! Restart to apply update.`);
+        }
+      });
+    }
+  }
+})();
