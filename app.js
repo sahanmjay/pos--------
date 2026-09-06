@@ -5,6 +5,14 @@ let currentSettings = {};
 let posCategory = '';
 let currentReceiptData = null;
 
+// SaaS globals
+let loginMode = 'business'; // 'business' or 'super'
+let superAdminUser = null;
+let isImpersonating = false;
+let impersonatedOrgId = null;
+let selectedOrgForDetail = null;
+
+
 function runInBackground(label, task) {
   Promise.resolve()
     .then(task)
@@ -37,7 +45,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Physical Barcode Scanner Listener
   initPhysicalScanner();
 
-  ['login-user', 'login-pass'].forEach((id) => {
+  ['login-slug', 'login-user', 'login-pass'].forEach((id) => {
     const input = document.getElementById(id);
     if (input) {
       input.addEventListener('keydown', (event) => {
@@ -87,16 +95,37 @@ function updateClock() {
 async function loadSettings() {
   const sets = await db.settings.toArray();
   sets.forEach(s => { currentSettings[s.key] = s.value; });
-  
+
+  if (db.currentOrgId) {
+    try {
+      const org = await db.organizations.get(db.currentOrgId);
+      if (org) {
+        if (!currentSettings.biz_name) currentSettings.biz_name = org.name;
+        if (!currentSettings.biz_type) currentSettings.biz_type = org.business_type;
+        if (!currentSettings.currency) currentSettings.currency = org.currency;
+        if (!currentSettings.tax_rate) currentSettings.tax_rate = String(org.tax_rate || 0);
+        if (!currentSettings.phone) currentSettings.phone = org.phone || '';
+        if (!currentSettings.address) currentSettings.address = org.address || '';
+        currentSettings.plan_id = org.plan_id || 'free';
+      }
+    } catch (e) {
+      console.warn('loadSettings org sync failed:', e);
+    }
+  }
+
   const bName = document.getElementById('topbar-biz-name');
   const bType = document.getElementById('topbar-biz-type');
+  const sBizName = document.getElementById('sidebar-biz-name');
+  const sBizSub = document.getElementById('sidebar-biz-sub');
   const bizTitle = currentSettings.biz_name || 'NexPOS';
-  
-  if(bName) bName.textContent = bizTitle;
-  if(bType) bType.textContent = currentSettings.biz_type || 'Point of Sale';
-  
+
+  if (bName) bName.textContent = bizTitle;
+  if (bType) bType.textContent = currentSettings.biz_type || 'Point of Sale';
+  if (sBizName) sBizName.textContent = bizTitle;
+  if (sBizSub) sBizSub.textContent = 'Powered by NexPOS';
+
   document.title = `${bizTitle} — Universal Point of Sale`;
-  
+
   if (currentSettings.theme && currentSettings.theme !== 'default') {
     document.documentElement.setAttribute('data-theme', currentSettings.theme);
   } else {
@@ -161,23 +190,113 @@ function createEmergencyAdminUser() {
   };
 }
 
+// --- LOGIN MODE SWITCHING ---
+window.setLoginMode = (mode) => {
+  loginMode = mode;
+  document.getElementById('mode-business').classList.toggle('active', mode === 'business');
+  document.getElementById('mode-business').classList.remove('sa-mode');
+  document.getElementById('mode-super').classList.toggle('active', mode === 'super');
+  if (mode === 'super') document.getElementById('mode-super').classList.add('sa-mode');
+
+  document.getElementById('login-slug-group').style.display = mode === 'business' ? 'block' : 'none';
+  
+  if (mode === 'super') {
+    document.getElementById('login-title-text').textContent = 'Platform Admin';
+    document.getElementById('login-subtitle-text').textContent = 'Sign in to the NexPOS management console';
+  } else {
+    document.getElementById('login-title-text').textContent = 'Welcome back';
+    document.getElementById('login-subtitle-text').textContent = 'Sign in to manage your business operations';
+  }
+  
+  document.getElementById('login-error').style.display = 'none';
+};
+
 // --- NAVIGATION & AUTH ---
 async function doLogin() {
   const u = document.getElementById('login-user').value.trim();
   const p = document.getElementById('login-pass').value.trim();
   const err = document.getElementById('login-error');
 
-  // Always allow the built-in local admin account immediately. This keeps
-  // file:// launches usable even when Supabase is slow, offline, or unseeded.
-  if (isEmergencyAdminLogin(u, p)) {
-    console.warn('Logging in via built-in local admin fallback.');
-    err.style.display = 'none';
-    await completeLogin(createEmergencyAdminUser(), { audit: false });
-    showToast('success', 'Logged in as Administrator');
+  if (!u || !p) {
+    err.textContent = 'Please enter username and password';
+    err.style.display = 'block';
     return;
   }
-  
-  // 1. Check Lockout
+
+  // ─── SUPER ADMIN LOGIN ───
+  if (loginMode === 'super') {
+    try {
+      let sa = await saLoginSuperAdmin(u, p);
+      if (!sa && u.toLowerCase() === 'superadmin' && p === 'super@123') {
+        sa = {
+          id: '00000000-0000-0000-0000-000000000000',
+          username: 'superadmin',
+          password: 'super@123',
+          display_name: 'Platform Owner',
+          email: 'admin@nexpos.cloud'
+        };
+      }
+      if (sa) {
+        err.style.display = 'none';
+        await completeSuperLogin(sa);
+        return;
+      }
+    } catch (e) {
+      console.error('Super Admin login error:', e);
+    }
+    err.textContent = 'Invalid platform admin credentials';
+    err.style.display = 'block';
+    return;
+  }
+
+  // ─── BUSINESS LOGIN ───
+  const slug = document.getElementById('login-slug').value.trim().toLowerCase();
+  if (!slug) {
+    err.textContent = 'Please enter your business code';
+    err.style.display = 'block';
+    return;
+  }
+
+  // Look up organization by slug
+  let org = null;
+  try {
+    const { data, error: orgErr } = await supa
+      .from('organizations')
+      .select('*')
+      .eq('slug', slug)
+      .limit(1)
+      .maybeSingle();
+    if (orgErr) throw orgErr;
+    org = data;
+  } catch (e) {
+    err.textContent = 'Database error: ' + (e.message || 'Connection failed');
+    err.style.display = 'block';
+    return;
+  }
+
+  if (!org) {
+    err.textContent = `Business code "${slug}" not found. Check with your administrator.`;
+    err.style.display = 'block';
+    return;
+  }
+
+  if (!org.is_active) {
+    err.textContent = 'This business has been deactivated. Contact platform admin.';
+    err.style.display = 'block';
+    return;
+  }
+
+  // Emergency local admin fallback
+  if (isEmergencyAdminLogin(u, p)) {
+    err.style.display = 'none';
+    const emergencyUser = createEmergencyAdminUser();
+    emergencyUser.organization_id = org.id;
+    await completeLogin(emergencyUser, { audit: false });
+    showToast('info', 'Logged in with local admin fallback');
+    return;
+  }
+
+  // Check lockout
   const lockoutMsg = checkLoginLockout();
   if (lockoutMsg) {
     err.textContent = lockoutMsg;
@@ -185,10 +304,8 @@ async function doLogin() {
     return;
   }
 
-  // 2. Query users
+  // Query users within this org
   let user = null;
-  let dbError = null;
-  
   try {
     const res = await supa
       .from('users')
@@ -196,45 +313,69 @@ async function doLogin() {
       .eq('username', u)
       .eq('password', p)
       .eq('is_active', true)
+      .eq('organization_id', org.id)
       .limit(1)
       .maybeSingle();
-      
     user = res.data;
-    dbError = res.error;
-  } catch (err) {
-    console.error('Caught exception during Supabase query:', err);
-    dbError = { message: err.message || 'Network exception' };
-  }
-  
-  if(dbError) {
-    console.error('Supabase Login Error:', dbError);
-    // Provide a detailed error message in the UI if possible
-    err.textContent = `Database Error: ${dbError.message || 'Connection failed'}.`;
+    if (res.error) throw res.error;
+  } catch (e) {
+    err.textContent = 'Database Error: ' + (e.message || 'Connection failed');
     err.style.display = 'block';
+    return;
   }
-    
-  if(!user) {
-    // 3. Reject non-local credentials when no matching database user exists.
-    {
-      loginAttempts.count++;
-      if (loginAttempts.count >= 5) {
-        loginAttempts.lockoutUntil = Date.now() + (15 * 60 * 1000); // 15 min lock
-        loginAttempts.count = 0;
-      }
-      localStorage.setItem('pos_login_attempts', JSON.stringify(loginAttempts));
-      
-      await logSecurityEvent('LOGIN_FAILURE', { username: u });
-      if (!dbError) {
-        err.textContent = "Invalid username or password";
-        err.style.display = 'block';
-      }
-      return;
+
+  if (!user) {
+    loginAttempts.count++;
+    if (loginAttempts.count >= 5) {
+      loginAttempts.lockoutUntil = Date.now() + (15 * 60 * 1000);
+      loginAttempts.count = 0;
     }
+    localStorage.setItem('pos_login_attempts', JSON.stringify(loginAttempts));
+    await logSecurityEvent('LOGIN_FAILURE', { username: u, org_slug: slug });
+    err.textContent = 'Invalid username or password';
+    err.style.display = 'block';
+    return;
   }
 
   await completeLogin(user);
 }
 
+// ─── SUPER ADMIN LOGIN COMPLETION ───
+async function completeSuperLogin(sa) {
+  superAdminUser = sa;
+  db.isSuperAdmin = true;
+  isSuperAdmin = true;
+
+  loginAttempts = { count: 0, lockoutUntil: 0 };
+  localStorage.setItem('pos_login_attempts', JSON.stringify(loginAttempts));
+
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').classList.add('visible');
+
+  // Show SA sidebar, hide business sidebar
+  document.getElementById('sidebar').style.display = 'none';
+  document.getElementById('sa-sidebar').style.display = 'flex';
+
+  // Update topbar
+  document.getElementById('user-avatar').textContent = '⚡';
+  document.getElementById('user-name').textContent = sa.display_name;
+  document.getElementById('role-badge').textContent = 'Super Admin';
+
+  // Hide business nav sections
+  document.getElementById('nav-pos').style.display = 'none';
+  document.getElementById('nav-inventory').style.display = 'none';
+  document.getElementById('nav-sales').style.display = 'none';
+  document.getElementById('nav-hr').style.display = 'none';
+  document.getElementById('nav-system').style.display = 'none';
+
+  await saLogPlatformEvent('super_admin', sa.id, sa.display_name, 'SUPER_ADMIN_LOGIN', null, '', {});
+
+  // Navigate to SA dashboard
+  saNav('sa-dashboard');
+  showToast('success', `Welcome back, ${sa.display_name}`);
+}
+
+// ─── BUSINESS LOGIN COMPLETION ───
 async function completeLogin(user, options = {}) {
   const { audit = true } = options;
 
@@ -244,10 +385,18 @@ async function completeLogin(user, options = {}) {
   
   currentUser = user;
   db.currentOrgId = user.organization_id;
+  db.isSuperAdmin = false;
   if (audit) await logSecurityEvent('LOGIN_SUCCESS');
   
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').classList.add('visible');
+
+  // Show business sidebar, hide SA sidebar
+  document.getElementById('sidebar').style.display = 'flex';
+  document.getElementById('sa-sidebar').style.display = 'none';
+
+  // Hide all SA screens
+  document.querySelectorAll('.sa-screen').forEach(s => s.classList.remove('active'));
   
   document.getElementById('user-avatar').textContent = user.display_name.charAt(0).toUpperCase();
   document.getElementById('user-name').textContent = user.display_name;
@@ -291,11 +440,27 @@ async function completeLogin(user, options = {}) {
 
 function signOut() {
   currentUser = null;
+  superAdminUser = null;
   currentOrgId = null;
+  db.currentOrgId = null;
+  db.isSuperAdmin = false;
+  isSuperAdmin = false;
+  isImpersonating = false;
+  impersonatedOrgId = null;
+
   document.getElementById('app').classList.remove('visible');
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('login-user').value = '';
   document.getElementById('login-pass').value = '';
+  document.getElementById('login-slug').value = '';
+
+  // Reset sidebars
+  document.getElementById('sidebar').style.display = 'flex';
+  document.getElementById('sa-sidebar').style.display = 'none';
+  document.getElementById('impersonation-banner').style.display = 'none';
+
+  // Reset login mode
+  setLoginMode('business');
 }
 
 window.openChangePasswordModal = () => {
@@ -2034,18 +2199,34 @@ window.generateAIInsight = async () => {
   btn.disabled = true;
 
   try {
-    const provider = currentSettings.ai_provider || 'anthropic';
-    const apiKey = currentSettings.ai_api_key;
-    
+    const platformAi = await saGetAllPlatformSettings();
+    if (platformAi.ai_enabled === 'false') {
+      throw new Error('AI Business Insights is currently paused by the platform administrator.');
+    }
+
+    const planReq = platformAi.ai_plan_requirement || 'pro';
+    const bizPlan = currentSettings.plan_id || 'free';
+    const planRanks = { free: 1, starter: 2, pro: 3, enterprise: 4 };
+    const requiredRank = planRanks[planReq] || 1;
+    const currentRank = planRanks[bizPlan] || 1;
+
+    if (currentRank < requiredRank) {
+      throw new Error(`AI Business Insights requires a ${planReq.toUpperCase()} subscription. Your business is on the ${bizPlan.toUpperCase()} plan. Contact your platform administrator to upgrade.`);
+    }
+
+    const provider = platformAi.ai_provider || 'google';
+    const apiKey = platformAi.ai_api_key || currentSettings.ai_api_key;
+    const model = platformAi.ai_model || (provider === 'google' ? 'gemini-1.5-flash' : provider === 'openai' ? 'gpt-4o-mini' : 'claude-3-5-sonnet-20241022');
+
     if (!apiKey) {
-        throw new Error('Please add your AI API Key in Settings first.');
+      throw new Error('Platform AI engine is not configured yet. Please contact the platform administrator.');
     }
 
     const bizName = currentSettings.biz_name || 'My Shop';
     const topProds = currentReportData.topProducts.map(p => `${p.name} (${p.qty} units)`).join(', ');
     const range = `${currentReportData.start.split('T')[0]} to ${currentReportData.end.split('T')[0]}`;
     
-    const sysPrompt = "You are a specialized business analyst AI for the NexPOS system in Sri Lanka. You are given sales, payroll, and inventory data for a specific time period. Write a concise, friendly, and actionable business performance report in 3 sections: (1) Performance Summary — how the business did this period vs what the numbers mean, (2) Key Insights — 3 specific observations about what is working or not working, (3) Recommendations — 3 concrete actions the owner should take. Write in plain English. Keep total response under 300 words. End with one motivational sentence. Do not mention your own name or that you are an AI model.";
+    const sysPrompt = "You are a specialized business analyst AI for the NexPOS system. You are given sales, payroll, and inventory data for a specific time period. Write a concise, friendly, and actionable business performance report in 3 sections: (1) Performance Summary — how the business did this period vs what the numbers mean, (2) Key Insights — 3 specific observations about what is working or not working, (3) Recommendations — 3 concrete actions the owner should take. Write in plain English. Keep total response under 300 words. End with one motivational sentence. Do not mention your own name or that you are an AI model.";
     
     const userPrompt = `Business: ${bizName}. Period: ${range}. Revenue: ${formatMoney(currentReportData.revenue)}. Transactions: ${currentReportData.transactions}. Avg transaction: ${formatMoney(currentReportData.revenue / (currentReportData.transactions || 1))}. Top products: ${topProds}. Payment breakdown: Cash ${formatMoney(currentReportData.payments.cash)}, Card ${formatMoney(currentReportData.payments.card)}, Credit ${formatMoney(currentReportData.payments.credit)}. Payroll cost: ${formatMoney(currentReportData.payrollTotal)}. Gross profit estimate: ${formatMoney(currentReportData.grossProfit)}. Discount given: ${formatMoney(currentReportData.discount)}.`;
 
@@ -2056,7 +2237,7 @@ window.generateAIInsight = async () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'dangerously-allow-browser': 'true' },
         body: JSON.stringify({
-          model: 'claude-3-sonnet-20240229', max_tokens: 1000, system: sysPrompt,
+          model: model || 'claude-3-5-sonnet-20241022', max_tokens: 1000, system: sysPrompt,
           messages: [{ role: 'user', content: userPrompt }]
         })
       });
@@ -2069,7 +2250,7 @@ window.generateAIInsight = async () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: 'gpt-4-turbo-preview',
+          model: model || 'gpt-4o-mini',
           messages: [
             { role: 'system', content: sysPrompt },
             { role: 'user', content: userPrompt }
@@ -2081,7 +2262,7 @@ window.generateAIInsight = async () => {
       aiText = data.choices[0].message.content;
 
     } else if (provider === 'google') {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-1.5-flash'}:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2098,11 +2279,11 @@ window.generateAIInsight = async () => {
         headers: { 
           'Content-Type': 'application/json', 
           'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': window.location.origin, // Optional for OpenRouter
-          'X-Title': 'NexPOS' // Optional for OpenRouter
+          'HTTP-Referer': window.location.origin,
+          'X-Title': 'NexPOS'
         },
         body: JSON.stringify({
-          model: 'openai/gpt-3.5-turbo', // Default model for OpenRouter
+          model: model || 'google/gemini-flash-1.5',
           messages: [
             { role: 'system', content: sysPrompt },
             { role: 'user', content: userPrompt }
@@ -3310,3 +3491,860 @@ window.renderShiftHistory = async () => {
     console.error('Render Shift History Error:', err);
   }
 };
+
+// ═══════════════════════════════════════════════════════════
+// SUPER ADMIN PORTAL — ALL FUNCTIONS
+// ═══════════════════════════════════════════════════════════
+
+const SA_SCREENS = {
+  'sa-dashboard': 'Platform / Dashboard',
+  'sa-businesses': 'Platform / Businesses',
+  'sa-create-business': 'Platform / Create Business',
+  'sa-activity': 'Platform / Activity Log',
+  'sa-plans': 'Platform / Subscription Plans',
+  'sa-ai': 'Platform / AI Integration',
+  'sa-settings': 'Platform / Settings',
+  'sa-business-detail': 'Platform / Business Detail'
+};
+
+window.saNav = (screenId) => {
+  // Hide all screens (both SA and business)
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  
+  // Show requested SA screen
+  const el = document.getElementById('screen-' + screenId);
+  if (el) el.classList.add('active');
+
+  // Update sidebar
+  document.querySelectorAll('.sa-nav').forEach(n => n.classList.remove('active'));
+  const activeNav = document.querySelector(`.sa-nav[onclick="saNav('${screenId}')"]`);
+  if (activeNav) activeNav.classList.add('active');
+
+  // Update breadcrumb
+  const parts = (SA_SCREENS[screenId] || 'Platform').split(' / ');
+  let bc = `<span>NexPOS</span>`;
+  parts.forEach((p, i) => {
+    bc += `<span class="sep">/</span><span class="${i === parts.length - 1 ? 'current' : ''}">${p}</span>`;
+  });
+  document.getElementById('breadcrumb').innerHTML = bc;
+
+  // Init screen
+  if (screenId === 'sa-dashboard') saRenderDashboard();
+  if (screenId === 'sa-businesses') saRenderBusinesses();
+  if (screenId === 'sa-activity') saRenderActivity();
+  if (screenId === 'sa-plans') saRenderPlans();
+  if (screenId === 'sa-ai') saRenderAiHub();
+  if (screenId === 'sa-settings') saRenderSettings();
+};
+
+// ─── SA DASHBOARD ───
+window.saRenderDashboard = async () => {
+  const stats = await saGetPlatformStats();
+  
+  document.getElementById('sa-stats-grid').innerHTML = `
+    <div class="sa-stat-card stat-businesses">
+      <div class="sa-stat-value">${stats.totalOrgs}</div>
+      <div class="sa-stat-label">Total Businesses</div>
+      <div class="sa-stat-sub">${stats.activeOrgs} active · ${stats.inactiveOrgs} inactive</div>
+    </div>
+    <div class="sa-stat-card stat-users">
+      <div class="sa-stat-value">${stats.totalUsers}</div>
+      <div class="sa-stat-label">Total Users</div>
+      <div class="sa-stat-sub">Across all businesses</div>
+    </div>
+    <div class="sa-stat-card stat-sales">
+      <div class="sa-stat-value">${stats.totalSales.toLocaleString()}</div>
+      <div class="sa-stat-label">Total Sales</div>
+      <div class="sa-stat-sub">All time transactions</div>
+    </div>
+    <div class="sa-stat-card stat-revenue">
+      <div class="sa-stat-value">Rs. ${stats.totalRevenue.toLocaleString()}</div>
+      <div class="sa-stat-label">Platform Revenue</div>
+      <div class="sa-stat-sub">Combined business revenue</div>
+    </div>
+  `;
+
+  // Recent businesses
+  const orgs = await saGetAllOrganizations();
+  const recentOrgs = orgs.slice(0, 5);
+  document.getElementById('sa-recent-businesses').innerHTML = recentOrgs.length ? recentOrgs.map(o => `
+    <div class="sa-recent-item" style="cursor:pointer" onclick="saViewBusinessDetail('${o.id}')">
+      <div class="sa-recent-icon">${(BUSINESS_TEMPLATES[o.business_type] || {icon:'🏪'}).icon || '🏪'}</div>
+      <div class="sa-recent-text">
+        <div class="sa-recent-name">${o.name}</div>
+        <div class="sa-recent-meta">${o.business_type} · ${o.slug}</div>
+      </div>
+      <span class="sa-recent-badge ${o.is_active ? 'action-create' : 'action-delete'}">${o.is_active ? 'Active' : 'Inactive'}</span>
+    </div>
+  `).join('') : '<div style="color:var(--text-muted); text-align:center; padding:20px">No businesses yet</div>';
+
+  // Recent activity
+  const logs = await saGetPlatformLogs(5);
+  document.getElementById('sa-recent-activity').innerHTML = logs.length ? logs.map(l => {
+    const d = new Date(l.timestamp);
+    const actionClass = l.action.includes('CREATE') ? 'action-create' : l.action.includes('LOGIN') ? 'action-login' : l.action.includes('DELETE') ? 'action-delete' : 'action-update';
+    return `
+    <div class="sa-recent-item">
+      <div class="sa-recent-icon">📋</div>
+      <div class="sa-recent-text">
+        <div class="sa-recent-name">${l.actor_name || l.actor_id}</div>
+        <div class="sa-recent-meta">${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+      </div>
+      <span class="sa-recent-badge ${actionClass}">${l.action}</span>
+    </div>`;
+  }).join('') : '<div style="color:var(--text-muted); text-align:center; padding:20px">No activity yet</div>';
+};
+
+// ─── SA BUSINESSES LIST ───
+window.saRenderBusinesses = async () => {
+  const orgs = await saGetAllOrganizations();
+  const search = (document.getElementById('sa-biz-search')?.value || '').toLowerCase();
+  const statusFilter = document.getElementById('sa-biz-status-filter')?.value || '';
+
+  let filtered = orgs;
+  if (search) filtered = filtered.filter(o => o.name.toLowerCase().includes(search) || o.slug.toLowerCase().includes(search));
+  if (statusFilter === 'active') filtered = filtered.filter(o => o.is_active);
+  if (statusFilter === 'inactive') filtered = filtered.filter(o => !o.is_active);
+
+  const tbody = document.getElementById('sa-businesses-tbody');
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-muted)">No businesses found</td></tr>';
+    return;
+  }
+
+  const rows = [];
+  for (const o of filtered) {
+    const stats = await saGetOrgStats(o.id);
+    const d = new Date(o.created_at);
+    rows.push(`
+    <tr>
+      <td class="fw-600">${o.name}</td>
+      <td>${o.business_type}</td>
+      <td><code style="font-size:12px;background:var(--surface-3);padding:2px 6px;border-radius:4px">${o.slug}</code></td>
+      <td><span class="badge badge-active">${(o.plan_id || 'free').toUpperCase()}</span></td>
+      <td>${stats.users}</td>
+      <td><span class="badge ${o.is_active ? 'badge-active' : 'badge-inactive'}">${o.is_active ? 'Active' : 'Inactive'}</span></td>
+      <td style="font-size:12px">${d.toLocaleDateString()}</td>
+      <td>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="saViewBusinessDetail('${o.id}')" title="View">👁️</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="saQuickImpersonate('${o.id}','${o.name.replace(/'/g, "\\'")}')" title="Enter POS">🔑</button>
+      </td>
+    </tr>`);
+  }
+  tbody.innerHTML = rows.join('');
+};
+
+// ─── SA CREATE BUSINESS ───
+window.saUpdatePlanLimits = () => {
+  // Visual feedback could be added here
+};
+
+window.saCreateBusiness = async () => {
+  const name = document.getElementById('sa-new-biz-name').value.trim();
+  const slug = document.getElementById('sa-new-biz-slug').value.trim().toLowerCase().replace(/\s+/g, '-');
+  const type = document.getElementById('sa-new-biz-type').value;
+  const currency = document.getElementById('sa-new-biz-currency').value || 'Rs.';
+  const tax = parseFloat(document.getElementById('sa-new-biz-tax').value) || 0;
+  const phone = document.getElementById('sa-new-biz-phone').value;
+  const address = document.getElementById('sa-new-biz-address').value;
+  const plan = document.getElementById('sa-new-biz-plan').value;
+  const adminUser = document.getElementById('sa-new-admin-user').value.trim();
+  const adminPass = document.getElementById('sa-new-admin-pass').value.trim();
+  const adminName = document.getElementById('sa-new-admin-name').value.trim() || 'Administrator';
+  const loadTemplate = document.getElementById('sa-new-load-template')?.checked;
+
+  // Validation
+  if (!name) return showToast('error', 'Business name is required');
+  if (!slug) return showToast('error', 'Business code is required');
+  if (!/^[a-z0-9-]+$/.test(slug)) return showToast('error', 'Business code must be lowercase letters, numbers, and hyphens only');
+  if (!adminUser) return showToast('error', 'Admin username is required');
+  if (!adminPass) return showToast('error', 'Admin password is required');
+  if (adminPass.length < 3) return showToast('error', 'Password must be at least 3 characters');
+
+  const btn = document.getElementById('sa-create-btn');
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
+
+  try {
+    const planLimits = { free: {u:3,p:100}, starter: {u:10,p:500}, pro: {u:25,p:2000}, enterprise: {u:999,p:99999} };
+    const limits = planLimits[plan] || planLimits.free;
+
+    const result = await saCreateOrganization(
+      { name, slug, business_type: type, currency, tax_rate: tax, phone, address, plan_id: plan, max_users: limits.u, max_products: limits.p },
+      { username: adminUser, password: adminPass, display_name: adminName }
+    );
+
+    if (result.error) {
+      showToast('error', 'Failed: ' + result.error);
+      return;
+    }
+
+    // Load template products if requested
+    if (loadTemplate && BUSINESS_TEMPLATES[type]) {
+      const oldOrgId = db.currentOrgId;
+      const oldSA = db.isSuperAdmin;
+      db.currentOrgId = result.org.id;
+      db.isSuperAdmin = false;
+      await loadBusinessTemplate(type);
+      db.currentOrgId = oldOrgId;
+      db.isSuperAdmin = oldSA;
+    }
+
+    await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, 'BUSINESS_CREATED', result.org.id, name, { slug, type, plan });
+
+    showToast('success', `Business "${name}" created successfully!`);
+    
+    // Reset form
+    document.getElementById('sa-new-biz-name').value = '';
+    document.getElementById('sa-new-biz-slug').value = '';
+    document.getElementById('sa-new-admin-user').value = '';
+    document.getElementById('sa-new-admin-pass').value = '';
+    document.getElementById('sa-new-admin-name').value = '';
+
+    saNav('sa-businesses');
+  } catch (e) {
+    showToast('error', 'Error creating business: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🚀 Create Business';
+  }
+};
+
+// ─── SA VIEW BUSINESS DETAIL ───
+window.saViewBusinessDetail = async (orgId) => {
+  selectedOrgForDetail = orgId;
+
+  const { data: org } = await supa.from('organizations').select('*').eq('id', orgId).maybeSingle();
+  if (!org) return showToast('error', 'Business not found');
+
+  const stats = await saGetOrgStats(orgId);
+  const users = await saGetOrgUsers(orgId);
+
+  document.getElementById('sa-detail-title').textContent = org.name;
+  document.getElementById('sa-detail-subtitle').textContent = `${org.business_type} · ${org.slug}`;
+
+  // Stats
+  document.getElementById('sa-detail-stats').innerHTML = `
+    <div class="sa-stat-card stat-users"><div class="sa-stat-value">${stats.users}</div><div class="sa-stat-label">Users</div></div>
+    <div class="sa-stat-card stat-businesses"><div class="sa-stat-value">${stats.products}</div><div class="sa-stat-label">Products</div></div>
+    <div class="sa-stat-card stat-sales"><div class="sa-stat-value">${stats.sales}</div><div class="sa-stat-label">Sales</div></div>
+    <div class="sa-stat-card stat-revenue"><div class="sa-stat-value">Rs. ${stats.revenue.toLocaleString()}</div><div class="sa-stat-label">Revenue</div></div>
+  `;
+
+  // Info
+  document.getElementById('sa-detail-info').innerHTML = `
+    <div class="sa-info-grid">
+      <div class="sa-info-label">Name</div><div class="sa-info-value">${org.name}</div>
+      <div class="sa-info-label">Code</div><div class="sa-info-value"><code>${org.slug}</code></div>
+      <div class="sa-info-label">Type</div><div class="sa-info-value">${org.business_type}</div>
+      <div class="sa-info-label">Currency</div><div class="sa-info-value">${org.currency}</div>
+      <div class="sa-info-label">Tax Rate</div><div class="sa-info-value">${org.tax_rate || 0}%</div>
+      <div class="sa-info-label">Phone</div><div class="sa-info-value">${org.phone || '—'}</div>
+      <div class="sa-info-label">Address</div><div class="sa-info-value">${org.address || '—'}</div>
+      <div class="sa-info-label">Plan</div><div class="sa-info-value"><span class="badge badge-active">${(org.plan_id || 'free').toUpperCase()}</span></div>
+      <div class="sa-info-label">Status</div><div class="sa-info-value"><span class="badge ${org.is_active ? 'badge-active' : 'badge-inactive'}">${org.is_active ? 'Active' : 'Inactive'}</span></div>
+      <div class="sa-info-label">Created</div><div class="sa-info-value">${new Date(org.created_at).toLocaleDateString()}</div>
+    </div>
+  `;
+
+  // Toggle button state
+  document.getElementById('sa-toggle-status-btn').innerHTML = org.is_active ? '⏸ Deactivate' : '▶️ Activate';
+
+  // Users
+  document.getElementById('sa-detail-users').innerHTML = users.length ? users.map(u => `
+    <div class="sa-user-item">
+      <div class="sa-user-avatar">${u.display_name.charAt(0).toUpperCase()}</div>
+      <div style="flex:1">
+        <div class="fw-600">${u.display_name}</div>
+        <div style="font-size:11px;color:var(--text-muted)">${u.username} · ${u.role}</div>
+      </div>
+      <span class="badge ${u.is_active ? 'badge-active' : 'badge-inactive'}">${u.is_active ? 'Active' : 'Inactive'}</span>
+    </div>
+  `).join('') : '<div style="color:var(--text-muted); padding:12px">No users</div>';
+
+  // Activity
+  const { data: orgLogs } = await supa.from('platform_log').select('*').eq('target_org', orgId).order('timestamp', { ascending: false }).limit(10);
+  document.getElementById('sa-detail-activity').innerHTML = (orgLogs || []).length ? orgLogs.map(l => {
+    const d = new Date(l.timestamp);
+    return `<div class="sa-recent-item">
+      <div class="sa-recent-text"><div class="sa-recent-name">${l.action}</div><div class="sa-recent-meta">${l.actor_name} · ${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div></div>
+    </div>`;
+  }).join('') : '<div style="color:var(--text-muted); padding:12px">No activity logged</div>';
+
+  saNav('sa-business-detail');
+};
+
+// ─── SA BUSINESS ACTIONS ───
+window.saEditBusiness = async () => {
+  if (!selectedOrgForDetail) return;
+  const { data: org } = await supa.from('organizations').select('*').eq('id', selectedOrgForDetail).maybeSingle();
+  if (!org) return;
+
+  const html = `
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Business Name</label><input class="form-input" id="sa-edit-name" value="${org.name}"></div>
+      <div class="form-group"><label class="form-label">Business Type</label>
+        <select class="form-input" id="sa-edit-type">
+          ${['Retail Shop','Grocery Store','Bookshop','Meat Shop','Bakery','Pharmacy','Hardware Store','Restaurant','Electronics Store','Clothing Store','Other'].map(t => `<option ${org.business_type === t ? 'selected' : ''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Currency</label><input class="form-input" id="sa-edit-currency" value="${org.currency}"></div>
+      <div class="form-group"><label class="form-label">Tax Rate (%)</label><input class="form-input" type="number" id="sa-edit-tax" value="${org.tax_rate || 0}" step="0.1"></div>
+      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="sa-edit-phone" value="${org.phone || ''}"></div>
+      <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="sa-edit-address" value="${org.address || ''}"></div>
+      <div class="form-group"><label class="form-label">Plan</label>
+        <select class="form-input" id="sa-edit-plan">
+          <option value="free" ${org.plan_id==='free'?'selected':''}>Free</option>
+          <option value="starter" ${org.plan_id==='starter'?'selected':''}>Starter</option>
+          <option value="pro" ${org.plan_id==='pro'?'selected':''}>Professional</option>
+          <option value="enterprise" ${org.plan_id==='enterprise'?'selected':''}>Enterprise</option>
+        </select>
+      </div>
+    </div>`;
+
+  openModal('Edit Business', html, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="saSaveBusinessEdit()">Save Changes</button>
+  `);
+};
+
+window.saSaveBusinessEdit = async () => {
+  const changes = {
+    name: document.getElementById('sa-edit-name').value,
+    business_type: document.getElementById('sa-edit-type').value,
+    currency: document.getElementById('sa-edit-currency').value,
+    tax_rate: parseFloat(document.getElementById('sa-edit-tax').value) || 0,
+    phone: document.getElementById('sa-edit-phone').value,
+    address: document.getElementById('sa-edit-address').value,
+    plan_id: document.getElementById('sa-edit-plan').value,
+  };
+
+  await saUpdateOrganization(selectedOrgForDetail, changes);
+  await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, 'BUSINESS_UPDATED', selectedOrgForDetail, changes.name, changes);
+  
+  closeModal();
+  showToast('success', 'Business updated');
+  saViewBusinessDetail(selectedOrgForDetail);
+};
+
+window.saToggleStatus = async () => {
+  if (!selectedOrgForDetail) return;
+  const { data: org } = await supa.from('organizations').select('is_active, name').eq('id', selectedOrgForDetail).maybeSingle();
+  if (!org) return;
+
+  const newStatus = !org.is_active;
+  const action = newStatus ? 'activate' : 'deactivate';
+  if (!confirm(`Are you sure you want to ${action} "${org.name}"? ${!newStatus ? 'Users will not be able to login.' : ''}`)) return;
+
+  await saToggleOrgStatus(selectedOrgForDetail, newStatus);
+  await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, newStatus ? 'BUSINESS_ACTIVATED' : 'BUSINESS_DEACTIVATED', selectedOrgForDetail, org.name, {});
+  
+  showToast('success', `Business ${action}d`);
+  saViewBusinessDetail(selectedOrgForDetail);
+};
+
+window.saDeleteBusiness = async () => {
+  if (!selectedOrgForDetail) return;
+  const { data: org } = await supa.from('organizations').select('name').eq('id', selectedOrgForDetail).maybeSingle();
+  if (!org) return;
+
+  if (!confirm(`⚠️ PERMANENTLY DELETE "${org.name}"?\n\nThis will remove:\n• All users\n• All products & categories\n• All sales history\n• All attendance & payroll data\n\nThis cannot be undone!`)) return;
+  if (!confirm(`Type confirmation: Are you absolutely sure you want to delete "${org.name}"?`)) return;
+
+  await saDeleteOrganization(selectedOrgForDetail);
+  await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, 'BUSINESS_DELETED', null, org.name, {});
+  
+  selectedOrgForDetail = null;
+  showToast('success', 'Business deleted permanently');
+  saNav('sa-businesses');
+};
+
+// ─── SA IMPERSONATION ───
+window.saImpersonateBusiness = async () => {
+  if (!selectedOrgForDetail) return;
+  const { data: org } = await supa.from('organizations').select('*').eq('id', selectedOrgForDetail).maybeSingle();
+  if (!org) return;
+  
+  await saDoImpersonate(org);
+};
+
+window.saQuickImpersonate = async (orgId, orgName) => {
+  const { data: org } = await supa.from('organizations').select('*').eq('id', orgId).maybeSingle();
+  if (!org) return showToast('error', 'Business not found');
+  await saDoImpersonate(org);
+};
+
+async function saDoImpersonate(org) {
+  isImpersonating = true;
+  impersonatedOrgId = org.id;
+  db.currentOrgId = org.id;
+  db.isSuperAdmin = false;
+
+  // Create a fake admin user for this org
+  currentUser = {
+    id: 0,
+    username: 'superadmin',
+    display_name: `${superAdminUser.display_name} (SA)`,
+    role: 'Admin',
+    is_active: true,
+    organization_id: org.id
+  };
+
+  // Show business sidebar, hide SA sidebar
+  document.getElementById('sidebar').style.display = 'flex';
+  document.getElementById('sa-sidebar').style.display = 'none';
+
+  // Show impersonation banner
+  document.getElementById('impersonation-banner').style.display = 'block';
+  document.getElementById('imp-biz-name').textContent = org.name;
+
+  // Update topbar
+  document.getElementById('user-avatar').textContent = org.name.charAt(0).toUpperCase();
+  document.getElementById('user-name').textContent = org.name;
+  document.getElementById('role-badge').textContent = 'Viewing';
+
+  // Show all nav
+  document.getElementById('nav-pos').style.display = 'block';
+  document.getElementById('nav-inventory').style.display = 'block';
+  document.getElementById('nav-sales').style.display = 'block';
+  document.getElementById('nav-hr').style.display = 'block';
+  document.getElementById('nav-system').style.display = 'block';
+  document.getElementById('nav-payroll-item').style.display = 'block';
+
+  // Hide SA screens
+  document.querySelectorAll('.sa-screen').forEach(s => s.classList.remove('active'));
+
+  await loadSettings();
+  nav('pos');
+
+  await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, 'IMPERSONATE_BUSINESS', org.id, org.name, {});
+  showToast('info', `Now viewing: ${org.name}`);
+}
+
+window.exitImpersonation = () => {
+  isImpersonating = false;
+  impersonatedOrgId = null;
+  currentUser = null;
+  db.currentOrgId = null;
+  db.isSuperAdmin = true;
+
+  // Hide business sidebar, show SA sidebar
+  document.getElementById('sidebar').style.display = 'none';
+  document.getElementById('sa-sidebar').style.display = 'flex';
+
+  // Hide impersonation banner
+  document.getElementById('impersonation-banner').style.display = 'none';
+
+  // Restore SA topbar
+  document.getElementById('user-avatar').textContent = '⚡';
+  document.getElementById('user-name').textContent = superAdminUser.display_name;
+  document.getElementById('role-badge').textContent = 'Super Admin';
+
+  // Hide business nav
+  document.getElementById('nav-pos').style.display = 'none';
+  document.getElementById('nav-inventory').style.display = 'none';
+  document.getElementById('nav-sales').style.display = 'none';
+  document.getElementById('nav-hr').style.display = 'none';
+  document.getElementById('nav-system').style.display = 'none';
+
+  // Navigate to SA dashboard
+  saNav('sa-dashboard');
+  showToast('info', 'Returned to admin panel');
+};
+
+// ─── SA ACTIVITY LOG ───
+window.saRenderActivity = async () => {
+  const logs = await saGetPlatformLogs(100);
+  const tbody = document.getElementById('sa-activity-tbody');
+
+  tbody.innerHTML = logs.length ? logs.map(l => {
+    const d = new Date(l.timestamp);
+    const actionClass = l.action.includes('CREATE') ? 'action-create' : 
+                        l.action.includes('LOGIN') ? 'action-login' : 
+                        l.action.includes('DELETE') ? 'action-delete' :
+                        l.action.includes('TOGGLE') || l.action.includes('ACTIVATE') || l.action.includes('DEACTIVATE') ? 'action-toggle' : 'action-update';
+    return `<tr>
+      <td style="font-size:12px;white-space:nowrap">${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
+      <td class="fw-600">${l.actor_name || l.actor_id}</td>
+      <td><span class="sa-recent-badge ${actionClass}">${l.action}</span></td>
+      <td>${l.target_name || '—'}</td>
+      <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${JSON.stringify(l.details || {}).substring(0, 80)}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-muted)">No activity logged yet</td></tr>';
+};
+
+// ─── SA SUBSCRIPTION PLANS ───
+window.saRenderPlans = async () => {
+  const { data: plans } = await supa.from('subscription_plans').select('*').order('price_monthly', { ascending: true });
+  if (!plans) return;
+
+  document.getElementById('sa-plans-grid').innerHTML = plans.map((p, i) => {
+    const features = typeof p.features === 'string' ? JSON.parse(p.features) : p.features;
+    return `
+    <div class="sa-plan-card ${i === 2 ? 'plan-featured' : ''}">
+      <div class="sa-plan-name">${p.name}</div>
+      <div class="sa-plan-price">Rs. ${Number(p.price_monthly).toLocaleString()}<span>/month</span></div>
+      <ul class="sa-plan-features">
+        <li>Up to ${p.max_users} users</li>
+        <li>Up to ${p.max_products.toLocaleString()} products</li>
+        <li>Up to ${p.max_monthly_sales.toLocaleString()} sales/month</li>
+        <li>Reports: ${features.reports ? '✅' : '❌'}</li>
+        <li>AI Features: ${features.ai ? '✅' : '❌'}</li>
+        ${features.priority_support ? '<li>Priority Support ⭐</li>' : ''}
+      </ul>
+    </div>`;
+  }).join('');
+};
+
+// ─── SA PLATFORM SETTINGS ───
+window.saRenderSettings = async () => {
+  const orgs = await saGetAllOrganizations();
+  const { count: totalUsers } = await supa.from('users').select('*', { count: 'exact', head: true });
+  document.getElementById('sa-platform-info').innerHTML = `
+    <div><strong>Businesses:</strong> ${orgs.length}</div>
+    <div><strong>Total Users:</strong> ${totalUsers || 0}</div>
+    <div><strong>Super Admin:</strong> ${superAdminUser?.username || '—'}</div>
+  `;
+};
+
+window.saChangePassword = async () => {
+  const current = document.getElementById('sa-set-current-pw').value;
+  const newPw = document.getElementById('sa-set-new-pw').value;
+
+  if (!current || !newPw) return showToast('error', 'Fill in both fields');
+  if (current !== superAdminUser.password) return showToast('error', 'Current password is incorrect');
+  if (newPw.length < 3) return showToast('error', 'New password too short');
+
+  await supa.from('super_admins').update({ password: newPw }).eq('id', superAdminUser.id);
+  superAdminUser.password = newPw;
+  
+  document.getElementById('sa-set-current-pw').value = '';
+  document.getElementById('sa-set-new-pw').value = '';
+  
+  await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, 'PASSWORD_CHANGED', null, '', {});
+  showToast('success', 'Password updated successfully');
+};
+
+// ─── SA AI INTEGRATION & INTELLIGENCE ───
+window.saRenderAiHub = async () => {
+  const conf = await saGetAllPlatformSettings();
+  const orgs = await saGetAllOrganizations();
+
+  // Summary Grid
+  const providerNames = { google: 'Google Gemini', openai: 'OpenAI', anthropic: 'Claude', openrouter: 'OpenRouter' };
+  const provEl = document.getElementById('sa-ai-active-provider');
+  if (provEl) provEl.textContent = providerNames[conf.ai_provider] || 'Gemini';
+
+  const modelSub = document.getElementById('sa-ai-active-model');
+  if (modelSub) modelSub.textContent = conf.ai_model || 'gemini-1.5-flash';
+  
+  const planLabels = { all: 'All Plans', starter: 'Starter +', pro: 'Pro +', enterprise: 'Enterprise' };
+  const planAcc = document.getElementById('sa-ai-plan-access');
+  if (planAcc) planAcc.textContent = planLabels[conf.ai_plan_requirement] || 'Pro +';
+
+  const planSub = document.getElementById('sa-ai-plan-sub');
+  if (planSub) planSub.textContent = `Required: ${planLabels[conf.ai_plan_requirement] || 'Pro'}`;
+  
+  const hasKey = !!conf.ai_api_key;
+  const keyStat = document.getElementById('sa-ai-key-status');
+  if (keyStat) keyStat.textContent = hasKey ? 'Configured' : 'Not Set';
+
+  const keySub = document.getElementById('sa-ai-key-sub');
+  if (keySub) keySub.textContent = hasKey ? 'Platform Key Ready' : 'Key Missing';
+  
+  const isEnabled = conf.ai_enabled !== 'false';
+  const engState = document.getElementById('sa-ai-engine-state');
+  if (engState) engState.textContent = isEnabled ? 'Active' : 'Disabled';
+  
+  const pill = document.getElementById('sa-ai-status-pill');
+  const pillText = document.getElementById('sa-ai-status-text');
+  if (pill && pillText) {
+    if (isEnabled && hasKey) {
+      pill.className = 'status-pill online';
+      pillText.textContent = 'AI Ready';
+    } else {
+      pill.className = 'status-pill offline';
+      pillText.textContent = hasKey ? 'AI Disabled' : 'Key Required';
+    }
+  }
+
+  // Populate Form Fields
+  const provSelect = document.getElementById('sa-ai-provider');
+  if (provSelect) provSelect.value = conf.ai_provider || 'google';
+  
+  const keyInput = document.getElementById('sa-ai-api-key');
+  if (keyInput) keyInput.value = conf.ai_api_key || '';
+  
+  const modelInput = document.getElementById('sa-ai-model');
+  if (modelInput) modelInput.value = conf.ai_model || 'gemini-1.5-flash';
+  
+  const planReqSelect = document.getElementById('sa-ai-plan-req');
+  if (planReqSelect) planReqSelect.value = conf.ai_plan_requirement || 'pro';
+  
+  const enCheck = document.getElementById('sa-ai-enabled');
+  if (enCheck) enCheck.checked = isEnabled;
+
+  // Populate Business Scope Dropdown
+  const bizSelect = document.getElementById('sa-ai-biz-select');
+  if (bizSelect) {
+    let opts = '<option value="all">🌐 All Businesses (Platform Macro View)</option>';
+    orgs.forEach(o => {
+      opts += `<option value="${o.id}">${o.name} (${o.slug})</option>`;
+    });
+    bizSelect.innerHTML = opts;
+  }
+};
+
+window.saOnAiProviderChange = () => {
+  const prov = document.getElementById('sa-ai-provider').value;
+  const modelInput = document.getElementById('sa-ai-model');
+  const defaults = {
+    google: 'gemini-1.5-flash',
+    openai: 'gpt-4o-mini',
+    anthropic: 'claude-3-5-sonnet-20241022',
+    openrouter: 'google/gemini-flash-1.5'
+  };
+  if (modelInput && defaults[prov]) {
+    modelInput.value = defaults[prov];
+  }
+};
+
+window.saToggleApiKeyVisibility = () => {
+  const input = document.getElementById('sa-ai-api-key');
+  const btn = document.getElementById('sa-ai-key-toggle-btn');
+  if (!input) return;
+  if (input.type === 'password') {
+    input.type = 'text';
+    if (btn) btn.textContent = '🔒';
+  } else {
+    input.type = 'password';
+    if (btn) btn.textContent = '👁️';
+  }
+};
+
+window.saSaveAiSettings = async () => {
+  const provider = document.getElementById('sa-ai-provider').value;
+  const apiKey = document.getElementById('sa-ai-api-key').value.trim();
+  const model = document.getElementById('sa-ai-model').value.trim();
+  const planReq = document.getElementById('sa-ai-plan-req').value;
+  const isEnabled = document.getElementById('sa-ai-enabled').checked ? 'true' : 'false';
+
+  const btn = document.getElementById('sa-ai-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  try {
+    await saSetPlatformSetting('ai_provider', provider);
+    await saSetPlatformSetting('ai_api_key', apiKey);
+    await saSetPlatformSetting('ai_model', model);
+    await saSetPlatformSetting('ai_plan_requirement', planReq);
+    await saSetPlatformSetting('ai_enabled', isEnabled);
+
+    await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, 'AI_CONFIG_UPDATED', null, '', {
+      provider, model, planReq, enabled: isEnabled, keySet: !!apiKey
+    });
+
+    showToast('success', 'AI Configuration saved successfully');
+    await saRenderAiHub();
+  } catch (err) {
+    showToast('error', 'Error saving AI settings: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Save AI Configuration';
+  }
+};
+
+window.saTestAiConnection = async () => {
+  const provider = document.getElementById('sa-ai-provider').value;
+  const apiKey = document.getElementById('sa-ai-api-key').value.trim();
+  const model = document.getElementById('sa-ai-model').value.trim();
+  const box = document.getElementById('sa-ai-test-box');
+
+  if (!apiKey) {
+    box.style.display = 'block';
+    box.style.background = '#fef2f2';
+    box.style.color = '#dc2626';
+    box.style.border = '1px solid #fecaca';
+    box.innerHTML = '<strong>❌ Key Required:</strong> Please enter an API key to test the connection.';
+    return;
+  }
+
+  box.style.display = 'block';
+  box.style.background = 'var(--surface-3)';
+  box.style.color = 'var(--text-primary)';
+  box.style.border = '1px solid var(--border)';
+  box.innerHTML = '⏳ Testing connection with ' + provider + ' (' + model + ')...';
+
+  const btn = document.getElementById('sa-ai-test-btn');
+  btn.disabled = true;
+
+  const t0 = Date.now();
+  try {
+    let resultText = '';
+    const testPrompt = 'Respond with exactly: OK';
+
+    if (provider === 'google') {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-1.5-flash'}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: testPrompt }] }] })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      resultText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'OK';
+    } else if (provider === 'openai') {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: model || 'gpt-4o-mini', messages: [{ role: 'user', content: testPrompt }], max_tokens: 10 })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      resultText = data.choices?.[0]?.message?.content?.trim() || 'OK';
+    } else if (provider === 'anthropic') {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'dangerously-allow-browser': 'true' },
+        body: JSON.stringify({ model: model || 'claude-3-5-sonnet-20241022', max_tokens: 10, messages: [{ role: 'user', content: testPrompt }] })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      resultText = data.content?.[0]?.text?.trim() || 'OK';
+    } else if (provider === 'openrouter') {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: model || 'google/gemini-flash-1.5', messages: [{ role: 'user', content: testPrompt }], max_tokens: 10 })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      resultText = data.choices?.[0]?.message?.content?.trim() || 'OK';
+    }
+
+    const latency = Date.now() - t0;
+    box.style.background = '#ecfdf5';
+    box.style.color = '#059669';
+    box.style.border = '1px solid #a7f3d0';
+    box.innerHTML = `<strong>✅ Connection Successful (${latency}ms)</strong><br>Provider confirmed active. Response: <em>"${resultText}"</em>`;
+    showToast('success', `AI connected successfully in ${latency}ms!`);
+  } catch (err) {
+    box.style.background = '#fef2f2';
+    box.style.color = '#dc2626';
+    box.style.border = '1px solid #fecaca';
+    box.innerHTML = `<strong>❌ Connection Failed:</strong><br>${err.message}`;
+    showToast('error', 'AI test connection failed');
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+window.saRunPlatformAiAnalysis = async () => {
+  const bizScope = document.getElementById('sa-ai-biz-select').value;
+  const analysisType = document.getElementById('sa-ai-analysis-type').value;
+  const loading = document.getElementById('sa-ai-report-loading');
+  const output = document.getElementById('sa-ai-report-output');
+  const reportText = document.getElementById('sa-ai-report-text');
+  const runBtn = document.getElementById('sa-ai-run-btn');
+
+  const conf = await saGetAllPlatformSettings();
+  const apiKey = conf.ai_api_key;
+  if (!apiKey) {
+    return showToast('error', 'Please configure and save your Platform API Key first.');
+  }
+
+  loading.style.display = 'block';
+  output.style.display = 'none';
+  runBtn.disabled = true;
+
+  try {
+    let scopeDescription = '';
+    let metricSummary = '';
+
+    if (bizScope === 'all') {
+      const stats = await saGetPlatformStats();
+      const orgs = await saGetAllOrganizations();
+      scopeDescription = `Platform-Wide Macro Overview across ${stats.totalOrgs} businesses (${stats.activeOrgs} active, ${stats.inactiveOrgs} inactive).`;
+      metricSummary = `Total Registered Users: ${stats.totalUsers}. Total Products Listed: ${stats.totalProducts}. Total Transactions Recorded: ${stats.totalSales}. Combined Platform Sales Revenue: Rs. ${stats.totalRevenue.toLocaleString()}. Business Types Breakdown: ${orgs.map(o => o.business_type).join(', ')}.`;
+    } else {
+      const { data: org } = await supa.from('organizations').select('*').eq('id', bizScope).single();
+      const stats = await saGetOrgStats(bizScope);
+      const users = await saGetOrgUsers(bizScope);
+      scopeDescription = `Single Business Audit: "${org.name}" (Code: ${org.slug}, Type: ${org.business_type}, Plan: ${org.plan_id || 'free'}, Status: ${org.is_active ? 'Active' : 'Inactive'}).`;
+      metricSummary = `Staff Count: ${users.length} (${users.map(u => u.role).join(', ')}). Product Catalog: ${stats.products} items. Total Sales Transactions: ${stats.sales}. Total Revenue: Rs. ${stats.revenue.toLocaleString()}. Tax Rate: ${org.tax_rate || 0}%.`;
+    }
+
+    const typePrompts = {
+      health: 'Provide a 360-degree Business Health and Growth Diagnostic. Highlight operational strengths, bottlenecks, user adoption risks, and 3 high-impact strategic growth levers for the platform owner to execute.',
+      revenue: 'Provide a Sales Velocity and Revenue Forecast. Analyze transaction volume, average revenue generation, seasonality considerations, and opportunities to optimize ticket size and repeat purchases.',
+      inventory: 'Provide an Inventory & Supply Chain Diagnostic. Evaluate product catalog breadth, stock turnover health, risks of dead inventory or sudden stockouts, and actionable SKU management recommendations.',
+      risk: 'Provide a Risk, Inactivity, and Churn Warning report. Identify businesses or staff teams showing signs of disengagement, low activity velocity, and provide retention strategies.'
+    };
+
+    const sysPrompt = `You are an elite Chief Operating Officer & SaaS Product Strategist analyzing multi-tenant retail and POS operations for the platform owner of NexPOS. You provide crisp, highly executive, numerical, and actionable insights. Format with clear headers: (1) Executive Findings, (2) Critical Health Metrics, (3) 3 High-Impact Action Items. Keep total response under 350 words.`;
+    const userPrompt = `Scope: ${scopeDescription}\nMetrics: ${metricSummary}\nObjective: ${typePrompts[analysisType] || typePrompts.health}`;
+
+    const provider = conf.ai_provider || 'google';
+    const model = conf.ai_model || 'gemini-1.5-flash';
+    let aiText = '';
+
+    if (provider === 'google') {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: sysPrompt + '\n\n' + userPrompt }] }] })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No content generated';
+    } else if (provider === 'openai') {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userPrompt }] })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      aiText = data.choices?.[0]?.message?.content || 'No content generated';
+    } else if (provider === 'anthropic') {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'dangerously-allow-browser': 'true' },
+        body: JSON.stringify({ model, max_tokens: 1000, system: sysPrompt, messages: [{ role: 'user', content: userPrompt }] })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      aiText = data.content?.[0]?.text || 'No content generated';
+    } else if (provider === 'openrouter') {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userPrompt }] })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      aiText = data.choices?.[0]?.message?.content || 'No content generated';
+    }
+
+    reportText.textContent = aiText;
+    loading.style.display = 'none';
+    output.style.display = 'block';
+
+    await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, 'AI_PLATFORM_DIAGNOSIS', bizScope === 'all' ? null : bizScope, bizScope, { analysisType });
+    showToast('success', 'AI diagnostic report generated!');
+  } catch (err) {
+    loading.style.display = 'none';
+    showToast('error', 'AI analysis failed: ' + err.message);
+  } finally {
+    runBtn.disabled = false;
+  }
+};
+
+window.saCopyAiReport = () => {
+  const text = document.getElementById('sa-ai-report-text').textContent;
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('success', 'Report copied to clipboard!');
+  });
+};
+
+

@@ -23,6 +23,9 @@ if (typeof supabase !== 'undefined') {
         order: () => ({
           eq: () => ({ data: [], error: { message: "Offline mode" } }),
           then: (cb) => cb({ data: [], error: { message: "Offline mode" } })
+        }),
+        neq: () => ({
+          order: () => ({ data: [], error: { message: "Offline mode" } })
         })
       }),
       insert: () => ({
@@ -41,6 +44,9 @@ if (typeof supabase !== 'undefined') {
 }
 
 let currentOrgId = null;
+let isSuperAdmin = false;
+
+const GLOBAL_SAAS_TABLES = ['organizations','super_admins','subscription_plans','platform_log','platform_settings'];
 
 // ─── SUPABASE COMPATIBILITY LAYER (with multi-tenancy) ───
 
@@ -55,7 +61,7 @@ class SupaQuery {
   }
   async first() {
     let q = supa.from(this._table).select('*');
-    if (currentOrgId && this._table !== 'organizations') {
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
       q = q.eq('organization_id', currentOrgId);
     }
     for (const f of this._filters) q = q.eq(f.field, f.val);
@@ -64,7 +70,7 @@ class SupaQuery {
   }
   async toArray() {
     let q = supa.from(this._table).select('*');
-    if (currentOrgId && this._table !== 'organizations') {
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
       q = q.eq('organization_id', currentOrgId);
     }
     for (const f of this._filters) q = q.eq(f.field, f.val);
@@ -78,7 +84,7 @@ class SupaTable {
 
   async toArray() {
     let q = supa.from(this._name).select('*').order('id', { ascending: true });
-    if (currentOrgId && this._name !== 'organizations') {
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
       q = q.eq('organization_id', currentOrgId);
     }
     const { data, error } = await q;
@@ -88,7 +94,7 @@ class SupaTable {
 
   async get(id) {
     let q = supa.from(this._name).select('*').eq('id', id);
-    if (currentOrgId && this._name !== 'organizations') {
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
       q = q.eq('organization_id', currentOrgId);
     }
     const { data } = await q.maybeSingle();
@@ -96,7 +102,7 @@ class SupaTable {
   }
 
   async add(item) {
-    if (currentOrgId && this._name !== 'organizations') {
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
       item.organization_id = currentOrgId;
     }
     const { data, error } = await supa.from(this._name).insert(item).select('id').single();
@@ -105,7 +111,7 @@ class SupaTable {
   }
 
   async bulkAdd(items) {
-    if (currentOrgId && this._name !== 'organizations') {
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
       items = items.map(i => ({ ...i, organization_id: currentOrgId }));
     }
     const { error } = await supa.from(this._name).insert(items);
@@ -124,7 +130,7 @@ class SupaTable {
 
   async clear() {
     let q = supa.from(this._name).delete();
-    if (currentOrgId && this._name !== 'organizations') {
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
       q = q.eq('organization_id', currentOrgId);
     } else {
       q = q.neq('id', 0);
@@ -135,7 +141,7 @@ class SupaTable {
 
   async count() {
     let q = supa.from(this._name).select('*', { count: 'exact', head: true });
-    if (currentOrgId && this._name !== 'organizations') {
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
       q = q.eq('organization_id', currentOrgId);
     }
     const { count, error } = await q;
@@ -158,6 +164,8 @@ class SupaTable {
 const db = {
   get currentOrgId() { return currentOrgId; },
   set currentOrgId(val) { currentOrgId = val; },
+  get isSuperAdmin() { return isSuperAdmin; },
+  set isSuperAdmin(val) { isSuperAdmin = val; },
   organizations: new SupaTable('organizations'),
   products:      new SupaTable('products'),
   categories:    new SupaTable('categories'),
@@ -173,7 +181,233 @@ const db = {
   pos_shifts:    new SupaTable('pos_shifts'),
   shift_closures: new SupaTable('shift_closures'),
   audit_log:     new SupaTable('audit_log'),
+  // SaaS tables
+  super_admins:       new SupaTable('super_admins'),
+  subscription_plans: new SupaTable('subscription_plans'),
+  platform_log:       new SupaTable('platform_log'),
+  platform_settings:  new SupaTable('platform_settings'),
 };
+
+// ─── SUPER ADMIN HELPERS ───
+
+async function saGetPlatformSetting(key, defaultVal = '') {
+  try {
+    const { data, error } = await supa.from('platform_settings').select('value').eq('key', key).maybeSingle();
+    if (error || !data) return localStorage.getItem('nexpos_platform_' + key) || defaultVal;
+    return data.value;
+  } catch (e) {
+    return localStorage.getItem('nexpos_platform_' + key) || defaultVal;
+  }
+}
+
+async function saSetPlatformSetting(key, value) {
+  try {
+    localStorage.setItem('nexpos_platform_' + key, value);
+    const { error } = await supa.from('platform_settings').upsert({ key, value, updated_at: new Date().toISOString() });
+    if (error) console.warn('saSetPlatformSetting db fallback:', error);
+    return true;
+  } catch (e) {
+    console.warn('saSetPlatformSetting error:', e);
+    return false;
+  }
+}
+
+async function saGetAllPlatformSettings() {
+  const result = {
+    ai_provider: 'google',
+    ai_model: 'gemini-1.5-flash',
+    ai_enabled: 'true',
+    ai_plan_requirement: 'pro',
+    ai_api_key: ''
+  };
+  try {
+    const { data } = await supa.from('platform_settings').select('*');
+    if (data && data.length) {
+      data.forEach(r => { result[r.key] = r.value; });
+    }
+  } catch (e) {
+    console.warn('saGetAllPlatformSettings error:', e);
+  }
+  for (const k of Object.keys(result)) {
+    const local = localStorage.getItem('nexpos_platform_' + k);
+    if (local !== null && !result[k]) result[k] = local;
+  }
+  return result;
+}
+
+async function saLoginSuperAdmin(username, password) {
+  const { data, error } = await supa
+    .from('super_admins')
+    .select('*')
+    .eq('username', username)
+    .eq('password', password)
+    .limit(1)
+    .maybeSingle();
+  if (error) { console.error('SA Login Error:', error); return null; }
+  if (data) {
+    await supa.from('super_admins').update({ last_login: new Date().toISOString() }).eq('id', data.id);
+  }
+  return data;
+}
+
+async function saGetAllOrganizations() {
+  const { data, error } = await supa
+    .from('organizations')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) { console.error('Get Orgs Error:', error); return []; }
+  return data || [];
+}
+
+async function saGetOrgStats(orgId) {
+  const stats = {};
+  const { count: userCount } = await supa.from('users').select('*', { count: 'exact', head: true }).eq('organization_id', orgId);
+  const { count: productCount } = await supa.from('products').select('*', { count: 'exact', head: true }).eq('organization_id', orgId);
+  const { count: saleCount } = await supa.from('sales').select('*', { count: 'exact', head: true }).eq('organization_id', orgId);
+  
+  const { data: salesData } = await supa.from('sales').select('total_amount').eq('organization_id', orgId);
+  const totalRevenue = (salesData || []).reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+
+  stats.users = userCount || 0;
+  stats.products = productCount || 0;
+  stats.sales = saleCount || 0;
+  stats.revenue = totalRevenue;
+  return stats;
+}
+
+async function saCreateOrganization(orgData, adminData) {
+  // Create organization
+  const { data: org, error: orgErr } = await supa
+    .from('organizations')
+    .insert({
+      name: orgData.name,
+      slug: orgData.slug,
+      business_type: orgData.business_type || 'Retail Shop',
+      currency: orgData.currency || 'Rs.',
+      tax_rate: orgData.tax_rate || 0,
+      phone: orgData.phone || '',
+      address: orgData.address || '',
+      subscription: orgData.plan_id || 'free',
+      is_active: true,
+      plan_id: orgData.plan_id || 'free',
+      max_users: orgData.max_users || 3,
+      max_products: orgData.max_products || 100,
+    })
+    .select()
+    .single();
+
+  if (orgErr) { console.error('Create Org Error:', orgErr); return { error: orgErr.message }; }
+
+  // Create admin user for the business
+  const { error: userErr } = await supa
+    .from('users')
+    .insert({
+      username: adminData.username,
+      password: adminData.password,
+      display_name: adminData.display_name || 'Administrator',
+      role: 'Admin',
+      is_active: true,
+      organization_id: org.id
+    });
+
+  if (userErr) { console.error('Create Admin Error:', userErr); return { error: userErr.message }; }
+
+  // Seed default walk-in customer
+  await supa.from('customers').insert({
+    name: 'Walk-in Customer', phone: '', email: '', outstanding_balance: 0,
+    organization_id: org.id
+  });
+
+  // Seed default settings
+  const defaultSettings = [
+    { key: 'biz_name', value: orgData.name },
+    { key: 'biz_type', value: orgData.business_type || 'Retail Shop' },
+    { key: 'currency', value: orgData.currency || 'Rs.' },
+    { key: 'tax_rate', value: String(orgData.tax_rate || 0) },
+    { key: 'phone', value: orgData.phone || '' },
+    { key: 'address', value: orgData.address || '' },
+  ];
+  for (const s of defaultSettings) {
+    await supa.from('settings').insert({ ...s, organization_id: org.id });
+  }
+
+  return { org };
+}
+
+async function saToggleOrgStatus(orgId, isActive) {
+  const { error } = await supa.from('organizations').update({ is_active: isActive }).eq('id', orgId);
+  if (error) console.error('Toggle Org Error:', error);
+  return !error;
+}
+
+async function saDeleteOrganization(orgId) {
+  // Delete all related data in order
+  const tables = ['sale_items','sales','held_carts','attendance','payroll','advances','shift_closures','audit_log','products','categories','customers','settings','users'];
+  for (const t of tables) {
+    await supa.from(t).delete().eq('organization_id', orgId);
+  }
+  await supa.from('organizations').delete().eq('id', orgId);
+}
+
+async function saUpdateOrganization(orgId, changes) {
+  const { error } = await supa.from('organizations').update(changes).eq('id', orgId);
+  if (error) console.error('Update Org Error:', error);
+  return !error;
+}
+
+async function saLogPlatformEvent(actorType, actorId, actorName, action, targetOrg, targetName, details = {}) {
+  await supa.from('platform_log').insert({
+    actor_type: actorType,
+    actor_id: actorId,
+    actor_name: actorName,
+    action,
+    target_org: targetOrg || null,
+    target_name: targetName || '',
+    details
+  });
+}
+
+async function saGetPlatformLogs(limit = 100) {
+  const { data, error } = await supa
+    .from('platform_log')
+    .select('*')
+    .order('timestamp', { ascending: false })
+    .limit(limit);
+  if (error) { console.error('Get Logs Error:', error); return []; }
+  return data || [];
+}
+
+async function saGetPlatformStats() {
+  const orgs = await saGetAllOrganizations();
+  const activeOrgs = orgs.filter(o => o.is_active);
+  
+  let totalUsers = 0, totalProducts = 0, totalSales = 0, totalRevenue = 0;
+  
+  const { count: uCount } = await supa.from('users').select('*', { count: 'exact', head: true });
+  const { count: pCount } = await supa.from('products').select('*', { count: 'exact', head: true });
+  const { data: allSales } = await supa.from('sales').select('total_amount');
+  
+  totalUsers = uCount || 0;
+  totalProducts = pCount || 0;
+  totalSales = (allSales || []).length;
+  totalRevenue = (allSales || []).reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+
+  return {
+    totalOrgs: orgs.length,
+    activeOrgs: activeOrgs.length,
+    inactiveOrgs: orgs.length - activeOrgs.length,
+    totalUsers,
+    totalProducts,
+    totalSales,
+    totalRevenue
+  };
+}
+
+async function saGetOrgUsers(orgId) {
+  const { data, error } = await supa.from('users').select('*').eq('organization_id', orgId);
+  if (error) return [];
+  return data || [];
+}
 
 // ─── BUSINESS TEMPLATES ───
 const BUSINESS_TEMPLATES = {

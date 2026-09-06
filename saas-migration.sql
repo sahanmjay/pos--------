@@ -47,7 +47,14 @@ ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS last_activity TIMESTAM
 ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS max_users INTEGER DEFAULT 3;
 ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS max_products INTEGER DEFAULT 100;
 
--- 5. RLS POLICIES
+-- 5. PLATFORM SETTINGS (AI keys, provider configs, platform-wide toggles)
+CREATE TABLE IF NOT EXISTS public.platform_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 6. RLS POLICIES
 ALTER TABLE public.super_admins ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "allow_all_super_admins" ON public.super_admins FOR ALL USING (true) WITH CHECK (true);
 
@@ -57,12 +64,15 @@ CREATE POLICY "allow_all_subscription_plans" ON public.subscription_plans FOR AL
 ALTER TABLE public.platform_log ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "allow_all_platform_log" ON public.platform_log FOR ALL USING (true) WITH CHECK (true);
 
--- 6. SEED SUPER ADMIN
+ALTER TABLE public.platform_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "allow_all_platform_settings" ON public.platform_settings FOR ALL USING (true) WITH CHECK (true);
+
+-- 7. SEED SUPER ADMIN
 INSERT INTO public.super_admins (username, password, display_name, email)
 VALUES ('superadmin', 'super@123', 'Platform Owner', 'admin@nexpos.cloud')
 ON CONFLICT (username) DO NOTHING;
 
--- 7. SEED SUBSCRIPTION PLANS
+-- 8. SEED SUBSCRIPTION PLANS
 INSERT INTO public.subscription_plans (id, name, max_users, max_products, max_monthly_sales, features, price_monthly) VALUES
   ('free', 'Free', 3, 100, 500, '{"reports":false,"ai":false}', 0),
   ('starter', 'Starter', 10, 500, 2000, '{"reports":true,"ai":false}', 2500),
@@ -70,6 +80,16 @@ INSERT INTO public.subscription_plans (id, name, max_users, max_products, max_mo
   ('enterprise', 'Enterprise', 999, 99999, 999999, '{"reports":true,"ai":true,"priority_support":true}', 15000)
 ON CONFLICT (id) DO NOTHING;
 
--- 8. UPDATE EXISTING ORG WITH DEFAULTS
+-- 9. SEED PLATFORM SETTINGS (AI & SaaS defaults)
+INSERT INTO public.platform_settings (key, value) VALUES
+  ('ai_provider', 'google'),
+  ('ai_model', 'gemini-1.5-flash'),
+  ('ai_enabled', 'true'),
+  ('ai_plan_requirement', 'pro'),
+  ('ai_api_key', '')
+ON CONFLICT (key) DO NOTHING;
+
+-- 10. UPDATE EXISTING ORG WITH DEFAULTS
 UPDATE public.organizations SET is_active = TRUE WHERE is_active IS NULL;
 UPDATE public.organizations SET plan_id = 'free' WHERE plan_id IS NULL;
+

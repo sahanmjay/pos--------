@@ -27,11 +27,29 @@
       <div class="login-logo-icon">NP</div>
       <div class="login-logo-content">
         <div class="login-logo-text">NexPOS</div>
-        <div class="login-logo-sub">Business Intelligence System</div>
+        <div class="login-logo-sub">SaaS Business Platform</div>
       </div>
     </div>
-    <div class="login-title">Welcome back</div>
-    <div class="login-subtitle">Sign in to manage your business operations</div>
+
+    <!-- Login Mode Toggle -->
+    <div class="login-mode-toggle" id="login-mode-toggle">
+      <button class="login-mode-btn active" id="mode-business" onclick="setLoginMode('business')">
+        <i class="fa-solid fa-store"></i> Business Login
+      </button>
+      <button class="login-mode-btn" id="mode-super" onclick="setLoginMode('super')">
+        <i class="fa-solid fa-shield-halved"></i> Platform Admin
+      </button>
+    </div>
+
+    <!-- Business Code (only for business login) -->
+    <div class="form-group" id="login-slug-group">
+      <label class="form-label">Business Code</label>
+      <input class="form-input" type="text" id="login-slug" autocomplete="off" placeholder="e.g. my-shop">
+      <div style="font-size:11px; color:var(--text-muted); margin-top:4px">Enter your business code provided by admin</div>
+    </div>
+
+    <div class="login-title" id="login-title-text">Welcome back</div>
+    <div class="login-subtitle" id="login-subtitle-text">Sign in to manage your business operations</div>
     <div class="form-group">
       <label class="form-label">Username</label>
       <input class="form-input" type="text" id="login-user" autocomplete="off" placeholder="Enter your username">
@@ -96,8 +114,8 @@
       <div class="sidebar-brand">
         <div class="sidebar-logo-mark">NP</div>
         <div>
-          <div class="sidebar-brand-name">NexPOS</div>
-          <div class="sidebar-brand-sub">Premium Retail Suite</div>
+          <div class="sidebar-brand-name" id="sidebar-biz-name">NexPOS</div>
+          <div class="sidebar-brand-sub" id="sidebar-biz-sub">Premium Retail Suite</div>
         </div>
         <span class="sidebar-role-badge" id="sidebar-role-badge">Admin</span>
       </div>
@@ -135,9 +153,410 @@
       </div>
     </div>
 
+    <!-- SUPER ADMIN SIDEBAR (hidden by default) -->
+    <div class="sidebar sa-sidebar" id="sa-sidebar" style="display:none">
+      <div class="sidebar-brand sa-brand">
+        <div class="sidebar-logo-mark sa-logo-mark">⚡</div>
+        <div>
+          <div class="sidebar-brand-name">NexPOS</div>
+          <div class="sidebar-brand-sub sa-brand-sub">Platform Admin</div>
+        </div>
+        <span class="sidebar-role-badge sa-role-badge">Super Admin</span>
+      </div>
+      <div class="sidebar-section">
+        <div class="nav-item sa-nav active" onclick="saNav('sa-dashboard')"><span class="nav-icon">📊</span> Dashboard</div>
+      </div>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-section">
+        <div class="sidebar-label sa-label">Businesses</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-businesses')"><span class="nav-icon">🏢</span> All Businesses</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-create-business')"><span class="nav-icon">➕</span> Create Business</div>
+      </div>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-section">
+        <div class="sidebar-label sa-label">Platform</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-activity')"><span class="nav-icon">📋</span> Activity Logs</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-plans')"><span class="nav-icon">💎</span> Subscription Plans</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-ai')"><span class="nav-icon">🤖</span> AI Integration</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-settings')"><span class="nav-icon">⚙️</span> Platform Settings</div>
+      </div>
+    </div>
+
+    <!-- IMPERSONATION BANNER -->
+    <div class="impersonation-banner" id="impersonation-banner" style="display:none">
+      <div class="imp-content">
+        <i class="fa-solid fa-eye"></i>
+        <span>Viewing as: <strong id="imp-biz-name">Business</strong></span>
+        <button class="btn btn-sm imp-exit-btn" onclick="exitImpersonation()">← Back to Admin Panel</button>
+      </div>
+    </div>
+
     <!-- MAIN CONTENT -->
     <div class="main">
       <div class="breadcrumb" id="breadcrumb"><span>NexPOS</span><span class="sep">/</span><span class="current">Point of Sale</span></div>
+
+      <!-- ═══ SUPER ADMIN SCREENS ═══ -->
+
+      <!-- SA DASHBOARD -->
+      <div class="screen sa-screen" id="screen-sa-dashboard">
+        <div class="page">
+          <div class="page-header">
+            <div><div class="page-title sa-title">Platform Dashboard</div><div class="page-subtitle">Overview of all businesses on NexPOS</div></div>
+          </div>
+          <div class="summary-grid" id="sa-stats-grid"></div>
+          <div class="dash-grid" style="margin-top:24px">
+            <div class="card"><div class="card-body">
+              <div class="section-header">Recent Businesses</div>
+              <div id="sa-recent-businesses"></div>
+            </div></div>
+            <div class="card"><div class="card-body">
+              <div class="section-header">Recent Activity</div>
+              <div id="sa-recent-activity"></div>
+            </div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SA BUSINESSES LIST -->
+      <div class="screen sa-screen" id="screen-sa-businesses">
+        <div class="page">
+          <div class="page-header">
+            <div><div class="page-title sa-title">All Businesses</div><div class="page-subtitle">Manage all registered businesses</div></div>
+            <div class="page-actions"><button class="btn btn-primary btn-sm" onclick="saNav('sa-create-business')">+ Create New Business</button></div>
+          </div>
+          <div class="card">
+            <div class="filter-bar">
+              <div class="search-input-wrap"><span class="search-icon">🔍</span><input class="search-input" id="sa-biz-search" placeholder="Search businesses..." oninput="saRenderBusinesses()"></div>
+              <select class="filter-select" id="sa-biz-status-filter" onchange="saRenderBusinesses()">
+                <option value="">All Status</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+              <div class="filter-spacer"></div>
+            </div>
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead><tr>
+                  <th>Business</th><th>Type</th><th>Slug</th><th>Plan</th><th>Users</th><th>Status</th><th>Created</th><th>Actions</th>
+                </tr></thead>
+                <tbody id="sa-businesses-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SA CREATE BUSINESS -->
+      <div class="screen sa-screen" id="screen-sa-create-business">
+        <div class="page">
+          <div class="page-header">
+            <div><div class="page-title sa-title">Create New Business</div><div class="page-subtitle">Set up a new business on the NexPOS platform</div></div>
+          </div>
+          <div class="dash-grid">
+            <div class="card"><div class="card-body">
+              <div class="form-section-title">Business Details</div>
+              <div class="form-grid">
+                <div class="form-group"><label class="form-label">Business Name *</label><input class="form-input" id="sa-new-biz-name" placeholder="My Awesome Shop"></div>
+                <div class="form-group"><label class="form-label">Business Code (Slug) *</label><input class="form-input" id="sa-new-biz-slug" placeholder="my-awesome-shop">
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Unique identifier. Lowercase, no spaces (use hyphens)</div>
+                </div>
+                <div class="form-group"><label class="form-label">Business Type</label>
+                  <select class="form-input" id="sa-new-biz-type">
+                    <option>Retail Shop</option><option>Grocery Store</option><option>Bookshop</option><option>Meat Shop</option>
+                    <option>Bakery</option><option>Pharmacy</option><option>Hardware Store</option><option>Restaurant</option>
+                    <option>Electronics Store</option><option>Clothing Store</option><option>Salon & Spa</option><option>Other</option>
+                  </select>
+                </div>
+                <div class="form-group"><label class="form-label">Currency</label><input class="form-input" id="sa-new-biz-currency" value="Rs."></div>
+                <div class="form-group"><label class="form-label">Tax Rate (%)</label><input class="form-input" type="number" id="sa-new-biz-tax" value="0" step="0.1"></div>
+                <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="sa-new-biz-phone" placeholder="+94 77 123 4567"></div>
+                <div class="form-group" style="grid-column: span 2"><label class="form-label">Address</label><input class="form-input" id="sa-new-biz-address" placeholder="123 Main Street, Colombo"></div>
+              </div>
+
+              <div class="form-section-title" style="margin-top:24px">Subscription Plan</div>
+              <div class="form-grid">
+                <div class="form-group"><label class="form-label">Plan</label>
+                  <select class="form-input" id="sa-new-biz-plan" onchange="saUpdatePlanLimits()">
+                    <option value="free">Free — 3 users, 100 products</option>
+                    <option value="starter">Starter — 10 users, 500 products</option>
+                    <option value="pro">Professional — 25 users, 2000 products</option>
+                    <option value="enterprise">Enterprise — Unlimited</option>
+                  </select>
+                </div>
+              </div>
+            </div></div>
+
+            <div class="card"><div class="card-body">
+              <div class="form-section-title">Admin Account</div>
+              <div class="page-subtitle" style="margin-bottom:16px">Create the first admin user for this business</div>
+              <div class="form-grid">
+                <div class="form-group"><label class="form-label">Admin Username *</label><input class="form-input" id="sa-new-admin-user" placeholder="admin"></div>
+                <div class="form-group"><label class="form-label">Admin Password *</label><input class="form-input" type="password" id="sa-new-admin-pass" placeholder="••••••••"></div>
+                <div class="form-group"><label class="form-label">Admin Display Name</label><input class="form-input" id="sa-new-admin-name" placeholder="Shop Manager"></div>
+              </div>
+
+              <div class="form-section-title" style="margin-top:24px">Quick Setup</div>
+              <div class="form-group">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px">
+                  <input type="checkbox" id="sa-new-load-template" checked> Load sample products for selected business type
+                </label>
+              </div>
+
+              <div style="margin-top:24px; display:flex; gap:10px">
+                <button class="btn btn-primary" onclick="saCreateBusiness()" id="sa-create-btn">🚀 Create Business</button>
+                <button class="btn btn-secondary" onclick="saNav('sa-businesses')">Cancel</button>
+              </div>
+            </div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SA ACTIVITY LOGS -->
+      <div class="screen sa-screen" id="screen-sa-activity">
+        <div class="page">
+          <div class="page-header">
+            <div><div class="page-title sa-title">Platform Activity Log</div><div class="page-subtitle">All actions across the platform</div></div>
+            <div class="page-actions"><button class="btn btn-secondary btn-sm" onclick="saRenderActivity()">🔄 Refresh</button></div>
+          </div>
+          <div class="card">
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
+                <tbody id="sa-activity-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SA SUBSCRIPTION PLANS -->
+      <div class="screen sa-screen" id="screen-sa-plans">
+        <div class="page">
+          <div class="page-header">
+            <div><div class="page-title sa-title">Subscription Plans</div><div class="page-subtitle">Manage available plans for businesses</div></div>
+          </div>
+          <div class="sa-plans-grid" id="sa-plans-grid"></div>
+        </div>
+      </div>
+
+      <!-- SA PLATFORM SETTINGS -->
+      <div class="screen sa-screen" id="screen-sa-settings">
+        <div class="page">
+          <div class="page-header">
+            <div><div class="page-title sa-title">Platform Settings</div><div class="page-subtitle">Configure platform-level settings</div></div>
+          </div>
+          <div class="dash-grid">
+            <div class="card"><div class="card-body">
+              <div class="form-section-title">Super Admin Account</div>
+              <div class="form-grid">
+                <div class="form-group"><label class="form-label">Current Password</label><input class="form-input" type="password" id="sa-set-current-pw"></div>
+                <div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" id="sa-set-new-pw"></div>
+              </div>
+              <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="saChangePassword()">Update Password</button>
+            </div></div>
+            <div class="card"><div class="card-body">
+              <div class="form-section-title">Platform Info</div>
+              <div style="font-size:13px; color:var(--text-secondary); line-height:1.8">
+                <div><strong>Platform:</strong> NexPOS SaaS</div>
+                <div><strong>Version:</strong> 2.0.0</div>
+                <div><strong>Database:</strong> Supabase (PostgreSQL)</div>
+                <div id="sa-platform-info"></div>
+              </div>
+            </div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SA BUSINESS DETAIL (when viewing a specific business) -->
+      <div class="screen sa-screen" id="screen-sa-business-detail">
+        <div class="page">
+          <div class="page-header">
+            <div><div class="page-title sa-title" id="sa-detail-title">Business Details</div><div class="page-subtitle" id="sa-detail-subtitle">View and manage business</div></div>
+            <div class="page-actions">
+              <button class="btn btn-primary btn-sm" onclick="saImpersonateBusiness()" id="sa-imp-btn">👁️ Enter Business POS</button>
+              <button class="btn btn-secondary btn-sm" onclick="saNav('sa-businesses')">← Back</button>
+            </div>
+          </div>
+          <div class="summary-grid" id="sa-detail-stats"></div>
+          <div class="dash-grid" style="margin-top:20px">
+            <div class="card"><div class="card-body">
+              <div class="section-header">Business Info</div>
+              <div id="sa-detail-info"></div>
+              <div style="margin-top:16px; display:flex; gap:8px">
+                <button class="btn btn-secondary btn-sm" onclick="saEditBusiness()">✏️ Edit</button>
+                <button class="btn btn-secondary btn-sm" id="sa-toggle-status-btn" onclick="saToggleStatus()">⏸ Deactivate</button>
+                <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="saDeleteBusiness()">🗑️ Delete</button>
+              </div>
+            </div></div>
+            <div class="card"><div class="card-body">
+              <div class="section-header">Staff Members</div>
+              <div id="sa-detail-users"></div>
+            </div></div>
+          </div>
+          <div class="card" style="margin-top:20px"><div class="card-body">
+            <div class="section-header">Recent Activity</div>
+            <div id="sa-detail-activity"></div>
+          </div></div>
+        </div>
+      </div>
+
+      <!-- SA AI INTEGRATION & INTELLIGENCE -->
+      <div class="screen sa-screen" id="screen-sa-ai">
+        <div class="page">
+          <div class="page-header">
+            <div>
+              <div class="page-title sa-title">🤖 AI Integration & Intelligence Hub</div>
+              <div class="page-subtitle">Centralized AI engine configuration, API keys, and cross-business intelligence</div>
+            </div>
+            <div class="page-actions">
+              <span class="status-pill online" id="sa-ai-status-pill"><span class="status-dot"></span> <span id="sa-ai-status-text">AI Configured</span></span>
+            </div>
+          </div>
+
+          <!-- AI Status Summary Grid -->
+          <div class="summary-grid" id="sa-ai-summary-grid">
+            <div class="sa-stat-card stat-businesses">
+              <div class="sa-stat-value" id="sa-ai-active-provider">Gemini</div>
+              <div class="sa-stat-label">Active Provider</div>
+              <div class="sa-stat-sub" id="sa-ai-active-model">gemini-1.5-flash</div>
+            </div>
+            <div class="sa-stat-card stat-users">
+              <div class="sa-stat-value" id="sa-ai-plan-access">Pro +</div>
+              <div class="sa-stat-label">Plan Requirement</div>
+              <div class="sa-stat-sub" id="sa-ai-plan-sub">Available to Pro & Enterprise</div>
+            </div>
+            <div class="sa-stat-card stat-sales">
+              <div class="sa-stat-value" id="sa-ai-key-status">Key Set</div>
+              <div class="sa-stat-label">API Key Status</div>
+              <div class="sa-stat-sub" id="sa-ai-key-sub">Platform Managed</div>
+            </div>
+            <div class="sa-stat-card stat-revenue">
+              <div class="sa-stat-value" id="sa-ai-engine-state">Active</div>
+              <div class="sa-stat-label">Global AI Status</div>
+              <div class="sa-stat-sub">Businesses consume seamlessly</div>
+            </div>
+          </div>
+
+          <!-- Configuration and Live Intelligence Panels -->
+          <div class="dash-grid" style="margin-top:24px">
+            <!-- Left Card: Platform AI Engine Configuration -->
+            <div class="card">
+              <div class="card-body">
+                <div class="form-section-title">🔑 Platform AI API Configuration</div>
+                <div class="page-subtitle" style="margin-bottom:16px">
+                  Businesses never need their own API keys. Configure the central AI engine here.
+                </div>
+
+                <div class="form-grid">
+                  <div class="form-group" style="grid-column: span 2">
+                    <label class="form-label">AI Engine Provider</label>
+                    <select class="form-input" id="sa-ai-provider" onchange="saOnAiProviderChange()">
+                      <option value="google">Google Gemini (Recommended — Ultra-fast, generous free tier)</option>
+                      <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
+                      <option value="anthropic">Anthropic Claude (Claude 3.5 Sonnet)</option>
+                      <option value="openrouter">OpenRouter (Multi-model Gateway)</option>
+                    </select>
+                  </div>
+
+                  <div class="form-group" style="grid-column: span 2">
+                    <label class="form-label">Platform API Key *</label>
+                    <div style="display:flex; gap:8px">
+                      <input class="form-input" type="password" id="sa-ai-api-key" placeholder="Enter provider API key (e.g. AIzaSy... or sk-...)">
+                      <button class="btn btn-secondary btn-sm" type="button" onclick="saToggleApiKeyVisibility()" id="sa-ai-key-toggle-btn" title="Show/Hide">👁️</button>
+                    </div>
+                    <div style="font-size:11px; color:var(--text-muted); margin-top:4px">
+                      Stored securely in platform settings. Used for report generation & platform intelligence.
+                    </div>
+                  </div>
+
+                  <div class="form-group">
+                    <label class="form-label">Model Identifier</label>
+                    <input class="form-input" id="sa-ai-model" value="gemini-1.5-flash" placeholder="e.g. gemini-1.5-flash">
+                  </div>
+
+                  <div class="form-group">
+                    <label class="form-label">Tenant Plan Requirement</label>
+                    <select class="form-input" id="sa-ai-plan-req">
+                      <option value="all">All Plans (Including Free)</option>
+                      <option value="starter">Starter, Pro & Enterprise</option>
+                      <option value="pro" selected>Pro & Enterprise Only</option>
+                      <option value="enterprise">Enterprise Only</option>
+                    </select>
+                  </div>
+
+                  <div class="form-group" style="grid-column: span 2">
+                    <label class="form-label" style="display:flex; align-items:center; gap:8px; cursor:pointer">
+                      <input type="checkbox" id="sa-ai-enabled" checked>
+                      <strong>Enable AI Features Platform-Wide</strong>
+                    </label>
+                    <div style="font-size:11px; color:var(--text-muted); margin-left:22px">
+                      When unchecked, AI features in business reports are temporarily disabled across all tenants.
+                    </div>
+                  </div>
+                </div>
+
+                <div style="margin-top:20px; display:flex; gap:10px; flex-wrap:wrap">
+                  <button class="btn btn-primary" onclick="saSaveAiSettings()" id="sa-ai-save-btn">💾 Save AI Configuration</button>
+                  <button class="btn btn-secondary" onclick="saTestAiConnection()" id="sa-ai-test-btn">⚡ Test AI Connection</button>
+                </div>
+
+                <div id="sa-ai-test-box" style="margin-top:16px; display:none; padding:12px; border-radius:8px; font-size:12px; line-height:1.5;"></div>
+              </div>
+            </div>
+
+            <!-- Right Card: Super Admin AI Cross-Business Intelligence -->
+            <div class="card">
+              <div class="card-body">
+                <div class="form-section-title">📊 Cross-Business AI Intelligence & Diagnostics</div>
+                <div class="page-subtitle" style="margin-bottom:16px">
+                  Run high-level AI analysis on any business or across all registered businesses on NexPOS.
+                </div>
+
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label class="form-label">Target Business Scope</label>
+                    <select class="form-input" id="sa-ai-biz-select">
+                      <option value="all">🌐 All Businesses (Platform Macro View)</option>
+                    </select>
+                  </div>
+
+                  <div class="form-group">
+                    <label class="form-label">Analysis Objective</label>
+                    <select class="form-input" id="sa-ai-analysis-type">
+                      <option value="health">🏥 360° Business Health & Growth Audit</option>
+                      <option value="revenue">📈 Sales Velocity & Revenue Forecast</option>
+                      <option value="inventory">📦 Stockout & Dead Stock Risk Detection</option>
+                      <option value="risk">⚠️ Churn & Inactivity Warning</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style="margin-top:16px">
+                  <button class="btn btn-primary btn-full" onclick="saRunPlatformAiAnalysis()" id="sa-ai-run-btn">
+                    🚀 Run Platform AI Diagnosis
+                  </button>
+                </div>
+
+                <div id="sa-ai-report-loading" style="display:none; text-align:center; padding:28px 0">
+                  <div class="loading-spinner" style="margin:0 auto 12px"></div>
+                  <div class="fw-600" style="color:var(--brand)">AI Analyst is examining business records...</div>
+                  <div style="font-size:12px; color:var(--text-muted); margin-top:4px">Querying cross-tenant sales, inventory, and payroll metrics</div>
+                </div>
+
+                <div id="sa-ai-report-output" style="margin-top:18px; display:none; background:var(--surface-2); border-radius:10px; padding:16px; border:1px solid var(--border)">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+                    <span class="badge badge-active" id="sa-ai-report-badge">AI Diagnostic Report</span>
+                    <button class="btn btn-ghost btn-sm" onclick="saCopyAiReport()">📋 Copy</button>
+                  </div>
+                  <div id="sa-ai-report-text" style="font-size:13px; line-height:1.6; color:var(--text-primary); white-space:pre-wrap"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ END SUPER ADMIN SCREENS ═══ -->
 
       <!-- POS SCREEN -->
       <div class="screen active" id="screen-pos">
