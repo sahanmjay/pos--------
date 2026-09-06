@@ -5,6 +5,15 @@ let currentSettings = {};
 let posCategory = '';
 let currentReceiptData = null;
 
+function runInBackground(label, task) {
+  Promise.resolve()
+    .then(task)
+    .catch(err => {
+      console.error(`${label} failed:`, err);
+      showToast('error', `${label} failed. Please refresh and check data.`);
+    });
+}
+
 // --- INIT & UTILS ---
 const IS_ELECTRON = typeof window.electronDB !== 'undefined';
 
@@ -146,7 +155,7 @@ function createEmergencyAdminUser() {
     id: 0,
     username: 'admin',
     password: '231',
-    display_name: 'Administrator (Offline)',
+    display_name: 'Administrator',
     role: 'Admin',
     organization_id: '00000000-0000-0000-0000-000000000001'
   };
@@ -164,7 +173,7 @@ async function doLogin() {
     console.warn('Logging in via built-in local admin fallback.');
     err.style.display = 'none';
     await completeLogin(createEmergencyAdminUser(), { audit: false });
-    showToast('info', 'Logged in with built-in local admin');
+    showToast('success', 'Logged in as Administrator');
     return;
   }
   
@@ -328,6 +337,7 @@ const SCREENS = {
   'products': 'Inventory / Products',
   'categories': 'Inventory / Categories',
   'sales-history': 'Sales / History',
+  'customers': 'Sales / Customers',
   'attendance': 'HR / Attendance',
   'advances': 'HR / Advances',
   'payroll': 'HR / Payroll',
@@ -375,7 +385,7 @@ function nav(screenId) {
   // Close mobile cart when navigating away from POS
   if(screenId !== 'pos') document.getElementById('screen-pos').querySelector('.pos-cart-wrap')?.classList.remove('active');
   
-  const parts = SCREENS[screenId].split(' / ');
+  const parts = (SCREENS[screenId] || screenId).split(' / ');
   let bc = `<span>NexPOS</span>`;
   parts.forEach((p, i) => {
     bc += `<span class="sep">/</span><span class="${i===parts.length-1?'current':''}">${p}</span>`;
@@ -395,6 +405,7 @@ function nav(screenId) {
   if(screenId === 'payroll') renderPayroll();
   if(screenId === 'ai-reports') renderAIReports();
   if(screenId === 'settings') loadSettingsForm();
+  collapseSidebarAfterNav();
 }
 
 window.toggleSalesTab = (tab) => {
@@ -665,19 +676,33 @@ window.payNow = async (paymentType) => {
   }));
 
   try {
+    const checkoutCart = cart.map(item => ({ ...item }));
     const saleId = await db.sales.add(sale);
     await db.sale_items.bulkAdd(saleItems.map(si => ({...si, sale_id: saleId})));
-    
-    // Update local stock
-    for(let item of cart) {
-      const p = await db.products.get(item.product_id);
-      if(p) await db.products.update(p.id, { stock_qty: p.stock_qty - item.quantity });
-    }
-    
-    if(paymentType === 'credit') {
-      const c = await db.customers.get(cartCustomerId);
-      await db.customers.update(c.id, { outstanding_balance: c.outstanding_balance + total });
-    }
+
+    // Finalize immediately after the sale record and receipt items are saved.
+    // Slow follow-up updates run in the background so the cashier sees the
+    // receipt without waiting for one network request per product/customer.
+    cart = []; manualDiscount = 0; cartCustomerId = 1;
+    renderCart(); updateCartCustomer();
+    showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?parseFloat(total+change):total);
+
+    runInBackground('Post-sale database update', async () => {
+      await Promise.all(checkoutCart.map(async item => {
+        const p = await db.products.get(item.product_id);
+        if(p) await db.products.update(p.id, { stock_qty: p.stock_qty - item.quantity });
+      }));
+
+      if(paymentType === 'credit') {
+        const c = await db.customers.get(sale.customer_id);
+        if(c) await db.customers.update(c.id, { outstanding_balance: (c.outstanding_balance || 0) + total });
+      }
+
+      await Promise.all([
+        renderPosGrid(),
+        logSecurityEvent('SALE_COMPLETED', { sale_id: saleId, total: total, type: paymentType })
+      ]);
+    });
 
     // Try to sync with Supabase (Background)
     if(!navigator.onLine) {
@@ -686,13 +711,6 @@ window.payNow = async (paymentType) => {
       localStorage.setItem('nexpos_offline_queue', JSON.stringify(queue));
       showToast('info', 'Sale saved offline. Will sync when online.');
     }
-
-    // Finalize
-    cart = []; manualDiscount = 0; cartCustomerId = 1;
-    renderCart(); updateCartCustomer(); renderPosGrid();
-    showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?parseFloat(total+change):total);
-    
-    await logSecurityEvent('SALE_COMPLETED', { sale_id: saleId, total: total, type: paymentType });
 
     // Close mobile cart
     document.querySelector('.pos-cart-wrap')?.classList.remove('active');
@@ -1073,17 +1091,29 @@ window.viewSaleDetails = async (id) => {
 
 // --- CUSTOMERS ---
 window.renderCustomersTable = async () => {
-  let custs = await db.customers.toArray();
+  const tbody = document.getElementById('customers-tbody');
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">Loading customers...</td></tr>';
+
+  let [custs, sales] = await Promise.all([
+    db.customers.toArray(),
+    db.sales.toArray()
+  ]);
+
+  const purchasesByCustomer = sales.reduce((map, sale) => {
+    const customerId = sale.customer_id;
+    if(customerId) map[customerId] = (map[customerId] || 0) + (Number(sale.total_amount) || 0);
+    return map;
+  }, {});
+
   const term = document.getElementById('customer-search').value.toLowerCase();
-  if(term) custs = custs.filter(c => c.name.toLowerCase().includes(term) || c.phone.includes(term));
+  if(term) custs = custs.filter(c => (c.name || '').toLowerCase().includes(term) || (c.phone || '').includes(term));
+
+  custs = custs.map(c => ({
+    ...c,
+    total_purchases: purchasesByCustomer[c.id] || 0
+  }));
   
-  // Calculate total purchases per customer (lazy load for MVP)
-  for(let c of custs) {
-    const s = await db.sales.where('customer_id').equals(c.id).toArray();
-    c.total_purchases = s.reduce((sum, x)=>sum+x.total_amount, 0);
-  }
-  
-  document.getElementById('customers-tbody').innerHTML = custs.map(c => `
+  tbody.innerHTML = custs.map(c => `
     <tr>
       <td class="fw-600">${c.name}</td>
       <td>${c.phone||'-'}</td>
@@ -2693,6 +2723,19 @@ window.toggleMobileCart = () => {
   document.getElementById('pos-cart-wrap').classList.toggle('active');
 };
 
+window.toggleSidebarReveal = (force) => {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  const shouldReveal = typeof force === 'boolean' ? force : !sidebar.classList.contains('revealed');
+  sidebar.classList.toggle('revealed', shouldReveal);
+};
+
+function collapseSidebarAfterNav() {
+  if (!window.matchMedia('(min-width: 641px) and (max-width: 1180px)').matches) return;
+  document.getElementById('sidebar')?.classList.remove('revealed');
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+}
+
 window.toggleMobileMenu = () => {
   const html = `
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:10px">
@@ -2727,71 +2770,202 @@ renderCart = async () => {
 
 // Barcode Scanning
 let codeReader = null;
+let nativeBarcodeLoop = null;
 let scannerTargetInputId = null;
+
+const BARCODE_FORMATS = [
+  'aztec', 'codabar', 'code_39', 'code_93', 'code_128', 'data_matrix',
+  'ean_8', 'ean_13', 'itf', 'pdf417', 'qr_code', 'upc_a', 'upc_e'
+];
 
 window.openBarcodeScannerForInput = (inputId) => {
   scannerTargetInputId = inputId;
   openBarcodeScanner();
 };
 
+function setScannerStatus(message) {
+  const status = document.getElementById('scanner-status');
+  if (status) status.textContent = message;
+}
+
+function isCameraSecureContext() {
+  return window.isSecureContext || ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+}
+
+async function selectBackCameraId() {
+  if (!navigator.mediaDevices?.enumerateDevices) return null;
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cameras = devices.filter(device => device.kind === 'videoinput');
+  const backCamera = cameras.find(camera => /back|rear|environment/i.test(camera.label));
+  return backCamera?.deviceId || null;
+}
+
+function buildScannerConstraints(deviceId = null) {
+  const video = {
+    facingMode: { ideal: 'environment' },
+    width: { ideal: 1920, min: 640 },
+    height: { ideal: 1080, min: 480 },
+    frameRate: { ideal: 30 },
+    advanced: [
+      { focusMode: 'continuous' },
+      { exposureMode: 'continuous' },
+      { zoom: 1.5 }
+    ]
+  };
+
+  if (deviceId) {
+    delete video.facingMode;
+    video.deviceId = { exact: deviceId };
+  }
+
+  return { video };
+}
+
+async function startNativeBarcodeDetector(videoElement, constraints) {
+  if (!('BarcodeDetector' in window)) return false;
+
+  const supportedFormats = await window.BarcodeDetector.getSupportedFormats?.().catch(() => []) || [];
+  const formats = BARCODE_FORMATS.filter(format => supportedFormats.includes(format));
+  if (!formats.length) return false;
+
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  videoElement.srcObject = stream;
+  videoElement.setAttribute('playsinline', 'true');
+  await videoElement.play();
+
+  const detector = new window.BarcodeDetector({ formats });
+  setScannerStatus('Align the barcode or Data Matrix inside the box');
+
+  const scan = async () => {
+    if (!videoElement.srcObject) return;
+    try {
+      const results = await detector.detect(videoElement);
+      if (results.length) {
+        onBarcodeScanned(results[0].rawValue);
+        return;
+      }
+    } catch (err) {
+      console.debug('Native barcode frame skipped:', err);
+    }
+    nativeBarcodeLoop = requestAnimationFrame(scan);
+  };
+
+  nativeBarcodeLoop = requestAnimationFrame(scan);
+  return true;
+}
+
+function getZXingLibrary() {
+  return window.ZXingBrowser || window.ZXing || window.ZXingLibrary;
+}
+
+function loadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    const loaded = document.querySelector(`script[src="${src}"][data-loaded="true"]`);
+    if (loaded) {
+      resolve();
+      return;
+    }
+
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+      script.remove();
+      reject(new Error(`Timed out loading ${src}`));
+    }, 8000);
+
+    script.src = src;
+    script.async = true;
+    script.onload = () => {
+      clearTimeout(timeout);
+      script.dataset.loaded = 'true';
+      resolve();
+    };
+    script.onerror = () => {
+      clearTimeout(timeout);
+      script.remove();
+      reject(new Error(`Failed to load ${src}`));
+    };
+
+    document.head.appendChild(script);
+  });
+}
+
+async function ensureZXingLibrary() {
+  if (getZXingLibrary()) return getZXingLibrary();
+
+  const scannerScripts = [
+    'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js',
+    'https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js'
+  ];
+
+  setScannerStatus('Loading scanner library…');
+  for (const src of scannerScripts) {
+    try {
+      await loadScriptOnce(src);
+      if (getZXingLibrary()) return getZXingLibrary();
+    } catch (err) {
+      console.warn('Scanner library fallback failed:', err);
+    }
+  }
+
+  throw new Error('Scanner library could not load. Check internet, disable content blockers, then try again.');
+}
+
+async function createZXingReader() {
+  const ZXingLib = await ensureZXingLibrary();
+  const ReaderClass = ZXingLib.BrowserMultiFormatReader || ZXingLib.BrowserMultiFormatCodeReader;
+  if (!ReaderClass) throw new Error('Scanner reader is unavailable. Reload the page.');
+
+  return new ReaderClass();
+}
+
 window.openBarcodeScanner = async () => {
   const container = document.getElementById('scanner-container');
   const videoElement = document.getElementById('scanner-video');
-  
+
   container.style.display = 'flex';
-  
+  setScannerStatus('Starting camera…');
+
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      throw new Error("HTTPS required for camera access");
+    if (!isCameraSecureContext() || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Camera needs HTTPS or localhost. Open the POS with https:// on phones/tablets.');
     }
 
-    // Try multiple possible global export names for ZXing Browser UMD
-    const ZXingLib = window.ZXingBrowser || window.ZXing || window.ZXingLibrary;
-    if (!ZXingLib) {
-      throw new Error("Scanner Library not loaded. Please check your internet connection.");
-    }
+    const deviceId = await selectBackCameraId();
+    const constraints = buildScannerConstraints(deviceId);
 
-    // Correct class name is usually BrowserMultiFormatReader in @zxing/browser
-    const ReaderClass = ZXingLib.BrowserMultiFormatReader || ZXingLib.BrowserMultiFormatCodeReader;
-    if (!ReaderClass) {
-      throw new Error("Could not find Scanner Reader class in library.");
-    }
+    if (await startNativeBarcodeDetector(videoElement, constraints)) return;
 
-    codeReader = new ReaderClass();
-    
-    const constraints = { 
-      video: { 
-        facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      } 
-    };
-
-    // decodeFromConstraints is the modern way to start scanning
-    await codeReader.decodeFromConstraints(constraints, videoElement, (result, err) => {
-      if (result) {
-        onBarcodeScanned(result.text);
-      }
-      // err is thrown for every frame that doesn't have a barcode, so we ignore most errors
+    codeReader = await createZXingReader();
+    setScannerStatus('Align the barcode or Data Matrix inside the box');
+    await codeReader.decodeFromConstraints(constraints, videoElement, (result) => {
+      if (result) onBarcodeScanned(result.text);
     });
-    
   } catch (err) {
-    console.error("Scanner Initialization Failure:", err);
-    let msg = err.message || 'Unknown Error';
-    if (err.name === 'NotAllowedError') msg = 'Camera access denied by user or browser.';
-    if (err.name === 'NotFoundError') msg = 'No suitable camera found.';
-    if (err.name === 'NotReadableError') msg = 'Camera hardware is busy or locked.';
-    
+    console.error('Scanner Initialization Failure:', err);
+    let msg = err.message || 'Unknown error';
+    if (err.name === 'NotAllowedError') msg = 'Camera permission is blocked. Allow camera permission in browser/site settings.';
+    if (err.name === 'NotFoundError') msg = 'No back camera found on this device.';
+    if (err.name === 'NotReadableError') msg = 'Camera is busy. Close other camera apps and try again.';
+
     showToast('error', `Scanner: ${msg}`);
-    closeBarcodeScanner();
+    setScannerStatus(msg);
   }
 };
 
 window.closeBarcodeScanner = () => {
-  if(codeReader) {
-    document.getElementById('scanner-video').srcObject?.getTracks().forEach(track => track.stop());
-  }
+  if (nativeBarcodeLoop) cancelAnimationFrame(nativeBarcodeLoop);
+  nativeBarcodeLoop = null;
+
+  if (codeReader?.reset) codeReader.reset();
+  if (codeReader?.stopContinuousDecode) codeReader.stopContinuousDecode();
+  codeReader = null;
+
+  const video = document.getElementById('scanner-video');
+  video.srcObject?.getTracks().forEach(track => track.stop());
+  video.srcObject = null;
+
   document.getElementById('scanner-container').style.display = 'none';
+  setScannerStatus('');
 };
 
 async function onBarcodeScanned(barcode) {

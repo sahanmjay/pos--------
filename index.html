@@ -101,6 +101,7 @@
         </div>
         <span class="sidebar-role-badge" id="sidebar-role-badge">Admin</span>
       </div>
+      <button class="sidebar-reveal-btn" type="button" onclick="toggleSidebarReveal()" aria-label="Show or hide sidebar menu" title="Show menu">☰</button>
       <div class="sidebar-section" id="nav-pos">
         <div class="nav-item active" onclick="nav('pos')"><span class="nav-icon">🛒</span> Point of Sale</div>
         <div class="nav-item" onclick="nav('dashboard')"><span class="nav-icon">⊞</span> Dashboard</div>
@@ -603,9 +604,11 @@
   </button>
 
   <div id="scanner-container">
-    <video id="scanner-video"></video>
+    <video id="scanner-video" playsinline muted></video>
     <div class="scanner-reticle"></div>
-    <button class="btn btn-secondary btn-sm" onclick="closeBarcodeScanner()" style="position:absolute;bottom:30px;left:50%;transform:translateX(-50%);z-index:2001">Cancel Scan</button>
+    <div class="scanner-help">Scan barcode, QR, or Data Matrix</div>
+    <div class="scanner-status" id="scanner-status"></div>
+    <button class="btn btn-secondary btn-sm scanner-cancel" onclick="closeBarcodeScanner()">Cancel Scan</button>
   </div>
 </div><!-- /app -->
 
@@ -640,7 +643,7 @@
 
 <div class="toast-container" id="toast-container"></div>
 
-<script src="https://unpkg.com/@zxing/browser@latest/umd/index.min.js"></script>
+<script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js';document.head.appendChild(s);"></script>
 <script src="db.js"></script>
 <script src="app.js"></script>
 </body>
