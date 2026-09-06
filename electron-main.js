@@ -17,92 +17,56 @@ if (!gotLock) {
 }
 
 let mainWindow = null;
-let serverProcess = null;
-let tray = null;
+let serverInstance = null;
 let serverPort = 3000;
 
-// ─── Resolve paths for packaged vs development ───
-function getAppPath() {
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'app');
-  }
-  return __dirname;
-}
-
-// ─── Start the embedded HTTP server ───
+// ─── Start the embedded HTTP server in-process ───
 function startEmbeddedServer() {
   return new Promise((resolve, reject) => {
-    const appPath = getAppPath();
+    try {
+      const fs = require('fs');
+      // Set user data directory for SQLite / JSON data in packaged app
+      const dataDir = path.join(app.getPath('userData'), 'data');
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+      process.env.NEXPOS_DATA_DIR = dataDir;
 
-    // We need to set __dirname context for server.js requires
-    // Use a child_process fork so server.js runs with the correct cwd
-    const { fork } = require('child_process');
-    const serverScript = path.join(appPath, 'server.js');
+      // Import server.js directly (runs in Electron's embedded Node runtime)
+      const { startServer } = require('./server.js');
 
-    // Check if server.js exists
-    const fs = require('fs');
-    if (!fs.existsSync(serverScript)) {
-      console.error('server.js not found at:', serverScript);
-      reject(new Error('server.js not found'));
-      return;
+      // Check if server is already running (e.g. dev server already active)
+      const testReq = http.get(`http://localhost:${serverPort}/`, (res) => {
+        console.log(`Server already running on port ${serverPort}`);
+        resolve(serverPort);
+      });
+
+      testReq.on('error', () => {
+        // Start server in-process
+        try {
+          const srv = startServer(serverPort, (actualPort) => {
+            serverInstance = srv;
+            serverPort = actualPort;
+            console.log(`Embedded server running directly on port ${actualPort}`);
+            resolve(actualPort);
+          });
+        } catch (err) {
+          console.error('Failed to start in-process server:', err);
+          reject(err);
+        }
+      });
+
+      testReq.setTimeout(400, () => testReq.destroy());
+    } catch (err) {
+      console.error('Server initialization error:', err);
+      reject(err);
     }
-
-    // Try to detect if port is already in use (dev mode with server already running)
-    const testReq = http.get(`http://localhost:${serverPort}/`, (res) => {
-      // Server is already running (likely dev mode)
-      console.log(`Server already running on port ${serverPort}`);
-      resolve(serverPort);
-    });
-
-    testReq.on('error', () => {
-      // Port is free, start the server
-      serverProcess = fork(serverScript, [], {
-        cwd: appPath,
-        env: { ...process.env, PORT: String(serverPort), ELECTRON: '1' },
-        stdio: ['pipe', 'pipe', 'pipe', 'ipc']
-      });
-
-      serverProcess.stdout.on('data', (data) => {
-        console.log(`[Server] ${data.toString().trim()}`);
-      });
-
-      serverProcess.stderr.on('data', (data) => {
-        console.error(`[Server Error] ${data.toString().trim()}`);
-      });
-
-      serverProcess.on('error', (err) => {
-        console.error('Failed to start server:', err);
-        reject(err);
-      });
-
-      // Wait for server to be ready
-      let attempts = 0;
-      const maxAttempts = 30; // 3 seconds max
-      const checkReady = setInterval(() => {
-        attempts++;
-        const req = http.get(`http://localhost:${serverPort}/`, (res) => {
-          clearInterval(checkReady);
-          console.log(`Embedded server ready on port ${serverPort}`);
-          resolve(serverPort);
-        });
-        req.on('error', () => {
-          if (attempts >= maxAttempts) {
-            clearInterval(checkReady);
-            // Still try to proceed, server may need more time
-            resolve(serverPort);
-          }
-        });
-        req.setTimeout(200, () => req.destroy());
-      }, 100);
-    });
-
-    testReq.setTimeout(500, () => testReq.destroy());
   });
 }
 
 // ─── Create the main application window ───
 function createWindow(port) {
-  const iconPath = path.join(getAppPath(), 'favicon.ico');
+  const iconPath = path.join(__dirname, 'favicon.ico');
 
   mainWindow = new BrowserWindow({
     width: 1366,
@@ -374,17 +338,16 @@ app.on('second-instance', () => {
 
 // Quit gracefully
 app.on('window-all-closed', () => {
-  // Kill embedded server
-  if (serverProcess) {
-    serverProcess.kill();
-    serverProcess = null;
+  if (serverInstance) {
+    serverInstance.close();
+    serverInstance = null;
   }
   app.quit();
 });
 
 app.on('before-quit', () => {
-  if (serverProcess) {
-    serverProcess.kill();
-    serverProcess = null;
+  if (serverInstance) {
+    serverInstance.close();
+    serverInstance = null;
   }
 });

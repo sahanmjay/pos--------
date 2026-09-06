@@ -109,7 +109,9 @@ function startServer(port) {
     let filePath = path.join(__dirname, relativePath);
 
     // Prevent directory traversal
-    if (!filePath.startsWith(__dirname)) {
+    const normalizedBase = path.resolve(__dirname);
+    const normalizedTarget = path.resolve(filePath);
+    if (!normalizedTarget.startsWith(normalizedBase)) {
       res.writeHead(403, { 'Content-Type': 'text/plain' });
       res.end('Forbidden');
       return;
@@ -137,7 +139,7 @@ function startServer(port) {
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.log(`Port ${port} is in use, trying port ${port + 1}...`);
-      startServer(port + 1);
+      startServer(port + 1, callback);
     } else {
       console.error('Server error:', err);
     }
@@ -149,7 +151,14 @@ function startServer(port) {
     console.log(`   ➜ Local:   http://localhost:${port}/`);
     console.log(`   ➜ RAMIS:   http://localhost:${port}/api/ramis/status`);
     console.log(`==============================================\n`);
+    if (callback) callback(port, server);
   });
+
+  return server;
 }
 
-startServer(DEFAULT_PORT);
+if (require.main === module) {
+  startServer(DEFAULT_PORT);
+}
+
+module.exports = { startServer, DEFAULT_PORT };

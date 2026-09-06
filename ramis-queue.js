@@ -13,7 +13,7 @@ const path = require('path');
 const RamisService = require('./ramis-service');
 
 // Store journal in a clean hidden file or data folder to avoid root clutter
-const JOURNAL_DIR = path.join(__dirname, '.data');
+const JOURNAL_DIR = process.env.NEXPOS_DATA_DIR || path.join(__dirname, '.data');
 const JOURNAL_PATH = path.join(JOURNAL_DIR, 'ramis_queue.json');
 
 class EmbeddedRamisQueue {

@@ -15,7 +15,8 @@ const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
 
-const CONFIG_FILE = path.join(__dirname, '.data', 'ramis_config.json');
+const DATA_DIR = process.env.NEXPOS_DATA_DIR || path.join(__dirname, '.data');
+const CONFIG_FILE = path.join(DATA_DIR, 'ramis_config.json');
 
 class RamisService {
   constructor(config = {}) {
