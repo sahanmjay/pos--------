@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-09-09T05:03:25.222Z",
+  "updatedAt": "2026-09-09T06:49:28.934Z",
   "queue": [],
   "completed": [
     {
@@ -87,6 +87,50 @@
           "vatCharged": 0,
           "totalInvoiceValue": 42500,
           "submissionTimestamp": "2026-09-09T05:03:24.952Z"
+        }
+      }
+    },
+    {
+      "id": "job_1788936568642_9uowd",
+      "data": {
+        "taxInvoiceNo": "INV-000063",
+        "invoiceDate": "2026-09-09",
+        "periodCode": "2610",
+        "supplierTin": "102938475",
+        "purchaserTin": null,
+        "purchaserName": null,
+        "valueOfSupply": 1100,
+        "vatAmount": 0,
+        "totalAmount": 1100,
+        "scheduleType": "SCHEDULE_1",
+        "branchCode": "001",
+        "paymentType": "cash"
+      },
+      "attemptsMade": 1,
+      "maxAttempts": 5,
+      "nextAttemptAt": 1788936568644,
+      "status": "completed",
+      "enqueuedAt": "2026-09-09T06:49:28.644Z",
+      "lastError": null,
+      "completedAt": "2026-09-09T06:49:28.934Z",
+      "result": {
+        "success": true,
+        "ramisReference": "RAMIS-S1-1788936568932-6651",
+        "status": "ACCEPTED_BY_MSMQ",
+        "message": "Invoice successfully received by IRD RAMIS gateway and queued for Schedule 1 processing.",
+        "timestamp": "2026-09-09T06:49:28.934Z",
+        "payload": {
+          "scheduleType": "SCHEDULE_1_OUTPUT_VAT",
+          "taxInvoiceNumber": "INV-000063",
+          "invoiceDate": "2026-09-09",
+          "periodCode": "2610",
+          "supplierTIN": "102938475",
+          "purchaserTIN": null,
+          "purchaserName": null,
+          "taxableSupplyValue": 1100,
+          "vatCharged": 0,
+          "totalInvoiceValue": 1100,
+          "submissionTimestamp": "2026-09-09T06:49:28.666Z"
         }
       }
     }

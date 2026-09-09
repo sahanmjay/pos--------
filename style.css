@@ -1544,6 +1544,39 @@ body {
   gap: 6px;
   margin-top: 4px;
 }
+.table-opt-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1;
+  transition: all var(--transition);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.table-opt-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+.table-manage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  transition: background var(--transition);
+}
+.table-manage-row:hover {
+  background: var(--surface-2);
+}
+.table-manage-row:last-child {
+  border-bottom: none;
+}
 
 /* Configured table badge in Settings */
 .table-config-pill {

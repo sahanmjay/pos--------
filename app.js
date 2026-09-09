@@ -6036,9 +6036,19 @@ window.renderTablesScreen = () => {
             <span>${isOccupied ? '🍽️' : '🪑'}</span>
             <span>${t.name}</span>
           </div>
-          <span class="table-status-pill ${isOccupied ? 'table-status-occupied' : 'table-status-vacant'}">
-            ${isOccupied ? 'Occupied' : 'Vacant'}
-          </span>
+          <div style="display:flex; align-items:center; gap:6px">
+            <span class="table-status-pill ${isOccupied ? 'table-status-occupied' : 'table-status-vacant'}">
+              ${isOccupied ? 'Occupied' : 'Vacant'}
+            </span>
+            <button type="button" class="table-opt-btn" onclick="event.stopPropagation(); openEditTableModal('${t.id}')" title="Edit Table details (Name & Seats)">
+              <i class="fa-solid fa-pen"></i>
+            </button>
+            ${!isOccupied ? `
+              <button type="button" class="table-opt-btn" onclick="event.stopPropagation(); deleteTable('${t.id}')" title="Remove Table from floor" style="color:var(--danger)">
+                <i class="fa-regular fa-trash-can"></i>
+              </button>
+            ` : ''}
+          </div>
         </div>
         <div class="table-body-info">
           <div class="table-seats"><i class="fa-solid fa-users"></i> ${t.seats} Guest Seats</div>
@@ -6059,9 +6069,18 @@ window.renderTablesScreen = () => {
             <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); startOrderAtTable('${t.id}')" title="Add items to table">
               + Items
             </button>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openEditTableModal('${t.id}')" title="Manage Table">
+              <i class="fa-solid fa-sliders"></i>
+            </button>
           ` : `
-            <button class="btn btn-secondary btn-full btn-sm" onclick="event.stopPropagation(); startOrderAtTable('${t.id}')">
+            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); startOrderAtTable('${t.id}')" style="flex:1">
               <i class="fa-solid fa-plus"></i> Start Order
+            </button>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openEditTableModal('${t.id}')" title="Edit Table Details">
+              <i class="fa-solid fa-sliders"></i>
+            </button>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); deleteTable('${t.id}')" title="Remove Table" style="color:var(--danger)">
+              <i class="fa-regular fa-trash-can"></i>
             </button>
           `}
         </div>
@@ -6200,6 +6219,164 @@ window.saveNewTable = async () => {
   renderTablesScreen();
   updateDiningTableUI();
   showToast('success', `Added "${name}" with ${seats} seats.`);
+};
+
+window.openEditTableModal = (tableId) => {
+  const t = getTableObj(tableId);
+  if (!t) return showToast('error', 'Table not found');
+  const ord = activeTableOrders[tableId];
+  const isOccupied = ord && ord.items && ord.items.length > 0;
+
+  const html = `
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:span 2">
+        <label class="form-label">Table Name *</label>
+        <input class="form-input" id="edit-tbl-name" value="${t.name}" placeholder="e.g. Table 1, VIP 2" autocomplete="off">
+      </div>
+      <div class="form-group" style="grid-column:span 2">
+        <label class="form-label">Guest Seating Capacity</label>
+        <input class="form-input" id="edit-tbl-seats" type="number" value="${t.seats || 4}" min="1" max="50">
+      </div>
+      ${isOccupied ? `
+        <div style="grid-column:span 2; padding:10px 12px; background:rgba(245,158,11,0.1); border-radius:8px; border:1px solid #fde68a; font-size:12px; color:#92400e">
+          ⚠️ <strong>Table Currently Occupied:</strong> Active guest order in progress. You can edit the name or seats, but cannot remove this table until the bill is settled or cleared.
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  const footerButtons = `
+    <div style="display:flex; justify-content:space-between; width:100%; align-items:center; flex-wrap:wrap; gap:8px">
+      <div>
+        ${!isOccupied ? `
+          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteTable('${t.id}')">
+            <i class="fa-regular fa-trash-can"></i> Remove Table
+          </button>
+        ` : `
+          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="clearTableOrder('${t.id}')">
+            <i class="fa-solid fa-xmark"></i> Clear Order
+          </button>
+        `}
+      </div>
+      <div style="display:flex; gap:8px">
+        <button class="btn btn-secondary btn-sm" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="saveEditTable('${t.id}')"><i class="fa-solid fa-check"></i> Save Changes</button>
+      </div>
+    </div>
+  `;
+
+  openModal(`Manage Table — ${t.name}`, html, footerButtons);
+};
+
+window.saveEditTable = async (tableId) => {
+  const name = document.getElementById('edit-tbl-name')?.value.trim();
+  const seats = parseInt(document.getElementById('edit-tbl-seats')?.value) || 4;
+  if (!name) return showToast('error', 'Table name is required');
+
+  const t = restaurantTables.find(tbl => tbl.id === tableId);
+  if (!t) return showToast('error', 'Table not found');
+
+  t.name = name;
+  t.seats = seats;
+  currentSettings.tables_config = JSON.stringify(restaurantTables);
+
+  const existing = await db.settings.where('key').equals('tables_config').first();
+  if (existing) await db.settings.update(existing.id, { value: currentSettings.tables_config });
+  else await db.settings.add({ key: 'tables_config', value: currentSettings.tables_config });
+
+  closeModal();
+  renderTablesScreen();
+  updateDiningTableUI();
+  renderRestaurantSettingsUI();
+  showToast('success', `Updated table "${name}" (${seats} seats).`);
+};
+
+window.deleteTable = async (tableId) => {
+  const t = restaurantTables.find(tbl => tbl.id === tableId);
+  if (!t) return showToast('error', 'Table not found');
+
+  const ord = activeTableOrders[tableId];
+  if (ord && ord.items && ord.items.length > 0) {
+    return showToast('error', `Cannot remove "${t.name}" while guests are dining. Please settle or clear the order first.`);
+  }
+
+  if (!confirm(`Are you sure you want to remove table "${t.name}" from your floor plan?`)) {
+    return;
+  }
+
+  restaurantTables = restaurantTables.filter(tbl => tbl.id !== tableId);
+  currentSettings.tables_config = JSON.stringify(restaurantTables);
+
+  const existing = await db.settings.where('key').equals('tables_config').first();
+  if (existing) await db.settings.update(existing.id, { value: currentSettings.tables_config });
+  else await db.settings.add({ key: 'tables_config', value: currentSettings.tables_config });
+
+  if (currentTableId === tableId) {
+    currentTableId = restaurantTables.length > 0 ? restaurantTables[0].id : null;
+  }
+
+  closeModal();
+  renderTablesScreen();
+  updateDiningTableUI();
+  renderRestaurantSettingsUI();
+  showToast('info', `Table "${t.name}" removed from floor plan.`);
+};
+
+window.openTableManagerModal = () => {
+  const html = `
+    <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+      <div style="font-size:13px; color:var(--text-muted)">
+        Total Configured Tables: <strong style="color:var(--text-primary)">${restaurantTables.length}</strong>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openAddNewTableModal()"><i class="fa-solid fa-plus"></i> Add New Table</button>
+    </div>
+
+    <div style="max-height:380px; overflow-y:auto; border:1px solid var(--border); border-radius:10px; margin-bottom:14px">
+      ${restaurantTables.map(t => {
+        const ord = activeTableOrders[t.id];
+        const isOccupied = ord && ord.items && ord.items.length > 0;
+        return `
+          <div class="table-manage-row">
+            <div style="display:flex; align-items:center; gap:12px">
+              <span style="font-size:20px">${isOccupied ? '🍽️' : '🪑'}</span>
+              <div>
+                <div style="font-weight:700; font-size:14px; color:var(--text-primary)">${t.name}</div>
+                <div style="font-size:11.5px; color:var(--text-muted)">
+                  <i class="fa-solid fa-users"></i> ${t.seats} Seats · 
+                  <span class="${isOccupied ? 'badge badge-warning' : 'badge badge-completed'}" style="font-size:10px; padding:1px 6px">
+                    ${isOccupied ? 'Occupied' : 'Vacant & Ready'}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center">
+              <button class="btn btn-secondary btn-sm" onclick="openEditTableModal('${t.id}')" title="Edit table">
+                <i class="fa-solid fa-pen"></i> Edit
+              </button>
+              ${!isOccupied ? `
+                <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteTable('${t.id}')" title="Remove table">
+                  <i class="fa-regular fa-trash-can"></i>
+                </button>
+              ` : `
+                <button class="btn btn-ghost btn-sm" style="opacity:0.4; cursor:not-allowed" title="Table is currently occupied with diners">
+                  <i class="fa-regular fa-trash-can"></i>
+                </button>
+              `}
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+      <button class="btn btn-ghost btn-sm" onclick="seedDefaultTables()" title="Restore standard 10 tables">
+        <i class="fa-solid fa-rotate-left"></i> Reset to Default 10 Tables
+      </button>
+      <button class="btn btn-secondary btn-sm" onclick="closeModal()">Done</button>
+    </div>
+  `;
+
+  openModal('Dining Floor & Table Management', html, `<button class="btn btn-secondary btn-sm" onclick="closeModal()">Close</button>`);
 };
 
 // Restaurant Settings in screen-settings
