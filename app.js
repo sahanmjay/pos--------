@@ -857,6 +857,71 @@ function closeModal() {
   document.getElementById('modal-overlay').classList.remove('open');
 }
 
+// ─── APP DIALOGS ───
+// Native browser popups cannot be styled and feel disconnected from the POS UI.
+// These promise-based dialogs keep confirmation and input flows consistent.
+let activeAppDialog = null;
+
+function openAppDialog({ title, message, confirmLabel = 'Confirm', danger = false, input = false, inputValue = '', inputLabel = 'Your response' }) {
+  if (activeAppDialog) activeAppDialog.resolve(activeAppDialog.input ? null : false);
+
+  const overlay = document.getElementById('app-dialog-overlay');
+  const icon = document.getElementById('app-dialog-icon');
+  const titleEl = document.getElementById('app-dialog-title');
+  const messageEl = document.getElementById('app-dialog-message');
+  const field = document.getElementById('app-dialog-field');
+  const inputEl = document.getElementById('app-dialog-input');
+  const label = document.getElementById('app-dialog-label');
+  const confirm = document.getElementById('app-dialog-confirm');
+
+  titleEl.textContent = title;
+  messageEl.textContent = message;
+  label.textContent = inputLabel;
+  inputEl.value = inputValue;
+  field.classList.toggle('visible', input);
+  confirm.textContent = confirmLabel;
+  confirm.className = `btn ${danger ? 'btn-danger' : 'btn-primary'}`;
+  icon.classList.toggle('is-danger', danger);
+  icon.innerHTML = `<i class="fa-solid ${danger ? 'fa-triangle-exclamation' : input ? 'fa-pen-to-square' : 'fa-circle-question'}"></i>`;
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+
+  return new Promise(resolve => {
+    activeAppDialog = { resolve, input };
+    requestAnimationFrame(() => (input ? inputEl : confirm).focus());
+  });
+}
+
+function closeAppDialog(confirmed = false) {
+  if (!activeAppDialog) return;
+  const { resolve, input } = activeAppDialog;
+  activeAppDialog = null;
+  const overlay = document.getElementById('app-dialog-overlay');
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+  resolve(input ? (confirmed ? document.getElementById('app-dialog-input').value : null) : confirmed);
+}
+
+function showConfirmation(message, options = {}) {
+  const danger = options.danger ?? /delete|remove|clear|permanently/i.test(message);
+  return openAppDialog({ title: options.title || 'Please confirm', message, confirmLabel: options.confirmLabel || (danger ? 'Continue' : 'Confirm'), danger });
+}
+
+function showPrompt(message, inputValue = '', options = {}) {
+  return openAppDialog({ title: options.title || 'Enter details', message, confirmLabel: options.confirmLabel || 'Save', input: true, inputValue, inputLabel: options.inputLabel || 'Your response' });
+}
+
+document.getElementById('app-dialog-cancel').addEventListener('click', () => closeAppDialog(false));
+document.getElementById('app-dialog-confirm').addEventListener('click', () => closeAppDialog(true));
+document.getElementById('app-dialog-overlay').addEventListener('click', event => {
+  if (event.target === event.currentTarget) closeAppDialog(false);
+});
+document.addEventListener('keydown', event => {
+  if (!activeAppDialog) return;
+  if (event.key === 'Escape') { event.preventDefault(); closeAppDialog(false); }
+  if (event.key === 'Enter' && (activeAppDialog.input || event.target.id === 'app-dialog-confirm')) { event.preventDefault(); closeAppDialog(true); }
+});
+
 // --- POS SYSTEM ---
 async function renderPosCategories() {
   const cats = await db.categories.toArray();
@@ -1036,7 +1101,7 @@ function updateTotals() {
   return { subtotal, discount, tax, total };
 }
 
-window.clearCart = () => { if(confirm('Clear current cart?')) { cart=[]; manualDiscount=0; renderCart(); } };
+window.clearCart = async () => { if(await showConfirmation('Clear current cart?', { title: 'Clear cart', confirmLabel: 'Clear cart' })) { cart=[]; manualDiscount=0; renderCart(); } };
 
 async function updateCartCustomer() {
   const cust = await db.customers.get(cartCustomerId);
@@ -1071,14 +1136,14 @@ window.filterModalCustomers = () => {
 
 window.selectCartCustomer = (id) => { cartCustomerId = id; updateCartCustomer(); closeModal(); };
 
-window.applyDiscount = () => {
-  const d = prompt("Enter discount amount:", manualDiscount);
+window.applyDiscount = async () => {
+  const d = await showPrompt('Enter discount amount:', manualDiscount, { title: 'Apply discount', inputLabel: 'Discount amount', confirmLabel: 'Apply' });
   if(d !== null && !isNaN(d)) { manualDiscount = parseFloat(d); renderCart(); }
 };
 
 window.holdCart = async () => {
   if(cart.length === 0) return showToast('error', 'Cart is empty');
-  const name = prompt("Enter a name for this held cart:", "Cart " + new Date().toLocaleTimeString());
+  const name = await showPrompt('Enter a name for this held cart:', 'Cart ' + new Date().toLocaleTimeString(), { title: 'Hold cart', inputLabel: 'Cart name', confirmLabel: 'Hold cart' });
   if(!name) return;
   await db.held_carts.add({ name, items: cart, customer_id: cartCustomerId, date: new Date().toISOString() });
   cart = []; manualDiscount = 0; cartCustomerId = 1;
@@ -1096,7 +1161,7 @@ window.payNow = async (paymentType) => {
   if(paymentType === 'credit') {
     if(cartCustomerId === 1) return showToast('error', 'Please select a specific customer for credit sales.');
     const c = await db.customers.get(cartCustomerId);
-    if(!confirm(`Add ${formatMoney(total)} to ${c.name}'s credit balance?`)) return;
+    if(!await showConfirmation(`Add ${formatMoney(total)} to ${c.name}'s credit balance?`, { title: 'Confirm credit sale', confirmLabel: 'Add to credit' })) return;
     return executeCheckout('credit', total, total, 0, subtotal, discount, tax);
   }
   
@@ -1405,7 +1470,7 @@ window.confirmCashSale = async () => {
   
   if (tendered < total) {
     const diff = total - tendered;
-    if (!confirm(`Tendered amount (${formatMoney(tendered)}) is less than total bill (${formatMoney(total)}). Short by ${formatMoney(diff)}. Finalize anyway?`)) {
+    if (!await showConfirmation(`Tendered amount (${formatMoney(tendered)}) is less than total bill (${formatMoney(total)}). Short by ${formatMoney(diff)}. Finalize anyway?`, { title: 'Payment is short', confirmLabel: 'Finalize sale' })) {
       return;
     }
   }
@@ -1645,7 +1710,7 @@ window.shareReceiptPDF = async () => {
     }
   } catch(e) {}
 
-  const inputPhone = prompt("Enter WhatsApp number (e.g. 0771234567):", phone);
+  const inputPhone = await showPrompt('Enter WhatsApp number (e.g. 0771234567):', phone, { title: 'Share via WhatsApp', inputLabel: 'WhatsApp number', confirmLabel: 'Continue' });
   if (inputPhone === null) return; // User cancelled
 
   let finalPhone = inputPhone.replace(/\D/g, '');
@@ -1874,7 +1939,7 @@ window.saveProduct = async () => {
 };
 
 window.applyTemplate = async (type) => {
-  if(!confirm(`Warning: This will DELETE all existing products and categories, and load the ${type} template. Continue?`)) return;
+  if(!await showConfirmation(`This will delete all existing products and categories, then load the ${type} template.`, { title: 'Replace inventory?', confirmLabel: 'Load template', danger: true })) return;
   await loadBusinessTemplate(type);
   showToast('success', `${type} template applied`);
   nav('products');
@@ -2139,7 +2204,7 @@ window.deleteUser = async (id, name) => {
     return showToast('error', 'Only Business Administrators can remove staff accounts');
   }
   if (id === currentUser.id) return showToast('error', 'You cannot delete yourself!');
-  if (confirm(`Are you sure you want to remove ${name}? This will permanently delete their account.`)) {
+  if (await showConfirmation(`Are you sure you want to remove ${name}? This will permanently delete their account.`, { title: 'Remove staff account', confirmLabel: 'Remove account', danger: true })) {
     await db.users.delete(id);
     renderUsersTable();
     showToast('success', 'User removed successfully');
@@ -2390,7 +2455,7 @@ window.saveAdvance = async () => {
 };
 
 window.deleteAdvance = async (id) => {
-  if (confirm('Delete this advance request?')) {
+  if (await showConfirmation('Delete this advance request?', { title: 'Delete advance request', confirmLabel: 'Delete', danger: true })) {
     await db.advances.delete(id);
     renderAdvances();
   }
@@ -3758,7 +3823,7 @@ function renderBizTemplates() {
 }
 
 window.applyTemplate = async (name) => {
-  if (!confirm(`Apply ${name} template? This will add sample products to your inventory.`)) return;
+  if (!await showConfirmation(`Apply ${name} template? This will add sample products to your inventory.`, { title: 'Apply product template', confirmLabel: 'Apply template' })) return;
   
   const templates = {
     'Grocery': [
@@ -4235,7 +4300,7 @@ window.submitShiftClose = async (expected) => {
     return;
   }
   
-  if (!confirm('Are you sure you want to finalize and close this shift?')) return;
+  if (!await showConfirmation('Are you sure you want to finalize and close this shift?', { title: 'Close shift', confirmLabel: 'Close shift' })) return;
 
   const denominations = {};
   document.querySelectorAll('.denom-input').forEach(input => {
@@ -4735,7 +4800,7 @@ window.saToggleStatus = async () => {
 
   const newStatus = !org.is_active;
   const action = newStatus ? 'activate' : 'deactivate';
-  if (!confirm(`Are you sure you want to ${action} "${org.name}"? ${!newStatus ? 'Users will not be able to login.' : ''}`)) return;
+  if (!await showConfirmation(`Are you sure you want to ${action} "${org.name}"? ${!newStatus ? 'Users will not be able to login.' : ''}`, { title: `${action[0].toUpperCase() + action.slice(1)} business`, confirmLabel: action[0].toUpperCase() + action.slice(1) })) return;
 
   await saToggleOrgStatus(selectedOrgForDetail, newStatus);
   await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, newStatus ? 'BUSINESS_ACTIVATED' : 'BUSINESS_DEACTIVATED', selectedOrgForDetail, org.name, {});
@@ -4749,8 +4814,16 @@ window.saDeleteBusiness = async () => {
   const { data: org } = await supa.from('organizations').select('name').eq('id', selectedOrgForDetail).maybeSingle();
   if (!org) return;
 
-  if (!confirm(`⚠️ PERMANENTLY DELETE "${org.name}"?\n\nThis will remove:\n• All users\n• All products & categories\n• All sales history\n• All attendance & payroll data\n\nThis cannot be undone!`)) return;
-  if (!confirm(`Type confirmation: Are you absolutely sure you want to delete "${org.name}"?`)) return;
+  if (!await showConfirmation(`Permanently delete "${org.name}"?
+
+This will remove:
+• All users
+• All products & categories
+• All sales history
+• All attendance & payroll data
+
+This cannot be undone.`, { title: 'Delete business permanently', confirmLabel: 'Continue', danger: true })) return;
+  if (!await showConfirmation(`Are you absolutely sure you want to delete "${org.name}"?`, { title: 'Final deletion confirmation', confirmLabel: 'Delete business', danger: true })) return;
 
   await saDeleteOrganization(selectedOrgForDetail);
   await saLogPlatformEvent('super_admin', superAdminUser.id, superAdminUser.display_name, 'BUSINESS_DELETED', null, org.name, {});
@@ -6155,7 +6228,7 @@ window.settleTableBill = (tableId) => {
 };
 
 window.clearTableOrder = async (tableId) => {
-  if (!confirm(`Are you sure you want to clear and reset ${getTableObj(tableId)?.name || tableId}?`)) return;
+  if (!await showConfirmation(`Are you sure you want to clear and reset ${getTableObj(tableId)?.name || tableId}?`, { title: 'Clear table order', confirmLabel: 'Clear table', danger: true })) return;
   delete activeTableOrders[tableId];
   await saveRestaurantState();
   closeModal();
