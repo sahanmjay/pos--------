@@ -125,8 +125,10 @@ async function loadSettings() {
       if (!currentSettings.tax_rate) currentSettings.tax_rate = String(org.tax_rate || 0);
       if (!currentSettings.phone) currentSettings.phone = org.phone || '';
       if (!currentSettings.address) currentSettings.address = org.address || '';
+      if (!currentSettings.receipt_autoprint) currentSettings.receipt_autoprint = 'true';
       currentSettings.plan_id = org.plan_id || 'free';
     }
+    if (!currentSettings.receipt_autoprint) currentSettings.receipt_autoprint = 'true';
   } catch (e) {
     console.warn('loadSettings error:', e);
   }
@@ -145,6 +147,23 @@ async function loadSettings() {
     document.documentElement.setAttribute('data-theme', currentSettings.theme);
   } else {
     document.documentElement.removeAttribute('data-theme');
+  }
+
+  // Restaurant & Hospitality Suite Toggle
+  const isRestaurant = currentSettings.restaurant_mode === 'true' || currentSettings.biz_type === 'Restaurant';
+  const navRest = document.getElementById('nav-restaurant');
+  const divRest = document.getElementById('divider-restaurant');
+  if (navRest) navRest.style.display = isRestaurant ? 'block' : 'none';
+  if (divRest) divRest.style.display = isRestaurant ? 'block' : 'none';
+
+  document.querySelectorAll('.restaurant-only').forEach(el => {
+    if (el.classList.contains('sidebar-divider')) el.style.display = isRestaurant ? 'block' : 'none';
+    else if (el.classList.contains('pos-dining-bar')) el.style.display = isRestaurant ? 'flex' : 'none';
+    else if (el.id === 'btn-fire-kot') el.style.display = isRestaurant ? 'inline-flex' : 'none';
+    else el.style.display = isRestaurant ? 'block' : 'none';
+  });
+  if (isRestaurant && typeof initRestaurantSuite === 'function') {
+    initRestaurantSuite();
   }
 }
 
@@ -602,6 +621,8 @@ window.bizAdminChangePassword = async () => {
 const SCREENS = {
   'pos': 'Point of Sale',
   'dashboard': 'Dashboard',
+  'kot': 'Kitchen / Live KOT Display',
+  'tables': 'Dining / Table Management',
   'products': 'Inventory / Products',
   'categories': 'Inventory / Categories',
   'sales-history': 'Sales / History',
@@ -624,7 +645,7 @@ function nav(screenId) {
       showToast('error', 'Only Business Administrators can access Staff Management and manage accounts');
       return;
     }
-    if ((role === 'Counter' || role === 'Cashier') && !['pos', 'dashboard', 'sales-history', 'customers'].includes(screenId)) {
+    if ((role === 'Counter' || role === 'Cashier') && !['pos', 'dashboard', 'sales-history', 'customers', 'kot', 'tables'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
     if (role === 'HR' && !['attendance', 'advances', 'payroll'].includes(screenId)) {
@@ -636,7 +657,7 @@ function nav(screenId) {
     if (role === 'Inventory' && !['products', 'categories'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
-    if (role === 'Worker' && !['pos'].includes(screenId)) {
+    if (role === 'Worker' && !['pos', 'kot', 'tables'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
   }
@@ -667,6 +688,8 @@ function nav(screenId) {
   // Call init function for screen
   if(screenId === 'pos') { renderPosCategories(); renderPosGrid(); }
   if(screenId === 'dashboard') initDashboard();
+  if(screenId === 'kot') renderKOTScreen();
+  if(screenId === 'tables') renderTablesScreen();
   if(screenId === 'products') renderProductsTable();
   if(screenId === 'categories') renderCategoriesTable();
   if(screenId === 'sales-history') renderSalesHistory();
@@ -959,12 +982,27 @@ function renderCart() {
     return;
   }
   
+  const isRestaurant = currentSettings.restaurant_mode === 'true' || currentSettings.biz_type === 'Restaurant';
+
   cEl.innerHTML = cart.map((item, i) => `
     <div class="cart-item">
       <div class="cart-item-avatar"><i class="fa-solid fa-box-open"></i></div>
       <div class="cart-item-info">
         <div class="cart-item-name" title="${item.name}">${item.name}</div>
         <div class="cart-item-price">@ ${formatMoney(item.unit_price)}</div>
+        ${isRestaurant ? `
+          <div class="cart-item-note-row">
+            ${item.notes ? `
+              <span class="cart-item-note-tag" onclick="openItemNoteModal(${i})" title="Click to edit cooking note">
+                <i class="fa-solid fa-pen" style="font-size:9px"></i> ${item.notes}
+              </span>
+            ` : `
+              <button type="button" class="cart-item-note-btn" onclick="openItemNoteModal(${i})">
+                <i class="fa-solid fa-plus"></i> Add Note
+              </button>
+            `}
+          </div>
+        ` : ''}
       </div>
       <div class="cart-item-qty">
         <button onclick="updateCartQty(${i}, -1)" aria-label="Decrease quantity">−</button>
@@ -1400,9 +1438,16 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
 
     cart = []; manualDiscount = 0; cartCustomerId = 1;
     renderCart(); updateCartCustomer();
+
+    // If a restaurant table was checked out, free the table
+    if (typeof activeTableOrders !== 'undefined' && currentDiningType === 'dine_in' && currentTableId) {
+      delete activeTableOrders[currentTableId];
+      if (typeof saveRestaurantState === 'function') saveRestaurantState();
+      if (typeof updateDiningTableUI === 'function') updateDiningTableUI();
+    }
     
-    // Display 80mm receipt with Univerzlk branding
-    showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?tendered:total);
+    // Display 80mm receipt with Univerzlk branding and auto-print
+    showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?tendered:total, true);
 
     // ─── BACKGROUND LOCAL UPDATES (Zero UI Lag) ───
     runInBackground('Post-sale database update', async () => {
@@ -1498,7 +1543,7 @@ async function enqueueRamisInvoice(saleData) {
   }
 }
 
-function showReceipt(sale, items, change, tendered) {
+function showReceipt(sale, items, change, tendered, autoPrint = false) {
   const shopName = currentSettings.biz_name || 'NexPOS';
   const address = currentSettings.address || '';
   const phone = currentSettings.phone || '';
@@ -1551,6 +1596,14 @@ function showReceipt(sale, items, change, tendered) {
   }
 
   document.getElementById('receipt-overlay').classList.add('open');
+
+  // 🖨️ Auto-Print Bill on Payment
+  const shouldAutoPrint = autoPrint && (currentSettings.receipt_autoprint !== 'false');
+  if (shouldAutoPrint) {
+    setTimeout(() => {
+      printReceipt();
+    }, 280);
+  }
 }
 
 window.closeReceipt = () => document.getElementById('receipt-overlay').classList.remove('open');
@@ -1818,33 +1871,6 @@ window.saveProduct = async () => {
   else await db.products.add(p);
   
   closeModal(); showToast('success', 'Product saved'); renderProductsTable();
-};
-
-// --- SETTINGS ---
-window.loadSettingsForm = async () => {
-  const s = currentSettings;
-  document.getElementById('set-biz-name').value = s.biz_name || '';
-  document.getElementById('set-biz-type').value = s.biz_type || 'Retail Shop';
-  document.getElementById('set-currency').value = s.currency || 'Rs.';
-  document.getElementById('set-tax').value = s.tax_rate || '0';
-  document.getElementById('set-phone').value = s.phone || '';
-  document.getElementById('set-address').value = s.address || '';
-  
-  document.getElementById('biz-templates').innerHTML = Object.keys(BUSINESS_TEMPLATES).map(k => `
-    <div class="quick-action" onclick="applyTemplate('${k}')"><div class="qa-icon">${BUSINESS_TEMPLATES[k].icon}</div><div><div class="qa-text">${k}</div><div class="qa-sub">${BUSINESS_TEMPLATES[k].products.length} items</div></div></div>
-  `).join('');
-};
-
-window.saveSettings = async () => {
-  const keys = ['biz_name','biz_type','currency','tax_rate','phone','address'];
-  for(let k of keys) {
-    const val = document.getElementById('set-'+k).value;
-    const existing = await db.settings.where('key').equals(k).first();
-    if(existing) await db.settings.update(existing.id, {value: val});
-    else await db.settings.add({key: k, value: val});
-  }
-  await loadSettings();
-  showToast('success', 'Settings saved');
 };
 
 window.applyTemplate = async (type) => {
@@ -3453,6 +3479,8 @@ window.loadSettingsForm = () => {
   document.getElementById('set-tax').value = currentSettings.tax_rate || '0';
   document.getElementById('set-phone').value = currentSettings.phone || '';
   document.getElementById('set-address').value = currentSettings.address || '';
+  const autoPrintReceipt = document.getElementById('set-receipt-autoprint');
+  if (autoPrintReceipt) autoPrintReceipt.value = currentSettings.receipt_autoprint !== 'false' ? 'true' : 'false';
   
   const theme = currentSettings.theme || 'default';
   const themeSelect = document.getElementById('set-theme');
@@ -3465,6 +3493,9 @@ window.loadSettingsForm = () => {
 
   renderBizTemplates();
   loadRamisConfigUI();
+  if (typeof renderRestaurantSettingsUI === 'function') {
+    renderRestaurantSettingsUI();
+  }
 };
 
 // ─── RAMIS CONFIGURATION & CONNECTION TESTER ───
@@ -3637,6 +3668,7 @@ window.saveSettings = async () => {
   }
 
   try {
+    const isRestEnabled = document.getElementById('set-restaurant-enabled')?.checked || document.getElementById('set-biz-type')?.value === 'Restaurant';
     const settings = {
       biz_name: document.getElementById('set-biz-name').value,
       biz_type: document.getElementById('set-biz-type').value,
@@ -3644,7 +3676,23 @@ window.saveSettings = async () => {
       tax_rate: document.getElementById('set-tax').value,
       phone: document.getElementById('set-phone').value,
       address: document.getElementById('set-address').value,
-      theme: document.getElementById('set-theme') ? document.getElementById('set-theme').value : 'default'
+      theme: document.getElementById('set-theme') ? document.getElementById('set-theme').value : 'default',
+      receipt_autoprint: document.getElementById('set-receipt-autoprint')?.value || 'true',
+      restaurant_mode: isRestEnabled ? 'true' : 'false',
+      kot_autoprint: document.getElementById('set-kot-autoprint')?.value || 'true',
+      kot_sound: document.getElementById('set-kot-sound')?.value || 'true',
+      tables_config: JSON.stringify(restaurantTables && restaurantTables.length ? restaurantTables : [
+        { id: 'T1', name: 'Table 1', seats: 4 },
+        { id: 'T2', name: 'Table 2', seats: 2 },
+        { id: 'T3', name: 'Table 3', seats: 4 },
+        { id: 'T4', name: 'Table 4', seats: 6 },
+        { id: 'T5', name: 'Table 5', seats: 2 },
+        { id: 'T6', name: 'Table 6', seats: 4 },
+        { id: 'T7', name: 'Table 7', seats: 8 },
+        { id: 'T8', name: 'Table 8', seats: 4 },
+        { id: 'VIP1', name: 'VIP Lounge 1', seats: 6 },
+        { id: 'OUT1', name: 'Garden Table 1', seats: 4 }
+      ])
     };
 
     const existing = await db.settings.toArray();
@@ -3655,6 +3703,7 @@ window.saveSettings = async () => {
       } else {
         await db.settings.add({ key, value });
       }
+      currentSettings[key] = value;
     }
 
     // Also update the organization record if it exists
@@ -3673,6 +3722,9 @@ window.saveSettings = async () => {
     await saveRamisConfigOnly();
 
     await loadSettings(); // Refresh UI and global currentSettings
+    if (typeof renderRestaurantSettingsUI === 'function') {
+      renderRestaurantSettingsUI();
+    }
     await logSecurityEvent('SETTINGS_CHANGED', { settings });
     showToast('success', 'Settings saved successfully');
   } catch (err) {
@@ -5357,5 +5409,978 @@ window.checkAppUpdates = async () => {
     }
   } else {
     showToast('info', 'Running in Web mode. Cloud updates apply automatically whenever you refresh.');
+  }
+};
+
+// ═══════════════════════════════════════════════════════════
+// 🍽️ RESTAURANT SUITE: KOT, KDS & TABLE MANAGEMENT
+// ═══════════════════════════════════════════════════════════
+
+let currentDiningType = 'dine_in'; // 'dine_in' | 'takeaway' | 'delivery'
+let currentTableId = 'T1';
+let restaurantTables = [
+  { id: 'T1', name: 'Table 1', seats: 4 },
+  { id: 'T2', name: 'Table 2', seats: 2 },
+  { id: 'T3', name: 'Table 3', seats: 4 },
+  { id: 'T4', name: 'Table 4', seats: 6 },
+  { id: 'T5', name: 'Table 5', seats: 2 },
+  { id: 'T6', name: 'Table 6', seats: 4 },
+  { id: 'T7', name: 'Table 7', seats: 8 },
+  { id: 'T8', name: 'Table 8', seats: 4 },
+  { id: 'VIP1', name: 'VIP Lounge 1', seats: 6 },
+  { id: 'OUT1', name: 'Garden Table 1', seats: 4 }
+];
+let activeKots = [];
+let activeTableOrders = {}; // key: tableId -> { items: [], customerId: 1, customerName: '', openedAt: '', kots: [] }
+let currentKotFilter = 'active';
+let kdsSoundEnabled = true;
+let kdsTimerInterval = null;
+let currentKotReceiptData = null;
+
+// Audio Chime using Web Audio API (Synthesizer bell chime)
+window.playKitchenChime = () => {
+  if (!kdsSoundEnabled) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const playTone = (freq, start, dur) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime + start);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + dur);
+    };
+    playTone(880, 0, 0.25);      // A5
+    playTone(1318.5, 0.18, 0.5); // E6
+  } catch (e) {
+    console.warn('Audio chime notice:', e);
+  }
+};
+
+window.toggleKdsSound = () => {
+  kdsSoundEnabled = !kdsSoundEnabled;
+  const btn = document.getElementById('btn-kds-sound');
+  if (btn) {
+    btn.innerHTML = kdsSoundEnabled 
+      ? '<i class="fa-solid fa-volume-high"></i> Sound On' 
+      : '<i class="fa-solid fa-volume-xmark" style="color:var(--danger)"></i> Muted';
+  }
+  showToast('info', kdsSoundEnabled ? 'Kitchen chime sound unmuted' : 'Kitchen chime muted');
+};
+
+// Initialize or reload restaurant suite
+window.initRestaurantSuite = async () => {
+  await loadRestaurantConfigAndState();
+  updateDiningTableUI();
+  updateKotBadge();
+};
+
+async function loadRestaurantConfigAndState() {
+  if (currentSettings.tables_config) {
+    try {
+      restaurantTables = JSON.parse(currentSettings.tables_config);
+    } catch (e) {
+      console.warn('Error parsing tables_config:', e);
+    }
+  }
+
+  // Load KOTs and Table states from db.settings or localStorage
+  const orgId = db.currentOrgId || 'default';
+  const localKots = localStorage.getItem(`nexpos_kots_${orgId}`);
+  const localTables = localStorage.getItem(`nexpos_tables_${orgId}`);
+  if (localKots) {
+    try { activeKots = JSON.parse(localKots); } catch(e){}
+  }
+  if (localTables) {
+    try { activeTableOrders = JSON.parse(localTables); } catch(e){}
+  }
+
+  if (currentSettings.restaurant_active_kots) {
+    try {
+      const dbKots = JSON.parse(currentSettings.restaurant_active_kots);
+      if (Array.isArray(dbKots) && dbKots.length > 0) activeKots = dbKots;
+    } catch(e){}
+  }
+  if (currentSettings.restaurant_tables_state) {
+    try {
+      const dbTables = JSON.parse(currentSettings.restaurant_tables_state);
+      if (dbTables && typeof dbTables === 'object') activeTableOrders = dbTables;
+    } catch(e){}
+  }
+}
+
+async function saveRestaurantState() {
+  const orgId = db.currentOrgId || 'default';
+  localStorage.setItem(`nexpos_kots_${orgId}`, JSON.stringify(activeKots));
+  localStorage.setItem(`nexpos_tables_${orgId}`, JSON.stringify(activeTableOrders));
+
+  // Sync to database settings silently in background
+  try {
+    const kotsStr = JSON.stringify(activeKots.slice(0, 100)); // cap to last 100
+    const tablesStr = JSON.stringify(activeTableOrders);
+
+    const existingKots = await db.settings.where('key').equals('restaurant_active_kots').first();
+    if (existingKots) await db.settings.update(existingKots.id, { value: kotsStr });
+    else await db.settings.add({ key: 'restaurant_active_kots', value: kotsStr });
+
+    const existingTables = await db.settings.where('key').equals('restaurant_tables_state').first();
+    if (existingTables) await db.settings.update(existingTables.id, { value: tablesStr });
+    else await db.settings.add({ key: 'restaurant_tables_state', value: tablesStr });
+  } catch(e) {
+    console.warn('saveRestaurantState notice:', e);
+  }
+}
+
+// Dining Type Switcher (Dine-In, Takeaway, Delivery)
+window.setDiningType = (type) => {
+  currentDiningType = type;
+  document.querySelectorAll('.dining-type-btn').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-type') === type);
+  });
+  const tableRow = document.getElementById('dining-table-row');
+  if (tableRow) {
+    tableRow.style.display = (type === 'dine_in') ? 'block' : 'none';
+  }
+  updateDiningTableUI();
+};
+
+window.updateDiningTableUI = () => {
+  const nameEl = document.getElementById('pos-selected-table-name');
+  const seatsEl = document.getElementById('pos-selected-table-seats');
+  const pillEl = document.getElementById('pos-table-status-pill');
+  if (!nameEl) return;
+
+  const tObj = restaurantTables.find(t => t.id === currentTableId) || restaurantTables[0] || { id: 'T1', name: 'Table 1', seats: 4 };
+  nameEl.textContent = tObj.name;
+  if (seatsEl) seatsEl.textContent = tObj.seats;
+
+  const hasOrder = activeTableOrders[tObj.id] && activeTableOrders[tObj.id].items && activeTableOrders[tObj.id].items.length > 0;
+  if (pillEl) {
+    if (hasOrder) {
+      pillEl.className = 'badge badge-warning';
+      pillEl.textContent = 'Occupied';
+    } else {
+      pillEl.className = 'badge badge-completed';
+      pillEl.textContent = 'Vacant';
+    }
+  }
+};
+
+window.openTablePickerModal = () => {
+  const html = `
+    <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px">
+      Select a table to seat guests, fire KOT tickets, or resume an existing table bill:
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(130px, 1fr)); gap:10px; max-height:60vh; overflow-y:auto; padding:2px">
+      ${restaurantTables.map(t => {
+        const hasOrder = activeTableOrders[t.id] && activeTableOrders[t.id].items && activeTableOrders[t.id].items.length > 0;
+        const subtotal = hasOrder ? activeTableOrders[t.id].items.reduce((s, i) => s + (i.unit_price * i.quantity), 0) : 0;
+        const isSelected = t.id === currentTableId;
+        return `
+          <div class="card" onclick="selectTable('${t.id}')" style="cursor:pointer; padding:12px; border:2px solid ${isSelected ? 'var(--brand)' : (hasOrder ? 'rgba(245,158,11,0.6)' : 'var(--border)')}; background:${isSelected ? 'rgba(99,102,241,0.06)' : (hasOrder ? 'rgba(245,158,11,0.04)' : 'var(--surface)')}; border-radius:10px; text-align:center; transition:all 0.15s">
+            <div style="font-size:20px; margin-bottom:4px">${hasOrder ? '🍽️' : '🪑'}</div>
+            <div style="font-weight:700; font-size:14px; color:var(--text-primary)">${t.name}</div>
+            <div style="font-size:11px; color:var(--text-muted)">${t.seats} Seats</div>
+            <div style="margin-top:6px">
+              <span class="badge ${hasOrder ? 'badge-warning' : 'badge-completed'}" style="font-size:9.5px">
+                ${hasOrder ? formatMoney(subtotal) : 'Vacant'}
+              </span>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+  openModal('Select Dining Table', html, `<button class="btn btn-secondary btn-sm" onclick="closeModal()">Cancel</button>`);
+};
+
+window.selectTable = (tableId) => {
+  currentTableId = tableId;
+  closeModal();
+  updateDiningTableUI();
+
+  // If table already has an active order and current cart is empty, load it into cart
+  const order = activeTableOrders[tableId];
+  if (order && order.items && order.items.length > 0) {
+    if (cart.length === 0) {
+      cart = order.items.map(i => ({ ...i }));
+      cartCustomerId = order.customerId || 1;
+      updateCartCustomer();
+      renderCart();
+      showToast('info', `Loaded active order for ${getTableObj(tableId)?.name || tableId}`);
+    } else {
+      showToast('info', `Switched to ${getTableObj(tableId)?.name || tableId} (Table has ${order.items.length} items ordered)`);
+    }
+  }
+};
+
+function getTableObj(tableId) {
+  return restaurantTables.find(t => t.id === tableId);
+}
+
+// Item Kitchen Cooking Instruction / Notes Modal
+let noteEditingCartIndex = null;
+window.openItemNoteModal = (idx) => {
+  noteEditingCartIndex = idx;
+  const item = cart[idx];
+  if (!item) return;
+
+  const presets = [
+    'No Spicy', 'Extra Spicy', 'Less Spicy', 
+    'No Onion', 'No Garlic', 'Less Salt', 
+    'Less Sugar', 'No Ice', 'Parcel / Takeaway',
+    'Separately Packed', 'Allergy Alert: Nuts', 'Chef Special'
+  ];
+
+  const html = `
+    <div style="margin-bottom:12px">
+      <div style="font-weight:700; font-size:15px; color:var(--text-primary)">${item.name}</div>
+      <div style="font-size:12px; color:var(--text-muted)">Add specific kitchen preparation notes for the chef:</div>
+    </div>
+    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px">
+      ${presets.map(p => `
+        <button type="button" class="btn btn-secondary btn-sm" onclick="addNoteChip('${p}')" style="font-size:11.5px; padding:4px 9px">
+          + ${p}
+        </button>
+      `).join('')}
+    </div>
+    <div class="form-group">
+      <label class="form-label">Special Cooking Instruction</label>
+      <input class="form-input" id="item-note-input" value="${item.notes || ''}" placeholder="e.g. No spicy, extra gravy, pack separately" autocomplete="off">
+    </div>
+  `;
+
+  openModal('Kitchen Instructions', html, `
+    <button class="btn btn-ghost btn-sm" onclick="clearItemNote()">Clear Note</button>
+    <button class="btn btn-primary btn-sm" onclick="saveItemNote()">Save Note</button>
+  `);
+  setTimeout(() => {
+    const input = document.getElementById('item-note-input');
+    if (input) { input.focus(); input.select(); }
+  }, 100);
+};
+
+window.addNoteChip = (text) => {
+  const input = document.getElementById('item-note-input');
+  if (!input) return;
+  const current = input.value.trim();
+  if (current) {
+    if (!current.includes(text)) input.value = current + ', ' + text;
+  } else {
+    input.value = text;
+  }
+};
+
+window.clearItemNote = () => {
+  if (noteEditingCartIndex !== null && cart[noteEditingCartIndex]) {
+    delete cart[noteEditingCartIndex].notes;
+    renderCart();
+    closeModal();
+    showToast('info', 'Instruction cleared');
+  }
+};
+
+window.saveItemNote = () => {
+  const val = document.getElementById('item-note-input')?.value.trim();
+  if (noteEditingCartIndex !== null && cart[noteEditingCartIndex]) {
+    cart[noteEditingCartIndex].notes = val || '';
+    renderCart();
+    closeModal();
+    showToast('success', val ? 'Cooking instruction saved' : 'Note updated');
+  }
+};
+
+// Send Order to Kitchen (Fire KOT)
+window.sendOrderToKitchen = async () => {
+  if (cart.length === 0) return showToast('error', 'Cart is empty. Add food items first.');
+
+  // Determine next sequential KOT number
+  let nextNum = parseInt(currentSettings.kot_next_num || '101');
+  if (isNaN(nextNum) || nextNum < 1) nextNum = 101;
+  currentSettings.kot_next_num = String(nextNum + 1);
+
+  const tObj = getTableObj(currentTableId);
+  const tableName = (currentDiningType === 'dine_in') ? (tObj?.name || currentTableId) : (currentDiningType === 'takeaway' ? 'Takeaway' : 'Delivery');
+
+  const kot = {
+    id: 'KOT-' + Date.now(),
+    kot_number: nextNum,
+    table_id: currentDiningType === 'dine_in' ? currentTableId : currentDiningType,
+    table_name: tableName,
+    order_type: currentDiningType,
+    waiter: currentUser?.display_name || 'Staff',
+    created_at: new Date().toISOString(),
+    status: 'preparing', // 'preparing' | 'ready' | 'served'
+    items: cart.map(i => ({
+      product_id: i.product_id,
+      name: i.name,
+      quantity: i.quantity,
+      unit: i.unit || 'portion',
+      notes: i.notes || '',
+      is_done: false
+    }))
+  };
+
+  // Add to active KOTs list
+  activeKots.unshift(kot);
+
+  // Link / update active table order
+  if (currentDiningType === 'dine_in') {
+    const prevOrder = activeTableOrders[currentTableId] || { items: [], customerId: cartCustomerId, openedAt: new Date().toISOString(), kots: [] };
+    prevOrder.items = cart.map(i => ({ ...i }));
+    prevOrder.customerId = cartCustomerId;
+    prevOrder.kots = prevOrder.kots || [];
+    prevOrder.kots.push(nextNum);
+    activeTableOrders[currentTableId] = prevOrder;
+  }
+
+  await saveRestaurantState();
+  updateDiningTableUI();
+  updateKotBadge();
+  playKitchenChime();
+
+  showToast('success', `🍳 KOT #${nextNum} sent to Kitchen (${tableName})`);
+
+  // Auto-print thermal KOT if enabled
+  const autoPrint = currentSettings.kot_autoprint !== 'false';
+  if (autoPrint) {
+    showKotReceipt(kot);
+  }
+};
+
+window.updateKotBadge = () => {
+  const badge = document.getElementById('kot-badge-count');
+  if (!badge) return;
+  const preparingCount = activeKots.filter(k => k.status === 'preparing').length;
+  if (preparingCount > 0) {
+    badge.style.display = 'inline-block';
+    badge.textContent = preparingCount;
+  } else {
+    badge.style.display = 'none';
+  }
+};
+
+// 80mm Thermal KOT Receipt Modal & Print
+window.showKotReceipt = (kot) => {
+  currentKotReceiptData = kot;
+  const overlay = document.getElementById('kot-receipt-overlay');
+  const body = document.getElementById('kot-receipt-body');
+  if (!overlay || !body) return;
+
+  const timeStr = new Date(kot.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const dateStr = new Date(kot.created_at).toLocaleDateString();
+
+  let html = `
+    <div style="text-align:center; margin-bottom:8px; border-bottom:2px dashed #000; padding-bottom:6px">
+      <h2 style="margin:0; font-size:18px; font-weight:900; letter-spacing:1px; text-transform:uppercase">*** KITCHEN ORDER ***</h2>
+      <div style="font-size:15px; font-weight:800; margin-top:2px">KOT #${kot.kot_number}</div>
+    </div>
+    <div style="margin-bottom:8px; font-size:12px; line-height:1.4">
+      <div style="display:flex; justify-content:space-between">
+        <span><strong>${kot.order_type === 'dine_in' ? 'TABLE:' : 'ORDER:'}</strong> <span style="font-size:16px; font-weight:900">${kot.table_name}</span></span>
+        <span><strong>${kot.order_type.toUpperCase()}</strong></span>
+      </div>
+      <div style="display:flex; justify-content:space-between; margin-top:2px">
+        <span>Server: ${kot.waiter}</span>
+        <span>${timeStr} · ${dateStr}</span>
+      </div>
+    </div>
+    <table style="width:100%; border-collapse:collapse; border-top:1px dashed #000; border-bottom:1px dashed #000; margin-bottom:8px">
+      <thead>
+        <tr style="border-bottom:1px solid #000; text-align:left; font-size:11px">
+          <th style="padding:4px 0; width:45px">QTY</th>
+          <th style="padding:4px 0">ITEM & INSTRUCTION</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${kot.items.map(i => `
+          <tr style="border-bottom:1px solid #eee">
+            <td style="padding:6px 0; vertical-align:top; font-size:15px; font-weight:900">[ ${i.quantity}x ]</td>
+            <td style="padding:6px 0; vertical-align:top">
+              <div style="font-size:14px; font-weight:700">${i.name}</div>
+              ${i.notes ? `
+                <div style="margin-top:2px; font-size:12px; font-weight:800; background:#000; color:#fff; display:inline-block; padding:1px 5px; border-radius:2px">
+                  * ${i.notes.toUpperCase()} *
+                </div>
+              ` : ''}
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <div style="text-align:center; font-size:11px; font-style:italic; margin-top:4px">
+      Kitchen Display System · NexPOS
+    </div>
+  `;
+
+  body.innerHTML = html;
+  overlay.style.display = 'flex';
+};
+
+window.printKotReceipt = () => {
+  window.print();
+};
+
+window.closeKotReceipt = () => {
+  const overlay = document.getElementById('kot-receipt-overlay');
+  if (overlay) overlay.style.display = 'none';
+};
+
+// 🍳 KITCHEN DISPLAY SCREEN (KDS) LOGIC
+window.renderKOTScreen = () => {
+  const grid = document.getElementById('kot-tickets-grid');
+  if (!grid) return;
+
+  // Counts
+  const activeCount = activeKots.filter(k => k.status !== 'served').length;
+  const preparingCount = activeKots.filter(k => k.status === 'preparing').length;
+  const readyCount = activeKots.filter(k => k.status === 'ready').length;
+  const completedCount = activeKots.filter(k => k.status === 'served').length;
+
+  const elActive = document.getElementById('kot-count-active');
+  const elPrep = document.getElementById('kot-count-preparing');
+  const elReady = document.getElementById('kot-count-ready');
+  const elComp = document.getElementById('kot-count-completed');
+  if (elActive) elActive.textContent = activeCount;
+  if (elPrep) elPrep.textContent = preparingCount;
+  if (elReady) elReady.textContent = readyCount;
+  if (elComp) elComp.textContent = completedCount;
+
+  // Filter
+  const search = document.getElementById('kot-search')?.value.toLowerCase() || '';
+  const filtered = activeKots.filter(k => {
+    if (currentKotFilter === 'active' && k.status === 'served') return false;
+    if (currentKotFilter === 'preparing' && k.status !== 'preparing') return false;
+    if (currentKotFilter === 'ready' && k.status !== 'ready') return false;
+    if (currentKotFilter === 'completed' && k.status !== 'served') return false;
+    if (search && !k.table_name.toLowerCase().includes(search) && !String(k.kot_number).includes(search) && !k.waiter.toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    grid.innerHTML = `
+      <div class="empty-state" style="grid-column:1/-1; padding:48px 20px; text-align:center">
+        <div class="empty-state-icon" style="font-size:42px; margin-bottom:12px">🍳</div>
+        <div class="empty-state-title" style="font-size:18px; font-weight:700">No Kitchen Orders</div>
+        <div class="empty-state-subtitle" style="color:var(--text-muted); font-size:13px; max-width:360px; margin:6px auto 16px">
+          ${currentKotFilter === 'active' ? 'Kitchen is all caught up! New orders sent from POS will appear here live with cooking timers.' : 'No orders found matching this filter.'}
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  const now = Date.now();
+  grid.innerHTML = filtered.map(k => {
+    const elapsedMins = Math.floor((now - new Date(k.created_at).getTime()) / 60000);
+    const timerClass = elapsedMins < 10 ? 'timer-ok' : (elapsedMins < 20 ? 'timer-warn' : 'timer-danger');
+    const timerText = elapsedMins <= 0 ? 'Just now' : `${elapsedMins}m ago`;
+
+    return `
+      <div class="kot-card status-${k.status}">
+        <div class="kot-card-header">
+          <div class="kot-card-title">
+            <span>KOT #${k.kot_number}</span>
+            <span class="badge ${k.status === 'ready' ? 'badge-completed' : (k.status === 'preparing' ? 'badge-warning' : 'badge-neutral')}" style="font-size:10px">
+              ${k.status === 'ready' ? 'Ready to Serve' : (k.status === 'preparing' ? 'Preparing' : 'Served')}
+            </span>
+          </div>
+          <div class="kot-timer ${timerClass}">
+            <i class="fa-regular fa-clock"></i> ${timerText}
+          </div>
+        </div>
+        <div class="kot-card-meta">
+          <div>
+            <span style="font-weight:700; color:var(--text-primary)"><i class="fa-solid fa-chair"></i> ${k.table_name}</span>
+            <span style="margin-left:6px; text-transform:uppercase; font-size:10px; opacity:0.8">(${k.order_type})</span>
+          </div>
+          <div><i class="fa-regular fa-user"></i> ${k.waiter}</div>
+        </div>
+        <div class="kot-items-list">
+          ${k.items.map((it, itemIdx) => `
+            <div class="kot-item-row ${it.is_done ? 'is-done' : ''}" onclick="toggleKotItemDone('${k.id}', ${itemIdx})">
+              <div class="kot-item-qty">${it.quantity}x</div>
+              <div class="kot-item-info">
+                <div class="kot-item-name">${it.name}</div>
+                ${it.notes ? `<div class="kot-item-instruction"><i class="fa-solid fa-triangle-exclamation" style="font-size:9px"></i> ${it.notes}</div>` : ''}
+              </div>
+              <input type="checkbox" ${it.is_done ? 'checked' : ''} style="cursor:pointer; transform:scale(1.2)" onclick="event.stopPropagation(); toggleKotItemDone('${k.id}', ${itemIdx})">
+            </div>
+          `).join('')}
+        </div>
+        <div class="kot-card-footer">
+          ${k.status === 'preparing' ? `
+            <button class="btn btn-primary btn-sm" onclick="markKotReady('${k.id}')" style="flex:1">
+              <i class="fa-solid fa-check"></i> Mark Ready
+            </button>
+          ` : (k.status === 'ready' ? `
+            <button class="btn btn-success btn-sm" onclick="markKotServed('${k.id}')" style="flex:1; background:var(--success); color:#fff; border:none">
+              <i class="fa-solid fa-bell-concierge"></i> Mark Served
+            </button>
+          ` : `
+            <button class="btn btn-secondary btn-sm" onclick="markKotReady('${k.id}')" style="flex:1">
+              Reopen
+            </button>
+          `)}
+          <button class="btn btn-secondary btn-sm btn-icon" onclick="reprintKot('${k.id}')" title="Reprint Kitchen Ticket">
+            <i class="fa-solid fa-print"></i>
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+};
+
+// Start 15s timer for KDS board
+if (!kdsTimerInterval) {
+  kdsTimerInterval = setInterval(() => {
+    const kdsScreen = document.getElementById('screen-kot');
+    if (kdsScreen && kdsScreen.classList.contains('active')) {
+      renderKOTScreen();
+    }
+  }, 15000);
+}
+
+window.setKotFilter = (filter) => {
+  currentKotFilter = filter;
+  document.querySelectorAll('#kot-filter-group button').forEach(b => {
+    b.classList.remove('active');
+  });
+  const activeBtn = document.getElementById(`btn-kot-${filter}`);
+  if (activeBtn) activeBtn.classList.add('active');
+  renderKOTScreen();
+};
+
+window.filterKotTickets = () => {
+  renderKOTScreen();
+};
+
+window.toggleKotItemDone = async (kotId, itemIdx) => {
+  const kot = activeKots.find(k => k.id === kotId);
+  if (!kot || !kot.items[itemIdx]) return;
+  kot.items[itemIdx].is_done = !kot.items[itemIdx].is_done;
+  await saveRestaurantState();
+  renderKOTScreen();
+};
+
+window.markKotReady = async (kotId) => {
+  const kot = activeKots.find(k => k.id === kotId);
+  if (!kot) return;
+  kot.status = 'ready';
+  await saveRestaurantState();
+  updateKotBadge();
+  renderKOTScreen();
+  showToast('success', `KOT #${kot.kot_number} (${kot.table_name}) marked Ready to Serve!`);
+};
+
+window.markKotServed = async (kotId) => {
+  const kot = activeKots.find(k => k.id === kotId);
+  if (!kot) return;
+  kot.status = 'served';
+  await saveRestaurantState();
+  updateKotBadge();
+  renderKOTScreen();
+  showToast('info', `KOT #${kot.kot_number} completed and served.`);
+};
+
+window.reprintKot = (kotId) => {
+  const kot = activeKots.find(k => k.id === kotId);
+  if (kot) showKotReceipt(kot);
+};
+
+// 🍽️ TABLE MANAGEMENT SCREEN LOGIC
+window.renderTablesScreen = () => {
+  const grid = document.getElementById('tables-floor-grid');
+  if (!grid) return;
+
+  const total = restaurantTables.length;
+  let vacant = 0;
+  let occupied = 0;
+  let activeRev = 0;
+  const now = Date.now();
+
+  restaurantTables.forEach(t => {
+    const ord = activeTableOrders[t.id];
+    if (ord && ord.items && ord.items.length > 0) {
+      occupied++;
+      activeRev += ord.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0);
+    } else {
+      vacant++;
+    }
+  });
+
+  const elTot = document.getElementById('tables-total-count');
+  const elVac = document.getElementById('tables-vacant-count');
+  const elOcc = document.getElementById('tables-occupied-count');
+  const elRev = document.getElementById('tables-active-revenue');
+  if (elTot) elTot.textContent = total;
+  if (elVac) elVac.textContent = vacant;
+  if (elOcc) elOcc.textContent = occupied;
+  if (elRev) elRev.textContent = formatMoney(activeRev);
+
+  grid.innerHTML = restaurantTables.map(t => {
+    const ord = activeTableOrders[t.id];
+    const isOccupied = ord && ord.items && ord.items.length > 0;
+    const subtotal = isOccupied ? ord.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
+    const itemsCount = isOccupied ? ord.items.reduce((sum, it) => sum + it.quantity, 0) : 0;
+    const elapsedMins = (isOccupied && ord.openedAt) ? Math.floor((now - new Date(ord.openedAt).getTime()) / 60000) : 0;
+
+    return `
+      <div class="table-card ${isOccupied ? 'table-occupied' : 'table-vacant'}" onclick="openTableDetails('${t.id}')">
+        <div class="table-top">
+          <div class="table-name">
+            <span>${isOccupied ? '🍽️' : '🪑'}</span>
+            <span>${t.name}</span>
+          </div>
+          <span class="table-status-pill ${isOccupied ? 'table-status-occupied' : 'table-status-vacant'}">
+            ${isOccupied ? 'Occupied' : 'Vacant'}
+          </span>
+        </div>
+        <div class="table-body-info">
+          <div class="table-seats"><i class="fa-solid fa-users"></i> ${t.seats} Guest Seats</div>
+          ${isOccupied ? `
+            <div class="table-subtotal">${formatMoney(subtotal)}</div>
+            <div class="table-time">
+              <span>${itemsCount} items ordered</span> · <span>⏱️ ${elapsedMins}m dining</span>
+            </div>
+          ` : `
+            <div style="font-size:12px; color:var(--text-muted); margin-top:6px">Clean & Ready for guests</div>
+          `}
+        </div>
+        <div class="table-actions">
+          ${isOccupied ? `
+            <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); settleTableBill('${t.id}')" style="flex:1">
+              <i class="fa-solid fa-credit-card"></i> Settle Bill
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); startOrderAtTable('${t.id}')" title="Add items to table">
+              + Items
+            </button>
+          ` : `
+            <button class="btn btn-secondary btn-full btn-sm" onclick="event.stopPropagation(); startOrderAtTable('${t.id}')">
+              <i class="fa-solid fa-plus"></i> Start Order
+            </button>
+          `}
+        </div>
+      </div>
+    `;
+  }).join('');
+};
+
+window.openTableDetails = (tableId) => {
+  const t = getTableObj(tableId);
+  if (!t) return;
+  const ord = activeTableOrders[tableId];
+  const isOccupied = ord && ord.items && ord.items.length > 0;
+
+  if (!isOccupied) {
+    return startOrderAtTable(tableId);
+  }
+
+  const subtotal = ord.items.reduce((s, it) => s + (it.unit_price * it.quantity), 0);
+  const html = `
+    <div style="margin-bottom:14px">
+      <div style="display:flex; justify-content:space-between; align-items:center">
+        <h3 style="margin:0">${t.name} (${t.seats} Seats)</h3>
+        <span class="badge badge-warning">Occupied</span>
+      </div>
+      <div style="font-size:12px; color:var(--text-muted); margin-top:2px">
+        Order opened: ${new Date(ord.openedAt).toLocaleTimeString()}
+      </div>
+    </div>
+    <div style="max-height:220px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:8px; margin-bottom:14px">
+      ${ord.items.map(it => `
+        <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--surface-3); font-size:13px">
+          <div>
+            <strong>${it.quantity}x</strong> ${it.name}
+            ${it.notes ? `<div style="font-size:11px; color:#b45309">Note: ${it.notes}</div>` : ''}
+          </div>
+          <div style="font-weight:700">${formatMoney(it.quantity * it.unit_price)}</div>
+        </div>
+      `).join('')}
+    </div>
+    <div style="display:flex; justify-content:space-between; font-size:16px; font-weight:800; margin-bottom:16px">
+      <span>Subtotal</span>
+      <span style="color:var(--brand)">${formatMoney(subtotal)}</span>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:8px">
+      <button class="btn btn-primary" onclick="settleTableBill('${tableId}')">
+        💳 Proceed to Checkout & Pay Bill
+      </button>
+      <button class="btn btn-secondary" onclick="startOrderAtTable('${tableId}')">
+        ➕ Add More Food Items in POS
+      </button>
+      <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="clearTableOrder('${tableId}')">
+        ✕ Clear & Reset Table
+      </button>
+    </div>
+  `;
+  openModal(`Table Overview — ${t.name}`, html, `<button class="btn btn-secondary btn-sm" onclick="closeModal()">Close</button>`);
+};
+
+window.startOrderAtTable = (tableId) => {
+  currentDiningType = 'dine_in';
+  currentTableId = tableId;
+  closeModal();
+  nav('pos');
+  updateDiningTableUI();
+
+  const ord = activeTableOrders[tableId];
+  if (ord && ord.items && ord.items.length > 0) {
+    cart = ord.items.map(i => ({ ...i }));
+    cartCustomerId = ord.customerId || 1;
+    updateCartCustomer();
+    renderCart();
+  }
+};
+
+window.settleTableBill = (tableId) => {
+  currentDiningType = 'dine_in';
+  currentTableId = tableId;
+  closeModal();
+  nav('pos');
+  updateDiningTableUI();
+
+  const ord = activeTableOrders[tableId];
+  if (ord && ord.items && ord.items.length > 0) {
+    cart = ord.items.map(i => ({ ...i }));
+    cartCustomerId = ord.customerId || 1;
+    updateCartCustomer();
+    renderCart();
+  }
+  showToast('info', `Order loaded. Choose Cash, Card, or Credit to finalize.`);
+};
+
+window.clearTableOrder = async (tableId) => {
+  if (!confirm(`Are you sure you want to clear and reset ${getTableObj(tableId)?.name || tableId}?`)) return;
+  delete activeTableOrders[tableId];
+  await saveRestaurantState();
+  closeModal();
+  renderTablesScreen();
+  updateDiningTableUI();
+  showToast('info', `Table cleared and marked vacant.`);
+};
+
+window.openAddNewTableModal = () => {
+  const html = `
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:span 2">
+        <label class="form-label">Table Name *</label>
+        <input class="form-input" id="new-tbl-name" placeholder="e.g. Table 9, VIP Terrace" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Seating Capacity</label>
+        <input class="form-input" id="new-tbl-seats" type="number" value="4" min="1" max="50">
+      </div>
+    </div>
+  `;
+  openModal('Add Dining Table', html, `
+    <button class="btn btn-secondary btn-sm" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary btn-sm" onclick="saveNewTable()">Add Table</button>
+  `);
+};
+
+window.saveNewTable = async () => {
+  const name = document.getElementById('new-tbl-name')?.value.trim();
+  const seats = parseInt(document.getElementById('new-tbl-seats')?.value) || 4;
+  if (!name) return showToast('error', 'Table name is required');
+
+  const id = 'T-' + Date.now();
+  restaurantTables.push({ id, name, seats });
+  currentSettings.tables_config = JSON.stringify(restaurantTables);
+
+  const existing = await db.settings.where('key').equals('tables_config').first();
+  if (existing) await db.settings.update(existing.id, { value: currentSettings.tables_config });
+  else await db.settings.add({ key: 'tables_config', value: currentSettings.tables_config });
+
+  closeModal();
+  renderTablesScreen();
+  updateDiningTableUI();
+  showToast('success', `Added "${name}" with ${seats} seats.`);
+};
+
+// Restaurant Settings in screen-settings
+window.renderRestaurantSettingsUI = () => {
+  const enabledCb = document.getElementById('set-restaurant-enabled');
+  const autoPrintSel = document.getElementById('set-kot-autoprint');
+  const soundSel = document.getElementById('set-kot-sound');
+  const tablesList = document.getElementById('set-tables-list');
+  const tablesCount = document.getElementById('set-tables-count');
+  const badge = document.getElementById('set-restaurant-badge');
+  const configFields = document.getElementById('restaurant-config-fields');
+  const bizTypeSel = document.getElementById('set-biz-type');
+
+  const isRest = currentSettings.restaurant_mode === 'true' || currentSettings.biz_type === 'Restaurant' || (bizTypeSel && bizTypeSel.value === 'Restaurant');
+
+  if (enabledCb) enabledCb.checked = isRest;
+  if (badge) {
+    badge.textContent = isRest ? 'Restaurant Active' : 'Suite Disabled';
+    badge.className = isRest ? 'badge badge-warning' : 'badge';
+    if (!isRest) {
+      badge.style.background = 'var(--surface-sunken)';
+      badge.style.color = 'var(--text-muted)';
+    } else {
+      badge.style.background = '';
+      badge.style.color = '';
+    }
+  }
+  if (configFields) {
+    configFields.style.opacity = isRest ? '1' : '0.6';
+  }
+  if (autoPrintSel) autoPrintSel.value = currentSettings.kot_autoprint || 'true';
+  if (soundSel) soundSel.value = currentSettings.kot_sound || 'true';
+  if (tablesCount) tablesCount.textContent = restaurantTables.length;
+
+  if (tablesList) {
+    tablesList.innerHTML = restaurantTables.map(t => `
+      <span class="table-config-pill">
+        <i class="fa-solid fa-chair" style="color:var(--brand)"></i> ${t.name} (${t.seats}s)
+        <button type="button" class="table-config-del" onclick="removeConfigTable('${t.id}')" title="Delete table">✕</button>
+      </span>
+    `).join('');
+  }
+};
+
+window.toggleRestaurantSetting = (enabled) => {
+  const isEnabled = !!enabled;
+  currentSettings.restaurant_mode = isEnabled ? 'true' : 'false';
+
+  // Seed default tables if enabling for first time
+  if (isEnabled && (!restaurantTables || restaurantTables.length === 0)) {
+    window.seedDefaultTables(true);
+  }
+
+  // Explicitly update sidebar
+  const navRest = document.getElementById('nav-restaurant');
+  const divRest = document.getElementById('divider-restaurant');
+  if (navRest) navRest.style.display = isEnabled ? 'block' : 'none';
+  if (divRest) divRest.style.display = isEnabled ? 'block' : 'none';
+
+  // Explicitly update all restaurant-only elements
+  document.querySelectorAll('.restaurant-only').forEach(el => {
+    if (el.classList.contains('sidebar-divider')) el.style.display = isEnabled ? 'block' : 'none';
+    else if (el.classList.contains('pos-dining-bar')) el.style.display = isEnabled ? 'flex' : 'none';
+    else if (el.id === 'btn-fire-kot') el.style.display = isEnabled ? 'inline-flex' : 'none';
+    else el.style.display = isEnabled ? 'block' : 'none';
+  });
+
+  const badge = document.getElementById('set-restaurant-badge');
+  if (badge) {
+    badge.textContent = isEnabled ? 'Restaurant Active' : 'Suite Disabled';
+    badge.className = isEnabled ? 'badge badge-warning' : 'badge';
+    if (!isEnabled) {
+      badge.style.background = 'var(--surface-sunken)';
+      badge.style.color = 'var(--text-muted)';
+    } else {
+      badge.style.background = '';
+      badge.style.color = '';
+    }
+  }
+
+  const configFields = document.getElementById('restaurant-config-fields');
+  if (configFields) {
+    configFields.style.opacity = isEnabled ? '1' : '0.6';
+  }
+
+  if (isEnabled && typeof initRestaurantSuite === 'function') {
+    initRestaurantSuite();
+  }
+
+  showToast(isEnabled ? 'success' : 'info', isEnabled 
+    ? '🍽️ Restaurant Suite Enabled! Kitchen Display (KOT) and Table Management added to sidebar.' 
+    : 'Restaurant Suite Disabled. Click "Save Settings" to persist.');
+};
+
+window.onBizTypeChange = async (type) => {
+  const isRest = (type === 'Restaurant');
+  const enabledCb = document.getElementById('set-restaurant-enabled');
+  if (isRest) {
+    if (enabledCb) enabledCb.checked = true;
+    currentSettings.biz_type = 'Restaurant';
+    currentSettings.restaurant_mode = 'true';
+    toggleRestaurantSetting(true);
+    const restCard = document.getElementById('card-restaurant-settings');
+    if (restCard) {
+      restCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  } else {
+    renderRestaurantSettingsUI();
+  }
+};
+
+window.seedDefaultTables = (silent = false) => {
+  restaurantTables = [
+    { id: 'T1', name: 'Table 1', seats: 4 },
+    { id: 'T2', name: 'Table 2', seats: 2 },
+    { id: 'T3', name: 'Table 3', seats: 4 },
+    { id: 'T4', name: 'Table 4', seats: 6 },
+    { id: 'T5', name: 'Table 5', seats: 2 },
+    { id: 'T6', name: 'Table 6', seats: 4 },
+    { id: 'T7', name: 'Table 7', seats: 8 },
+    { id: 'T8', name: 'Table 8', seats: 4 },
+    { id: 'VIP1', name: 'VIP Lounge 1', seats: 6 },
+    { id: 'OUT1', name: 'Garden Table 1', seats: 4 }
+  ];
+  currentSettings.tables_config = JSON.stringify(restaurantTables);
+  renderRestaurantSettingsUI();
+  if (!silent) {
+    showToast('info', 'Loaded 10 standard dining tables. Click "Save Settings" to persist.');
+  }
+};
+
+window.addConfigTable = async () => {
+  const name = document.getElementById('set-new-table-name')?.value.trim();
+  const seats = parseInt(document.getElementById('set-new-table-seats')?.value) || 4;
+  if (!name) return showToast('error', 'Table name is required');
+
+  const id = 'T-' + Date.now();
+  restaurantTables.push({ id, name, seats });
+  document.getElementById('set-new-table-name').value = '';
+  renderRestaurantSettingsUI();
+  showToast('info', `Added ${name} to list. Click "Save Settings" to persist.`);
+};
+
+window.removeConfigTable = (tableId) => {
+  restaurantTables = restaurantTables.filter(t => t.id !== tableId);
+  renderRestaurantSettingsUI();
+  showToast('info', 'Table removed from list. Click "Save Settings" to persist.');
+};
+
+window.saveRestaurantSettings = async () => {
+  const enabled = document.getElementById('set-restaurant-enabled')?.checked ? 'true' : 'false';
+  const autoprint = document.getElementById('set-kot-autoprint')?.value || 'true';
+  const sound = document.getElementById('set-kot-sound')?.value || 'true';
+  const tablesJson = JSON.stringify(restaurantTables);
+
+  currentSettings.restaurant_mode = enabled;
+  currentSettings.kot_autoprint = autoprint;
+  currentSettings.kot_sound = sound;
+  currentSettings.tables_config = tablesJson;
+
+  const pairs = [
+    { key: 'restaurant_mode', value: enabled },
+    { key: 'kot_autoprint', value: autoprint },
+    { key: 'kot_sound', value: sound },
+    { key: 'tables_config', value: tablesJson }
+  ];
+
+  for (const p of pairs) {
+    const ex = await db.settings.where('key').equals(p.key).first();
+    if (ex) await db.settings.update(ex.id, { value: p.value });
+    else await db.settings.add(p);
+  }
+
+  toggleRestaurantSetting(enabled === 'true');
+  updateDiningTableUI();
+  showToast('success', 'Restaurant settings saved successfully!');
+};
+
+window.saOnBizTypeChange = (type) => {
+  const badge = document.getElementById('sa-restaurant-pack-badge');
+  if (badge) {
+    badge.style.display = (type === 'Restaurant') ? 'block' : 'none';
   }
 };

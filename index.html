@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NexPOS — Universal Point of Sale</title>
 <meta name="description" content="Customizable POS system for retail shops, bookshops, meat shops, grocery stores and more">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta name="theme-color" content="#6366F1">
@@ -73,7 +73,7 @@
         <span id="topbar-biz-type" class="topbar-biz-type">Point of Sale</span>
       </div>
     </div>
-    <div class="topbar-breadcrumb" aria-label="Breadcrumb">
+    <div class="topbar-breadcrumb" id="breadcrumb" aria-label="Breadcrumb">
       <span>NexPOS</span><span class="sep">/</span><strong>Checkout</strong>
     </div>
     <div class="topbar-spacer"></div>
@@ -102,6 +102,15 @@
     </div>
   </div>
 
+  <!-- IMPERSONATION BANNER -->
+  <div class="impersonation-banner" id="impersonation-banner" style="display:none">
+    <div class="imp-content">
+      <i class="fa-solid fa-eye"></i>
+      <span>Viewing as: <strong id="imp-biz-name">Business</strong></span>
+      <button class="btn btn-sm imp-exit-btn" onclick="exitImpersonation()">← Back to Admin Panel</button>
+    </div>
+  </div>
+
   <div class="app-body">
     <!-- SIDEBAR -->
     <div class="sidebar" id="sidebar">
@@ -115,42 +124,48 @@
       </div>
       <button class="sidebar-reveal-btn" type="button" onclick="toggleSidebarReveal()" aria-label="Show or hide sidebar menu" title="Show menu">☰</button>
       <div class="sidebar-section" id="nav-pos">
-        <div class="nav-item active" onclick="nav('pos')"><span class="nav-icon">🛒</span> Point of Sale</div>
-        <div class="nav-item" onclick="nav('dashboard')"><span class="nav-icon">⊞</span> Dashboard</div>
+        <div class="nav-item active" onclick="nav('pos')"><span class="nav-icon"><i class="fa-solid fa-cart-shopping"></i></span> Point of Sale</div>
+        <div class="nav-item" onclick="nav('dashboard')"><span class="nav-icon"><i class="fa-solid fa-chart-pie"></i></span> Dashboard</div>
+      </div>
+      <div class="sidebar-divider restaurant-only" id="divider-restaurant" style="display:none"></div>
+      <div class="sidebar-section restaurant-only" id="nav-restaurant" style="display:none">
+        <div class="sidebar-label">Kitchen & Dining</div>
+        <div class="nav-item" onclick="nav('kot')" id="nav-kot-item"><span class="nav-icon"><i class="fa-solid fa-utensils"></i></span> Kitchen Display (KOT) <span class="badge badge-warning" id="kot-badge-count" style="display:none; margin-left:auto; font-size:10px; padding:2px 6px; border-radius:999px">0</span></div>
+        <div class="nav-item" onclick="nav('tables')" id="nav-tables-item"><span class="nav-icon"><i class="fa-solid fa-chair"></i></span> Table Management</div>
       </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section" id="nav-inventory">
         <div class="sidebar-label">Inventory</div>
-        <div class="nav-item" onclick="nav('products')"><span class="nav-icon">📦</span> Products</div>
-        <div class="nav-item" onclick="nav('categories')"><span class="nav-icon">🏷️</span> Categories</div>
+        <div class="nav-item" onclick="nav('products')"><span class="nav-icon"><i class="fa-solid fa-box"></i></span> Products</div>
+        <div class="nav-item" onclick="nav('categories')"><span class="nav-icon"><i class="fa-solid fa-tags"></i></span> Categories</div>
       </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section" id="nav-sales">
         <div class="sidebar-label">Sales</div>
-        <div class="nav-item" onclick="nav('sales-history')"><span class="nav-icon">📋</span> Sales History</div>
-        <div class="nav-item" onclick="nav('customers')"><span class="nav-icon">👥</span> Customers</div>
+        <div class="nav-item" onclick="nav('sales-history')"><span class="nav-icon"><i class="fa-solid fa-receipt"></i></span> Sales History</div>
+        <div class="nav-item" onclick="nav('customers')"><span class="nav-icon"><i class="fa-solid fa-users"></i></span> Customers</div>
       </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section" id="nav-hr">
         <div class="sidebar-label">HR</div>
-        <div class="nav-item" onclick="nav('user-mgmt')"><span class="nav-icon">👥</span> Staff Management</div>
-        <div class="nav-item" onclick="nav('attendance')"><span class="nav-icon">📅</span> Attendance</div>
-        <div class="nav-item" onclick="nav('advances')"><span class="nav-icon">💸</span> Advances</div>
-        <div class="nav-item" onclick="nav('payroll')" id="nav-payroll-item"><span class="nav-icon">💰</span> Payroll</div>
+        <div class="nav-item" onclick="nav('user-mgmt')"><span class="nav-icon"><i class="fa-solid fa-user-group"></i></span> Staff Management</div>
+        <div class="nav-item" onclick="nav('attendance')"><span class="nav-icon"><i class="fa-solid fa-calendar-check"></i></span> Attendance</div>
+        <div class="nav-item" onclick="nav('advances')"><span class="nav-icon"><i class="fa-solid fa-hand-holding-dollar"></i></span> Advances</div>
+        <div class="nav-item" onclick="nav('payroll')" id="nav-payroll-item"><span class="nav-icon"><i class="fa-solid fa-wallet"></i></span> Payroll</div>
 
       </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section" id="nav-system">
         <div class="sidebar-label">System</div>
-        <div class="nav-item" onclick="nav('ai-reports')" id="nav-ai-reports-item"><span class="nav-icon">📊</span> Reports</div>
-        <div class="nav-item" onclick="nav('settings')"><span class="nav-icon">⚙️</span> Settings</div>
+        <div class="nav-item" onclick="nav('ai-reports')" id="nav-ai-reports-item"><span class="nav-icon"><i class="fa-solid fa-chart-bar"></i></span> Reports</div>
+        <div class="nav-item" onclick="nav('settings')"><span class="nav-icon"><i class="fa-solid fa-gear"></i></span> Settings</div>
       </div>
     </div>
 
     <!-- SUPER ADMIN SIDEBAR (hidden by default) -->
     <div class="sidebar sa-sidebar" id="sa-sidebar" style="display:none">
       <div class="sidebar-brand sa-brand">
-        <div class="sidebar-logo-mark sa-logo-mark">⚡</div>
+        <div class="sidebar-logo-mark sa-logo-mark"><i class="fa-solid fa-bolt"></i></div>
         <div>
           <div class="sidebar-brand-name">NexPOS</div>
           <div class="sidebar-brand-sub sa-brand-sub">Platform Admin</div>
@@ -158,36 +173,26 @@
         <span class="sidebar-role-badge sa-role-badge">Super Admin</span>
       </div>
       <div class="sidebar-section">
-        <div class="nav-item sa-nav active" onclick="saNav('sa-dashboard')"><span class="nav-icon">📊</span> Dashboard</div>
+        <div class="nav-item sa-nav active" onclick="saNav('sa-dashboard')"><span class="nav-icon"><i class="fa-solid fa-chart-pie"></i></span> Dashboard</div>
       </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">
         <div class="sidebar-label sa-label">Businesses</div>
-        <div class="nav-item sa-nav" onclick="saNav('sa-businesses')"><span class="nav-icon">🏢</span> All Businesses</div>
-        <div class="nav-item sa-nav" onclick="saNav('sa-create-business')"><span class="nav-icon">➕</span> Create Business</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-businesses')"><span class="nav-icon"><i class="fa-solid fa-building"></i></span> All Businesses</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-create-business')"><span class="nav-icon"><i class="fa-solid fa-plus"></i></span> Create Business</div>
       </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">
         <div class="sidebar-label sa-label">Platform</div>
-        <div class="nav-item sa-nav" onclick="saNav('sa-activity')"><span class="nav-icon">📋</span> Activity Logs</div>
-        <div class="nav-item sa-nav" onclick="saNav('sa-plans')"><span class="nav-icon">💎</span> Subscription Plans</div>
-        <div class="nav-item sa-nav" onclick="saNav('sa-ai')"><span class="nav-icon">🤖</span> AI Integration</div>
-        <div class="nav-item sa-nav" onclick="saNav('sa-settings')"><span class="nav-icon">⚙️</span> Platform Settings</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-activity')"><span class="nav-icon"><i class="fa-solid fa-list-check"></i></span> Activity Logs</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-plans')"><span class="nav-icon"><i class="fa-solid fa-gem"></i></span> Subscription Plans</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-ai')"><span class="nav-icon"><i class="fa-solid fa-brain"></i></span> AI Integration</div>
+        <div class="nav-item sa-nav" onclick="saNav('sa-settings')"><span class="nav-icon"><i class="fa-solid fa-sliders"></i></span> Platform Settings</div>
       </div>
     </div>
 
-    <!-- IMPERSONATION BANNER -->
-    <div class="impersonation-banner" id="impersonation-banner" style="display:none">
-      <div class="imp-content">
-        <i class="fa-solid fa-eye"></i>
-        <span>Viewing as: <strong id="imp-biz-name">Business</strong></span>
-        <button class="btn btn-sm imp-exit-btn" onclick="exitImpersonation()">← Back to Admin Panel</button>
-      </div>
-    </div>
-
-    <!-- MAIN CONTENT -->
     <div class="main">
-      <div class="breadcrumb" id="breadcrumb"><span>NexPOS</span><span class="sep">/</span><span class="current">Point of Sale</span></div>
+      <!-- Breadcrumb is rendered dynamically in topbar -->
 
       <!-- ═══ SUPER ADMIN SCREENS ═══ -->
 
@@ -196,6 +201,7 @@
         <div class="page">
           <div class="page-header">
             <div><div class="page-title sa-title">Platform Dashboard</div><div class="page-subtitle">Overview of all businesses on NexPOS</div></div>
+            <div class="page-actions"><span class="date-pill"><i class="fa-regular fa-calendar" style="margin-right:4px; color:var(--brand)"></i> All-Time Overview</span></div>
           </div>
           <div class="summary-grid" id="sa-stats-grid"></div>
           <div class="dash-grid" style="margin-top:24px">
@@ -255,11 +261,22 @@
                   <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Unique identifier. Lowercase, no spaces (use hyphens)</div>
                 </div>
                 <div class="form-group"><label class="form-label">Business Type</label>
-                  <select class="form-input" id="sa-new-biz-type">
+                  <select class="form-input" id="sa-new-biz-type" onchange="saOnBizTypeChange(this.value)">
                     <option>Retail Shop</option><option>Grocery Store</option><option>Bookshop</option><option>Meat Shop</option>
                     <option>Bakery</option><option>Pharmacy</option><option>Hardware Store</option><option>Restaurant</option>
                     <option>Electronics Store</option><option>Clothing Store</option><option>Salon & Spa</option><option>Other</option>
                   </select>
+                </div>
+                <div id="sa-restaurant-pack-badge" style="display:none; grid-column:span 2; background:rgba(99,102,241,0.06); border:1px solid rgba(99,102,241,0.25); border-radius:10px; padding:12px 14px; margin-bottom:6px">
+                  <div style="display:flex; align-items:center; gap:8px; font-weight:700; color:var(--brand); font-size:13px">
+                    <i class="fa-solid fa-utensils"></i> 🍽️ Restaurant Hospitality Pack Included
+                  </div>
+                  <div style="font-size:11.5px; color:var(--text-secondary); margin-top:4px; line-height:1.45;">
+                    • <strong>Kitchen Order Tickets (KOT)</strong> with live status tracking & sequential numbering<br>
+                    • <strong>Kitchen Display System (KDS)</strong> screen with live preparation timers<br>
+                    • <strong>Table Floor Management</strong> (Dine-In, Takeaway, Delivery, Seating)<br>
+                    • <strong>Chef 80mm Thermal Print</strong> (cooking instructions & table notes without prices)
+                  </div>
                 </div>
                 <div class="form-group"><label class="form-label">Currency</label><input class="form-input" id="sa-new-biz-currency" value="Rs."></div>
                 <div class="form-group"><label class="form-label">Tax Rate (%)</label><input class="form-input" type="number" id="sa-new-biz-tax" value="0" step="0.1"></div>
@@ -564,7 +581,9 @@
               </div>
               <div class="search-input-wrap pos-search-wrap">
                 <span class="search-icon"><i class="fa-solid fa-magnifying-glass"></i></span>
-                <input class="search-input" id="pos-search" placeholder="Search products by name, SKU, or barcode...">
+                <input class="search-input" id="pos-search" placeholder="Search products, SKU or barcode..." autocomplete="off">
+                <button class="search-clear-btn" id="pos-search-clear" onclick="document.getElementById('pos-search').value=''; renderPosGrid();" title="Clear search" type="button">✕</button>
+                <kbd class="search-kbd" title="Press / to search">/</kbd>
                 <button id="scan-btn" class="scan-btn" onclick="openBarcodeScanner()" title="Scan Barcode" aria-label="Scan barcode"><i class="fa-solid fa-barcode"></i></button>
               </div>
               <div id="pos-cat-filters" class="pos-cat-filters"></div>
@@ -580,6 +599,26 @@
                 </div>
                 <button class="btn btn-ghost btn-sm" onclick="clearCart()" title="Clear Cart"><i class="fa-regular fa-trash-can"></i> Clear</button>
               </div>
+              <div class="pos-dining-bar restaurant-only" id="pos-dining-bar" style="display:none; padding:10px 14px; background:var(--surface-2); border-bottom:1px solid var(--border)">
+                <div class="dining-type-selector">
+                  <button type="button" class="dining-type-btn active" data-type="dine_in" onclick="setDiningType('dine_in')">
+                    <i class="fa-solid fa-utensils"></i> Dine-In
+                  </button>
+                  <button type="button" class="dining-type-btn" data-type="takeaway" onclick="setDiningType('takeaway')">
+                    <i class="fa-solid fa-bag-shopping"></i> Takeaway
+                  </button>
+                  <button type="button" class="dining-type-btn" data-type="delivery" onclick="setDiningType('delivery')">
+                    <i class="fa-solid fa-motorcycle"></i> Delivery
+                  </button>
+                </div>
+                <div class="dining-table-row" id="dining-table-row" style="margin-top:8px">
+                  <button type="button" class="btn btn-secondary btn-full btn-sm dining-table-btn" onclick="openTablePickerModal()">
+                    <span><i class="fa-solid fa-chair"></i> <strong id="pos-selected-table-name">Table 1</strong> (<span id="pos-selected-table-seats">4</span> Seats)</span>
+                    <span class="badge badge-completed" id="pos-table-status-pill" style="margin-left:auto; font-size:10px">Vacant</span>
+                    <span style="margin-left:6px">▾</span>
+                  </button>
+                </div>
+              </div>
               <div class="cart-customer">
                 <button class="btn btn-secondary btn-full btn-sm" onclick="openCustomerSelect()">
                   <span>👤</span> <span id="cart-customer-name">Walk-in Customer</span> <span style="margin-left:auto">▾</span>
@@ -594,6 +633,9 @@
                 <div class="cart-actions">
                   <button class="btn btn-secondary" onclick="holdCart()">⏸ Hold</button>
                   <button class="btn btn-secondary" onclick="applyDiscount()">🏷️ Discount</button>
+                  <button class="btn btn-warning btn-kot-action restaurant-only" id="btn-fire-kot" onclick="sendOrderToKitchen()" title="Fire order to kitchen KOT" style="display:none">
+                    <i class="fa-solid fa-fire-burner"></i> Send to KOT
+                  </button>
                 </div>
                 <div class="payment-btns">
                   <button class="btn btn-primary btn-full cash-payment-btn" onclick="payNow('cash')"><i class="fa-solid fa-money-bill-wave"></i> Cash Payment</button>
@@ -607,6 +649,102 @@
           </div> <!-- /pos-cart-wrap -->
         </div> <!-- /pos-layout -->
       </div> <!-- /screen-pos -->
+
+      <!-- KITCHEN DISPLAY SYSTEM (KDS / KOT) SCREEN -->
+      <div class="screen" id="screen-kot">
+        <div class="page">
+          <div class="page-header">
+            <div>
+              <div class="page-title"><i class="fa-solid fa-utensils"></i> Kitchen Display System (KDS)</div>
+              <div class="page-subtitle">Live Kitchen Order Tickets & Chef Preparation Board</div>
+            </div>
+            <div class="page-actions" style="display:flex; gap:8px; align-items:center;">
+              <span class="status-pill online" id="kot-live-indicator"><span class="status-dot"></span> Live Kitchen</span>
+              <button class="btn btn-secondary btn-sm" onclick="toggleKdsSound()" id="btn-kds-sound" title="Toggle audio chime">
+                <i class="fa-solid fa-volume-high"></i> Sound On
+              </button>
+              <button class="btn btn-secondary btn-sm" onclick="renderKOTScreen()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+            </div>
+          </div>
+
+          <!-- KDS Filter Tabs Bar -->
+          <div class="card" style="margin-bottom:16px;">
+            <div class="filter-bar" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+              <div class="btn-group" id="kot-filter-group">
+                <button class="btn btn-ghost btn-sm active" id="btn-kot-active" onclick="setKotFilter('active')">
+                  Active Orders (<span id="kot-count-active">0</span>)
+                </button>
+                <button class="btn btn-ghost btn-sm" id="btn-kot-preparing" onclick="setKotFilter('preparing')">
+                  🍳 Preparing (<span id="kot-count-preparing">0</span>)
+                </button>
+                <button class="btn btn-ghost btn-sm" id="btn-kot-ready" onclick="setKotFilter('ready')">
+                  ✅ Ready (<span id="kot-count-ready">0</span>)
+                </button>
+                <button class="btn btn-ghost btn-sm" id="btn-kot-completed" onclick="setKotFilter('completed')">
+                  📦 Completed Today (<span id="kot-count-completed">0</span>)
+                </button>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <input class="form-input form-input-sm" id="kot-search" placeholder="Filter by Table / KOT..." oninput="filterKotTickets()" style="width:200px">
+              </div>
+            </div>
+          </div>
+
+          <!-- Live KOT Tickets Grid -->
+          <div id="kot-tickets-grid" class="kot-grid"></div>
+        </div>
+      </div>
+
+      <!-- TABLE & DINING MANAGEMENT SCREEN -->
+      <div class="screen" id="screen-tables">
+        <div class="page">
+          <div class="page-header">
+            <div>
+              <div class="page-title"><i class="fa-solid fa-chair"></i> Dining & Table Management</div>
+              <div class="page-subtitle">Real-time floor plan, table occupancy, and guest orders</div>
+            </div>
+            <div class="page-actions" style="display:flex; gap:8px;">
+              <button class="btn btn-primary btn-sm" onclick="openAddNewTableModal()"><i class="fa-solid fa-plus"></i> Add Table</button>
+              <button class="btn btn-secondary btn-sm" onclick="renderTablesScreen()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+            </div>
+          </div>
+
+          <!-- Table Summary Cards -->
+          <div class="summary-grid" style="margin-bottom:20px;">
+            <div class="summary-card">
+              <div class="summary-icon" style="color:var(--brand); background:rgba(99,102,241,0.1)"><i class="fa-solid fa-chair"></i></div>
+              <div>
+                <div class="summary-label">Total Tables</div>
+                <div class="summary-val" id="tables-total-count">0</div>
+              </div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-icon" style="color:var(--success); background:rgba(16,185,129,0.1)"><i class="fa-solid fa-circle-check"></i></div>
+              <div>
+                <div class="summary-label">Vacant & Clean</div>
+                <div class="summary-val" id="tables-vacant-count" style="color:var(--success)">0</div>
+              </div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-icon" style="color:var(--warning); background:rgba(245,158,11,0.1)"><i class="fa-solid fa-utensils"></i></div>
+              <div>
+                <div class="summary-label">Occupied / Dining</div>
+                <div class="summary-val" id="tables-occupied-count" style="color:var(--warning)">0</div>
+              </div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-icon" style="color:var(--brand); background:rgba(79,70,229,0.1)"><i class="fa-solid fa-receipt"></i></div>
+              <div>
+                <div class="summary-label">Active Dining Revenue</div>
+                <div class="summary-val" id="tables-active-revenue">Rs. 0</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Floor Plan / Tables Grid -->
+          <div id="tables-floor-grid" class="tables-floor-grid"></div>
+        </div>
+      </div>
 
       <!-- DASHBOARD SCREEN -->
       <div class="screen" id="screen-dashboard">
@@ -816,30 +954,32 @@
 
       <!-- PAYROLL SCREEN -->
       <div class="screen" id="screen-payroll">
-        <div class="card">
-          <div class="card-header">
+        <div class="page">
+          <div class="page-header">
             <div>
-              <div class="card-title">Employee Payroll</div>
-              <div class="card-subtitle">Calculate and process salaries based on attendance and advances</div>
+              <div class="page-title">Employee Payroll</div>
+              <div class="page-subtitle">Calculate and process salaries based on attendance and advances</div>
             </div>
             <div class="page-actions"><button class="btn btn-primary btn-sm" onclick="openPayrollRunModal()">+ New Payroll Run</button></div>
           </div>
-          <div class="card-body p-0">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th>Last Paid</th>
-                  <th>Hours Worked</th>
-                  <th>Basic Pay</th>
-                  <th>OT Pay</th>
-                  <th>Advances</th>
-                  <th>Total Due</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="payroll-tbody"></tbody>
-            </table>
+          <div class="card">
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Employee</th>
+                    <th>Last Paid</th>
+                    <th>Hours Worked</th>
+                    <th>Basic Pay</th>
+                    <th>OT Pay</th>
+                    <th>Advances</th>
+                    <th>Total Due</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="payroll-tbody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -880,7 +1020,7 @@
             <div class="form-grid">
               <div class="form-group"><label class="form-label">Business Name</label><input class="form-input" id="set-biz-name" placeholder="My Shop"></div>
               <div class="form-group"><label class="form-label">Business Type</label>
-                <select class="form-input" id="set-biz-type">
+                <select class="form-input" id="set-biz-type" onchange="onBizTypeChange(this.value)">
                   <option value="Retail Shop">Retail Shop</option>
                   <option value="Grocery Store">Grocery Store</option>
                   <option value="Bookshop">Bookshop</option>
@@ -902,6 +1042,74 @@
               <div class="form-group"><label class="form-label">Tax Rate (%)</label><input class="form-input" id="set-tax" type="number" step="0.1" placeholder="0"></div>
               <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="set-phone" placeholder="+94 77 123 4567"></div>
               <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="set-address" placeholder="123 Main Street"></div>
+              <div class="form-group">
+                <label class="form-label">Auto-Print Bill on Payment</label>
+                <select class="form-input" id="set-receipt-autoprint">
+                  <option value="true">Yes — Auto-print bill immediately (Default)</option>
+                  <option value="false">No — Show receipt only (Manual print)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 🍽️ Restaurant & Hospitality Suite Section -->
+            <div id="card-restaurant-settings" style="margin-top:24px; padding:18px 20px; border-radius:12px; border:1px solid #fed7aa; background:linear-gradient(135deg, rgba(255,247,237,0.95), rgba(254,243,199,0.6)); box-shadow:0 1px 3px rgba(0,0,0,0.05)">
+              <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:14px">
+                <div style="display:flex; align-items:center; gap:10px">
+                  <span style="font-size:24px">🍽️</span>
+                  <div>
+                    <div style="font-size:15px; font-weight:700; color:#9a3412; display:flex; align-items:center; gap:8px">
+                      Restaurant & Hospitality Suite
+                      <span class="badge badge-warning" id="set-restaurant-badge" style="font-size:10px; font-weight:700; text-transform:uppercase">Restaurant Active</span>
+                    </div>
+                    <div style="font-size:12px; color:#78350f">Kitchen Order Tickets (KOT), Kitchen Display System (KDS), and Table Floor Management</div>
+                  </div>
+                </div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap">
+                  <button type="button" class="btn btn-warning btn-sm" onclick="nav('kot')" style="font-weight:600"><i class="fa-solid fa-utensils"></i> Open KOT Board</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="nav('tables')" style="font-weight:600"><i class="fa-solid fa-chair"></i> Floor Tables</button>
+                  <button type="button" class="btn btn-primary btn-sm" onclick="nav('pos')" style="font-weight:600"><i class="fa-solid fa-cart-shopping"></i> POS Billing</button>
+                </div>
+              </div>
+
+              <div style="background:#fff; border-radius:10px; padding:14px 16px; border:1px solid #fed7aa; margin-bottom:14px">
+                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:14px; font-weight:600; color:var(--text-primary)">
+                  <input type="checkbox" id="set-restaurant-enabled" onchange="toggleRestaurantSetting(this.checked)" style="width:18px; height:18px; accent-color:var(--brand); cursor:pointer">
+                  <span>Enable Restaurant Suite (Kitchen KOT System & Dining Tables)</span>
+                </label>
+                <div style="font-size:11.5px; color:var(--text-muted); margin-left:28px; margin-top:3px">
+                  When enabled, activates the live Kitchen Display System (KDS), Table Management floor plan, Dine-In/Takeaway/Delivery order types, and 80mm Chef KOT print slips.
+                </div>
+              </div>
+
+              <div id="restaurant-config-fields" class="form-grid" style="margin-top:10px">
+                <div class="form-group">
+                  <label class="form-label">Auto-Print KOT on Send</label>
+                  <select class="form-input" id="set-kot-autoprint">
+                    <option value="true">Yes — Open 80mm KOT print dialog</option>
+                    <option value="false">No — Digital KDS screen only</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">KDS Audio Alert Sound</label>
+                  <select class="form-input" id="set-kot-sound">
+                    <option value="true">Enabled — Play chime on new kitchen order</option>
+                    <option value="false">Muted</option>
+                  </select>
+                </div>
+                <div class="form-group" style="grid-column: span 2">
+                  <label class="form-label" style="display:flex; justify-content:space-between">
+                    <span>Configured Dining Tables (<span id="set-tables-count">0</span>)</span>
+                    <span style="font-size:11px; color:var(--text-muted)">Tables appear on POS dining bar & table manager</span>
+                  </label>
+                  <div id="set-tables-list" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px"></div>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap">
+                    <input class="form-input" id="set-new-table-name" placeholder="Table Name (e.g. Table 9, VIP 2)" style="max-width:240px">
+                    <input class="form-input" id="set-new-table-seats" type="number" placeholder="Seats" style="max-width:100px" value="4">
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="addConfigTable()"><i class="fa-solid fa-plus"></i> Add Table</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="seedDefaultTables()" title="Reset to standard 10 tables"><i class="fa-solid fa-rotate-left"></i> Default Tables</button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div class="form-section-title" style="margin-top:24px;">Appearance</div>
@@ -975,6 +1183,7 @@
               <button class="btn btn-secondary" onclick="loadSettingsForm()">Reset</button>
             </div>
           </div></div>
+
           <div class="card" style="margin-top:20px"><div class="card-body">
             <div class="form-section-title">Quick Setup — Load Business Template</div>
             <div class="page-subtitle" style="margin-bottom:16px">Load sample products and categories for your business type</div>
@@ -1174,11 +1383,38 @@
   </div>
 </div>
 
+<!-- KOT THERMAL RECEIPT MODAL (80mm) -->
+<div class="modal-overlay" id="kot-receipt-overlay">
+  <div class="modal" style="width:400px">
+    <div class="modal-header">
+      <div class="modal-title"><i class="fa-solid fa-utensils"></i> Kitchen Order Ticket (KOT)</div>
+      <button class="modal-close" onclick="closeKotReceipt()">✕</button>
+    </div>
+    <div class="modal-body" id="kot-receipt-body" style="font-family:var(--mono); font-size:13px; color:var(--text-primary); line-height:1.4"></div>
+    <div class="modal-footer" style="flex-wrap:wrap; gap:8px">
+      <button class="btn btn-primary btn-sm" onclick="printKotReceipt()"><i class="fa-solid fa-print"></i> Print KOT</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeKotReceipt()">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast-container" id="toast-container"></div>
 
 <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js';document.head.appendChild(s);"></script>
 <script src="db.js"></script>
 <script src="app.js"></script>
+<script>
+window.addEventListener('keydown', (e) => {
+  if ((e.key === '/' || ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K'))) && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {
+    const s = document.getElementById('pos-search');
+    if (s && s.offsetParent !== null) {
+      e.preventDefault();
+      s.focus();
+      s.select();
+    }
+  }
+});
+</script>
 </body>
 </html>
 

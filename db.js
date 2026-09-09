@@ -327,6 +327,28 @@ async function saCreateOrganization(orgData, adminData) {
     { key: 'phone', value: orgData.phone || '' },
     { key: 'address', value: orgData.address || '' },
   ];
+
+  if (orgData.business_type === 'Restaurant') {
+    defaultSettings.push(
+      { key: 'restaurant_mode', value: 'true' },
+      { key: 'kot_autoprint', value: 'true' },
+      { key: 'kot_sound', value: 'true' },
+      { key: 'kot_next_num', value: '101' },
+      { key: 'tables_config', value: JSON.stringify([
+        { id: 'T1', name: 'Table 1', seats: 4 },
+        { id: 'T2', name: 'Table 2', seats: 2 },
+        { id: 'T3', name: 'Table 3', seats: 4 },
+        { id: 'T4', name: 'Table 4', seats: 6 },
+        { id: 'T5', name: 'Table 5', seats: 2 },
+        { id: 'T6', name: 'Table 6', seats: 4 },
+        { id: 'T7', name: 'Table 7', seats: 8 },
+        { id: 'T8', name: 'Table 8', seats: 4 },
+        { id: 'VIP1', name: 'VIP Lounge 1', seats: 6 },
+        { id: 'OUT1', name: 'Garden Table 1', seats: 4 }
+      ])}
+    );
+  }
+
   for (const s of defaultSettings) {
     await supa.from('settings').insert({ ...s, organization_id: org.id });
   }

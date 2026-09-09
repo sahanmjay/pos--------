@@ -22,7 +22,7 @@ const MIME = {
 // Initialize RAMIS Background Queue
 const ramisQueue = getQueue();
 
-function startServer(port) {
+function startServer(port, callback) {
   const server = http.createServer((req, res) => {
     // CORS Headers for API
     res.setHeader('Access-Control-Allow-Origin', '*');
