@@ -1401,6 +1401,25 @@
 
 <div class="toast-container" id="toast-container"></div>
 
+<!-- APP DIALOGS -->
+<div class="app-dialog-overlay" id="app-dialog-overlay" aria-hidden="true">
+  <section class="app-dialog" id="app-dialog" role="dialog" aria-modal="true" aria-labelledby="app-dialog-title" aria-describedby="app-dialog-message">
+    <div class="app-dialog-icon" id="app-dialog-icon" aria-hidden="true"><i class="fa-solid fa-circle-exclamation"></i></div>
+    <div class="app-dialog-content">
+      <h2 class="app-dialog-title" id="app-dialog-title">Please confirm</h2>
+      <p class="app-dialog-message" id="app-dialog-message"></p>
+      <label class="app-dialog-field" id="app-dialog-field">
+        <span id="app-dialog-label">Your response</span>
+        <input class="form-input" id="app-dialog-input" autocomplete="off">
+      </label>
+    </div>
+    <footer class="app-dialog-actions">
+      <button type="button" class="btn btn-secondary" id="app-dialog-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="app-dialog-confirm">Confirm</button>
+    </footer>
+  </section>
+</div>
+
 <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js';document.head.appendChild(s);"></script>
 <script src="db.js"></script>
 <script src="app.js"></script>
@@ -1418,4 +1437,3 @@ window.addEventListener('keydown', (e) => {
 </script>
 </body>
 </html>
-
