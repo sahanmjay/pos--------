@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NexPOS — Universal Point of Sale</title>
 <meta name="description" content="Customizable POS system for retail shops, bookshops, meat shops, grocery stores and more">
-<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<meta name="theme-color" content="#6366F1">
+<meta name="theme-color" content="#0F172A">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
@@ -17,7 +17,7 @@
 <link rel="shortcut icon" href="favicon.ico">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20260911_bespoke_v1">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -83,7 +83,12 @@
         <i class="fa-solid fa-bars"></i>
       </button>
 
-      <span class="status-pill online" id="connection-status"><span class="status-dot"></span> Online</span>
+      <span class="status-pill terminal-station-pill" id="station-pill" title="Hardware Station ID"><i class="fa-solid fa-desktop" style="margin-right:4px"></i> POS-01</span>
+      <span class="status-pill online" id="connection-status" title="Network Connection Status"><span class="status-dot"></span> Online</span>
+      <span class="status-pill realtime-live" id="realtime-status-pill" title="Live real-time sync active across terminals and devices" onclick="testRealtimePing()">
+        <span class="status-dot"></span>
+        <span id="realtime-status-text">⚡ Live Sync</span>
+      </span>
       <button class="icon-btn" type="button" title="Notifications" aria-label="Notifications"><i class="fa-regular fa-bell"></i></button>
       <span id="topbar-clock" class="date-pill"></span>
       <div class="user-chip">
@@ -93,6 +98,9 @@
           <span class="role-badge" id="role-badge">Admin</span>
         </div>
         <div class="user-dropdown">
+          <div class="user-dropdown-item" id="user-dropdown-offline-toggle" onclick="toggleWorkOfflineMode()">📶 Toggle Work Offline</div>
+          <div class="user-dropdown-item" id="user-dropdown-sync-item" onclick="syncOfflineSalesNow()">☁️ Sync Offline Transactions</div>
+          <div class="user-dropdown-divider"></div>
           <div class="user-dropdown-item" id="user-dropdown-pw-item" onclick="openChangePasswordModal()">🔑 Change Password</div>
           <div class="user-dropdown-item" id="user-dropdown-update-item" onclick="checkAppUpdates()">🔄 Check for Updates</div>
           <div class="user-dropdown-divider"></div>
@@ -575,9 +583,15 @@
         <div class="pos-layout">
           <div class="pos-products-panel">
             <div class="pos-search-bar">
-              <div class="pos-toolbar-title">
-                <span class="eyebrow">Retail checkout</span>
-                <strong>Product Catalogue</strong>
+              <div class="pos-toolbar-header">
+                <div class="pos-toolbar-title">
+                  <span class="eyebrow">Checkout Terminal</span>
+                  <strong>Product Catalogue</strong>
+                </div>
+                <div class="pos-view-toggles" id="pos-view-toggles">
+                  <button type="button" class="view-toggle-btn active" data-view="grid" onclick="setPosViewMode('grid')" title="Visual Cards View"><i class="fa-solid fa-table-cells-large"></i> Cards</button>
+                  <button type="button" class="view-toggle-btn" data-view="compact" onclick="setPosViewMode('compact')" title="High-Density Touch Keys"><i class="fa-solid fa-border-all"></i> Touch Keys</button>
+                </div>
               </div>
               <div class="search-input-wrap pos-search-wrap">
                 <span class="search-icon"><i class="fa-solid fa-magnifying-glass"></i></span>
@@ -594,8 +608,8 @@
             <div class="pos-cart-panel">
               <div class="cart-header">
                 <div>
-                  <span class="eyebrow">Checkout</span>
-                  <h3><i class="fa-solid fa-bag-shopping"></i> Current Order</h3>
+                  <span class="eyebrow">Terminal 01 • Active Ticket</span>
+                  <h3><i class="fa-solid fa-receipt"></i> Current Order</h3>
                 </div>
                 <button class="btn btn-ghost btn-sm" onclick="clearCart()" title="Clear Cart"><i class="fa-regular fa-trash-can"></i> Clear</button>
               </div>
@@ -637,6 +651,19 @@
                     <i class="fa-solid fa-fire-burner"></i> Send to KOT
                   </button>
                 </div>
+                
+                <!-- Fast-Cash One-Tap Hardware Tender Bar -->
+                <div class="fast-cash-bar" id="fast-cash-bar">
+                  <span class="fast-cash-title"><i class="fa-solid fa-bolt"></i> Fast Cash:</span>
+                  <div class="fast-cash-chips">
+                    <button type="button" class="fast-cash-btn exact" onclick="fastCashTender('exact')" title="Pay Exact Amount">Exact</button>
+                    <button type="button" class="fast-cash-btn" onclick="fastCashTender(500)">500</button>
+                    <button type="button" class="fast-cash-btn" onclick="fastCashTender(1000)">1,000</button>
+                    <button type="button" class="fast-cash-btn" onclick="fastCashTender(2000)">2,000</button>
+                    <button type="button" class="fast-cash-btn" onclick="fastCashTender(5000)">5,000</button>
+                  </div>
+                </div>
+
                 <div class="payment-btns">
                   <button class="btn btn-primary btn-full cash-payment-btn" onclick="payNow('cash')"><i class="fa-solid fa-money-bill-wave"></i> Cash Payment</button>
                   <div class="secondary-payment-row">
@@ -1018,6 +1045,29 @@
           <div class="page-header"><div><div class="page-title">Settings</div><div class="page-subtitle">Configure your business</div></div></div>
           <div class="card"><div class="card-body">
             <div class="form-section-title">Business Profile</div>
+            <div class="biz-logo-section" style="margin-bottom: 20px; padding: 16px; background: var(--surface-2); border-radius: 12px; border: 1px solid var(--border); display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+              <div id="biz-logo-preview-box" style="width: 80px; height: 80px; border-radius: 12px; border: 2px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #ffffff; overflow: hidden; position: relative; flex-shrink: 0; box-shadow: 0 2px 6px rgba(0,0,0,0.06);">
+                <img id="biz-logo-preview-img" src="" alt="Logo" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;">
+                <div id="biz-logo-placeholder" style="color: var(--text-muted); text-align: center; font-size: 24px;">
+                  <i class="fa-regular fa-image"></i>
+                </div>
+              </div>
+              <div style="flex: 1; min-width: 220px;">
+                <label class="form-label" style="font-weight: 700; margin-bottom: 4px;">Business Logo</label>
+                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
+                  This logo will appear at the top of printed thermal receipts & digital bills (above business name).
+                </div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                  <input type="file" id="biz-logo-file-input" accept="image/png, image/jpeg, image/webp, image/svg+xml" style="display: none;" onchange="handleLogoFileInput(this)">
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('biz-logo-file-input').click()">
+                    <i class="fa-solid fa-cloud-arrow-up"></i> Upload Logo
+                  </button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btn-remove-logo" onclick="removeBusinessLogo()" style="display: none; color: var(--danger);">
+                    <i class="fa-regular fa-trash-can"></i> Remove
+                  </button>
+                </div>
+              </div>
+            </div>
             <div class="form-grid">
               <div class="form-group"><label class="form-label">Business Name</label><input class="form-input" id="set-biz-name" placeholder="My Shop"></div>
               <div class="form-group"><label class="form-label">Business Type</label>
@@ -1422,7 +1472,7 @@
 
 <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js';document.head.appendChild(s);"></script>
 <script src="db.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=20260910_realtime"></script>
 <script>
 window.addEventListener('keydown', (e) => {
   if ((e.key === '/' || ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K'))) && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {

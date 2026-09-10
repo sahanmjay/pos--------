@@ -42,6 +42,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('online', () => { updateConnectionBadge(); syncOfflineSales(); });
   window.addEventListener('offline', () => { updateConnectionBadge(); showToast('info', 'Working offline — data will sync when connected'); });
   
+  // Initialize Realtime Engine (SSE + BroadcastChannel + Multi-Device Sync)
+  initRealtimeEngine();
+  
   // Physical Barcode Scanner Listener
   initPhysicalScanner();
 
@@ -58,33 +61,275 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function syncOfflineSales() {
-  const queue = JSON.parse(localStorage.getItem('nexpos_offline_queue') || '[]');
-  if (queue.length === 0) return;
-  
-  showToast('info', `Syncing ${queue.length} offline sales...`);
-  for (const saleData of queue) {
-    try {
-      // In a real app, you'd send this to your backend
-      // Here we just re-run the save logic now that we're back online
-      // For this demo, we assume the local Dexie db was already updated,
-      // but if Supabase failed, we'd retry the Supabase sync here.
-      console.log('Syncing sale:', saleData);
-    } catch (e) {
-      console.error('Sync failed for sale:', saleData);
-    }
+  if (typeof syncOfflineSalesNow === 'function') {
+    await syncOfflineSalesNow();
   }
-  localStorage.removeItem('nexpos_offline_queue');
-  showToast('success', 'Offline sales synced successfully');
 }
 
 function updateConnectionBadge() {
-  const el = document.getElementById('connection-status');
-  if (!el) return;
-  const isOnline = navigator.onLine;
-  el.classList.toggle('online', isOnline);
-  el.classList.toggle('offline', !isOnline);
-  el.innerHTML = `<span class="status-dot"></span> ${isOnline ? 'Online' : 'Offline'}`;
+  if (typeof updateOfflineStatusUI === 'function') {
+    updateOfflineStatusUI();
+  } else {
+    const el = document.getElementById('connection-status');
+    if (!el) return;
+    const isOnline = navigator.onLine && !window._forceOfflineMode;
+    el.classList.toggle('online', isOnline);
+    el.classList.toggle('offline', !isOnline);
+    el.innerHTML = `<span class="status-dot"></span> ${isOnline ? 'Online' : 'Offline'}`;
+  }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// ⚡ NEXPOS OMNI-CHANNEL REALTIME ENGINE (SSE + BroadcastChannel + Storage Bus)
+// ═══════════════════════════════════════════════════════════════
+
+const REALTIME_CLIENT_ID = 'term_' + Math.random().toString(36).substr(2, 9);
+let realtimeBroadcastBus = null;
+let realtimeEventSource = null;
+let realtimeReconnectTimer = null;
+let isRealtimeConnected = false;
+
+function initRealtimeEngine() {
+  // A. Instant same-machine tab-to-tab communication (0ms latency)
+  if (typeof BroadcastChannel !== 'undefined') {
+    try {
+      realtimeBroadcastBus = new BroadcastChannel('nexpos_realtime_channel');
+      realtimeBroadcastBus.onmessage = (event) => {
+        if (event && event.data) {
+          handleIncomingRealtimeEvent(event.data);
+        }
+      };
+    } catch (e) {
+      console.warn('BroadcastChannel error:', e);
+    }
+  }
+
+  // B. Cross-Device LAN / Network Sync via Server-Sent Events (SSE)
+  connectRealtimeSSE();
+
+  // C. Storage Fallback for Older Browsers or Multi-Window Sync
+  window.addEventListener('storage', (e) => {
+    if (e.key && e.key.startsWith('nexpos_live_ping_')) {
+      try {
+        const payload = JSON.parse(e.newValue);
+        if (payload && payload.senderId !== REALTIME_CLIENT_ID) {
+          handleIncomingRealtimeEvent(payload);
+        }
+      } catch(err) {}
+    }
+  });
+
+  updateRealtimeStatusBadge(true, 'Live Sync');
+}
+
+function connectRealtimeSSE() {
+  if (typeof EventSource === 'undefined') return;
+
+  try {
+    if (realtimeEventSource) {
+      realtimeEventSource.close();
+    }
+
+    realtimeEventSource = new EventSource('/api/realtime/events');
+
+    realtimeEventSource.onopen = () => {
+      isRealtimeConnected = true;
+      updateRealtimeStatusBadge(true, 'Live Sync');
+      clearTimeout(realtimeReconnectTimer);
+    };
+
+    realtimeEventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data && data.senderId !== REALTIME_CLIENT_ID) {
+          handleIncomingRealtimeEvent(data);
+        }
+      } catch (e) {
+        // Heartbeat or ping
+      }
+    };
+
+    realtimeEventSource.onerror = () => {
+      isRealtimeConnected = false;
+      updateRealtimeStatusBadge(false, 'Sync Paused');
+      if (realtimeEventSource) realtimeEventSource.close();
+
+      // Exponential auto-reconnect
+      clearTimeout(realtimeReconnectTimer);
+      realtimeReconnectTimer = setTimeout(() => {
+        connectRealtimeSSE();
+      }, 5000);
+    };
+  } catch (err) {
+    console.warn('SSE connection notice:', err);
+  }
+}
+
+window.broadcastRealtimeEvent = async (type, payload = {}) => {
+  const eventMsg = {
+    type,
+    payload,
+    senderId: REALTIME_CLIENT_ID,
+    timestamp: Date.now()
+  };
+
+  // 1. Instant local tab dispatch
+  if (realtimeBroadcastBus) {
+    try {
+      realtimeBroadcastBus.postMessage(eventMsg);
+    } catch (e) {}
+  }
+
+  // 2. Storage event fallback
+  try {
+    localStorage.setItem(`nexpos_live_ping_${Date.now() % 5}`, JSON.stringify(eventMsg));
+  } catch(e) {}
+
+  // 3. Network fan-out to other devices (kitchen tablets, POS PCs) via server
+  try {
+    fetch('/api/realtime/broadcast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(eventMsg)
+    }).catch(() => {});
+  } catch (e) {}
+};
+
+function updateRealtimeStatusBadge(connected, text) {
+  const pill = document.getElementById('realtime-status-pill');
+  const txt = document.getElementById('realtime-status-text');
+  if (!pill) return;
+
+  pill.classList.toggle('realtime-live', connected);
+  pill.classList.toggle('realtime-offline', !connected);
+  if (txt) txt.textContent = connected ? (text || '⚡ Live Sync') : '⚠️ Reconnecting';
+}
+
+window.testRealtimePing = () => {
+  broadcastRealtimeEvent('PING', { time: new Date().toLocaleTimeString() });
+  showToast('info', '⚡ Realtime ping sent to all connected terminals and kitchen screens');
+};
+
+async function handleIncomingRealtimeEvent(event) {
+  if (!event || !event.type) return;
+
+  const type = event.type;
+  const payload = event.payload || {};
+
+  switch (type) {
+    case 'KOT_NEW': {
+      // 1. Update in-memory KOTs & tables
+      if (Array.isArray(payload.activeKots)) {
+        activeKots = payload.activeKots;
+      }
+      if (payload.activeTableOrders) {
+        activeTableOrders = payload.activeTableOrders;
+      }
+
+      // 2. Update KDS screen if currently active
+      const kdsScreen = document.getElementById('screen-kot');
+      if (kdsScreen && kdsScreen.classList.contains('active')) {
+        renderKOTScreen();
+      }
+
+      // 3. Play kitchen chime audio
+      if (typeof playKitchenChime === 'function') {
+        playKitchenChime();
+      }
+
+      // 4. Update header badge & table UI
+      if (typeof updateKotBadge === 'function') updateKotBadge();
+      if (typeof updateDiningTableUI === 'function') updateDiningTableUI();
+
+      // 5. Toast alert
+      const kotNum = payload.kot_number || 'New';
+      const tblName = payload.table_name || 'Dine-In';
+      showToast('info', `🍳 New KOT #${kotNum} received for ${tblName}!`);
+      break;
+    }
+
+    case 'KOT_STATUS_UPDATED': {
+      if (Array.isArray(payload.activeKots)) {
+        activeKots = payload.activeKots;
+      }
+      if (payload.activeTableOrders) {
+        activeTableOrders = payload.activeTableOrders;
+      }
+
+      const kdsScreen = document.getElementById('screen-kot');
+      if (kdsScreen && kdsScreen.classList.contains('active')) {
+        renderKOTScreen();
+      }
+
+      const tablesScreen = document.getElementById('screen-tables');
+      if (tablesScreen && tablesScreen.classList.contains('active')) {
+        renderTablesScreen();
+      }
+
+      if (typeof updateKotBadge === 'function') updateKotBadge();
+      if (typeof updateDiningTableUI === 'function') updateDiningTableUI();
+
+      if (payload.status === 'ready') {
+        showToast('success', `🔔 KOT #${payload.kot_number} (${payload.table_name}) is Ready to Serve!`);
+      }
+      break;
+    }
+
+    case 'TABLE_UPDATED': {
+      if (payload.activeTableOrders) {
+        activeTableOrders = payload.activeTableOrders;
+      }
+      if (typeof updateDiningTableUI === 'function') updateDiningTableUI();
+      const tablesScreen = document.getElementById('screen-tables');
+      if (tablesScreen && tablesScreen.classList.contains('active')) {
+        renderTablesScreen();
+      }
+      break;
+    }
+
+    case 'SALE_COMPLETED': {
+      // Refresh POS products stock
+      if (typeof renderPosGrid === 'function') await renderPosGrid();
+
+      // Update Dashboard if on dashboard
+      const dashScreen = document.getElementById('screen-dashboard');
+      if (dashScreen && dashScreen.classList.contains('active')) {
+        initDashboard();
+      }
+
+      // Update Sales History if on sales history
+      const salesScreen = document.getElementById('screen-sales-history');
+      if (salesScreen && salesScreen.classList.contains('active')) {
+        renderSalesHistory();
+      }
+
+      // If restaurant mode, also sync KOTs and tables
+      if (Array.isArray(payload.activeKots)) activeKots = payload.activeKots;
+      if (payload.activeTableOrders) activeTableOrders = payload.activeTableOrders;
+      if (typeof updateKotBadge === 'function') updateKotBadge();
+      if (typeof updateDiningTableUI === 'function') updateDiningTableUI();
+      break;
+    }
+
+    case 'STOCK_UPDATED': {
+      if (typeof renderPosGrid === 'function') await renderPosGrid();
+      const prodScreen = document.getElementById('screen-products');
+      if (prodScreen && prodScreen.classList.contains('active')) {
+        renderProductsTable();
+      }
+      break;
+    }
+
+    case 'PING': {
+      showToast('info', `⚡ Realtime connection verified (${payload.time || 'now'})`);
+      break;
+    }
+
+    default:
+      break;
+  }
+}
+
 
 function updateClock() {
   const d = new Date();
@@ -129,6 +374,7 @@ async function loadSettings() {
       currentSettings.plan_id = org.plan_id || 'free';
     }
     if (!currentSettings.receipt_autoprint) currentSettings.receipt_autoprint = 'true';
+    if (!currentSettings.biz_logo) currentSettings.biz_logo = '';
   } catch (e) {
     console.warn('loadSettings error:', e);
   }
@@ -316,6 +562,23 @@ async function doLogin() {
       }
     }
 
+    // Offline / Local IndexedDB fallback check
+    if (!matchedUser) {
+      try {
+        const localUsers = await idbGetAll('users');
+        if (localUsers && localUsers.length > 0) {
+          matchedUser = localUsers.find(usr => 
+            ((usr.username && usr.username.toLowerCase() === u.toLowerCase()) ||
+             (usr.display_name && usr.display_name.toLowerCase() === u.toLowerCase())) &&
+            usr.password === p &&
+            usr.is_active !== false
+          );
+        }
+      } catch (e) {
+        console.warn('Local offline user lookup notice:', e);
+      }
+    }
+
     // If user record found
     if (matchedUser) {
       // Check if business is deactivated
@@ -495,6 +758,17 @@ async function completeLogin(user, options = {}) {
   renderPosGrid();
   renderCart();
   await updateCartCustomer();
+  if (typeof updateOfflineStatusUI === 'function') updateOfflineStatusUI();
+
+  // Save user locally in IndexedDB for offline authentication
+  if (typeof idbPut === 'function' && user) {
+    idbPut('users', user).catch(() => {});
+  }
+  
+  // Pre-warm offline cache in background
+  if (typeof warmOfflineCache === 'function' && user && user.organization_id) {
+    warmOfflineCache(user.organization_id).catch(() => {});
+  }
 }
 
 async function signOut() {
@@ -961,12 +1235,59 @@ document.getElementById('pos-search').addEventListener('keydown', async (e) => {
   }
 });
 
+let currentPosViewMode = localStorage.getItem('nexpos_pos_view_mode') || 'grid';
+
+window.setPosViewMode = (mode) => {
+  currentPosViewMode = mode;
+  localStorage.setItem('nexpos_pos_view_mode', mode);
+  const btns = document.querySelectorAll('#pos-view-toggles .view-toggle-btn');
+  btns.forEach(b => b.classList.toggle('active', b.getAttribute('data-view') === mode));
+  const grid = document.getElementById('pos-grid');
+  if (grid) {
+    grid.classList.toggle('compact-mode', mode === 'compact');
+  }
+  renderPosGrid();
+};
+
+function getProductCardVisual(p) {
+  if (p.image || p.image_url) {
+    return `<div class="pos-card-media"><img src="${p.image || p.image_url}" alt="${p.name}" class="pos-prod-img" onerror="this.parentElement.innerHTML='<i class=\\\'fa-solid fa-utensils pos-media-icon\\\'></i>'"></div>`;
+  }
+  
+  const cat = p.category || 'General';
+  const catMap = {
+    'Rice & Curry': { bg: 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)', text: '#92400E', icon: 'fa-bowl-rice', label: 'Rice & Curry' },
+    'Noodles': { bg: 'linear-gradient(135deg, #FFE4E6 0%, #FECDD3 100%)', text: '#9F1239', icon: 'fa-bowl-food', label: 'Noodles' },
+    'Snacks': { bg: 'linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%)', text: '#065F46', icon: 'fa-cookie-bite', label: 'Snacks' },
+    'Beverages': { bg: 'linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%)', text: '#1E40AF', icon: 'fa-mug-hot', label: 'Beverage' },
+    'Desserts': { bg: 'linear-gradient(135deg, #F5D0FE 0%, #E879F9 100%)', text: '#701A75', icon: 'fa-ice-cream', label: 'Dessert' },
+    'Specials': { bg: 'linear-gradient(135deg, #E0E7FF 0%, #C7D2FE 100%)', text: '#312E81', icon: 'fa-star', label: 'Special' },
+    'Clothing': { bg: 'linear-gradient(135deg, #F1F5F9 0%, #E2E8F0 100%)', text: '#0F172A', icon: 'fa-shirt', label: 'Clothing' },
+    'Footwear': { bg: 'linear-gradient(135deg, #F1F5F9 0%, #E2E8F0 100%)', text: '#0F172A', icon: 'fa-shoe-prints', label: 'Footwear' },
+    'Bags': { bg: 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)', text: '#78350F', icon: 'fa-bag-shopping', label: 'Bags' },
+    'Chicken': { bg: 'linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%)', text: '#7F1D1D', icon: 'fa-drumstick-bite', label: 'Chicken' },
+    'Beef': { bg: 'linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%)', text: '#7F1D1D', icon: 'fa-bacon', label: 'Beef' },
+    'Bread': { bg: 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)', text: '#78350F', icon: 'fa-bread-slice', label: 'Bakery' },
+    'Cakes': { bg: 'linear-gradient(135deg, #FDF4FF 0%, #F5D0FE 100%)', text: '#701A75', icon: 'fa-cake-candles', label: 'Cake' },
+    'Tools': { bg: 'linear-gradient(135deg, #F1F5F9 0%, #E2E8F0 100%)', text: '#334155', icon: 'fa-wrench', label: 'Tools' },
+    'default': { bg: 'linear-gradient(135deg, #F1F5F9 0%, #E2E8F0 100%)', text: '#475569', icon: 'fa-box', label: 'Product' }
+  };
+  
+  const m = catMap[cat] || catMap['default'];
+  return `
+    <div class="pos-card-media" style="background:${m.bg}; color:${m.text}">
+      <i class="fa-solid ${m.icon} pos-media-icon"></i>
+      <span class="pos-media-watermark">${m.label}</span>
+    </div>
+  `;
+}
+
 function getIcon(cat) {
   return PRODUCT_ICONS[cat] || PRODUCT_ICONS['default'];
 }
 
 async function renderPosGrid() {
-  const term = document.getElementById('pos-search').value.toLowerCase();
+  const term = (document.getElementById('pos-search')?.value || '').toLowerCase();
   let products = await db.products.toArray();
   products = products.filter(p => p.is_active === true).reverse();
   
@@ -974,25 +1295,52 @@ async function renderPosGrid() {
   if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term) || (p.barcode||'').toLowerCase().includes(term));
   
   const grid = document.getElementById('pos-grid');
+  if (!grid) return;
+
+  if (currentPosViewMode === 'compact') {
+    grid.classList.add('compact-mode');
+  } else {
+    grid.classList.remove('compact-mode');
+  }
+
+  if (products.length === 0) {
+    grid.innerHTML = `
+      <div class="pos-no-results">
+        <div class="pos-no-results-icon"><i class="fa-solid fa-box-open"></i></div>
+        <div class="pos-no-results-title">No matching products</div>
+        <div class="pos-no-results-desc">Try clearing the search query or select another category</div>
+      </div>
+    `;
+    return;
+  }
+
   grid.innerHTML = products.map(p => {
     const isOutOfStock = p.stock_qty <= 0;
     const isLowStock = p.stock_qty > 0 && p.stock_qty <= (p.low_stock_threshold || 5);
     const stockLabel = isOutOfStock ? 'Out of stock' : `${p.stock_qty} ${p.unit || ''}`.trim();
     const stockState = isOutOfStock ? 'out' : (isLowStock ? 'low' : 'normal');
+    
+    // In-Cart live indicator
+    const inCartItem = cart.find(i => i.product_id === p.id);
+    const inCartQty = inCartItem ? inCartItem.quantity : 0;
+    const priceNum = Number(p.retail_price || 0);
+
     return `
-      <div class="pos-product-card ${isOutOfStock?'out-of-stock':''} ${isLowStock?'low-stock':''}" onclick="addToCart(${p.id})">
-        <div class="pos-card-topline">
+      <div class="pos-product-card ${isOutOfStock?'out-of-stock':''} ${isLowStock?'low-stock':''} ${inCartQty > 0 ? 'in-cart' : ''}" 
+           onclick="addToCart(${p.id})" 
+           title="${p.name} — ${formatMoney(priceNum)}">
+        ${getProductCardVisual(p)}
+        <div class="pos-card-top-badges">
           <span class="pos-category-label">${p.category || 'General'}</span>
-          <span class="stock-badge ${stockState}">${isLowStock ? 'Low stock' : stockLabel}</span>
+          ${inCartQty > 0 ? `<span class="in-cart-pill"><i class="fa-solid fa-check"></i> ${inCartQty}</span>` : ''}
         </div>
-        <div class="pos-prod-icon-wrap"><div class="pos-prod-icon">${getIcon(p.category)}</div></div>
-        <div class="pos-prod-content">
-          <div class="pos-prod-name" title="${p.name}">${p.name}</div>
-          <div class="pos-prod-meta">${p.sku || p.barcode || 'Retail item'}</div>
-        </div>
-        <div class="pos-prod-footer">
-          <div class="pos-prod-price">${formatMoney(p.retail_price)}</div>
-          <div class="pos-prod-stock ${stockState}">${stockLabel}</div>
+        <div class="pos-prod-body">
+          <div class="pos-prod-name">${p.name}</div>
+          <div class="pos-prod-meta">#${p.sku || p.barcode || 'ITEM'}</div>
+          <div class="pos-prod-footer">
+            <div class="pos-prod-price"><span class="price-curr">Rs.</span><span class="price-val">${priceNum.toLocaleString()}</span><span class="price-dec">.00</span></div>
+            <div class="pos-prod-stock ${stockState}"><span class="stock-dot"></span>${isLowStock ? 'Low stock' : stockLabel}</div>
+          </div>
         </div>
       </div>
     `;
@@ -1017,6 +1365,7 @@ async function addToCart(id) {
     });
   }
   renderCart();
+  renderPosGrid();
 }
 
 window.updateCartQty = (idx, delta) => {
@@ -1028,9 +1377,14 @@ window.updateCartQty = (idx, delta) => {
     showToast('error', 'Max stock reached');
   }
   renderCart();
+  renderPosGrid();
 };
 
-window.removeCartItem = (idx) => { cart.splice(idx, 1); renderCart(); };
+window.removeCartItem = (idx) => { 
+  cart.splice(idx, 1); 
+  renderCart(); 
+  renderPosGrid();
+};
 
 let manualDiscount = 0;
 
@@ -1101,7 +1455,40 @@ function updateTotals() {
   return { subtotal, discount, tax, total };
 }
 
-window.clearCart = async () => { if(await showConfirmation('Clear current cart?', { title: 'Clear cart', confirmLabel: 'Clear cart' })) { cart=[]; manualDiscount=0; renderCart(); } };
+window.clearCart = async () => { 
+  if(await showConfirmation('Clear current cart?', { title: 'Clear cart', confirmLabel: 'Clear cart' })) { 
+    cart=[]; 
+    manualDiscount=0; 
+    renderCart(); 
+    renderPosGrid(); 
+  } 
+};
+
+// ─── HARDWARE FAST-CASH TENDER (Real POS feature) ───
+window.fastCashTender = async (preset) => {
+  if(cart.length === 0) return showToast('error', 'Cart is empty');
+  const { subtotal, discount, tax, total } = updateTotals();
+  let tendered = total;
+  if(preset === 'exact') {
+    tendered = total;
+  } else {
+    const num = Number(preset);
+    if(num < total) {
+      showToast('info', `Rs. ${num.toLocaleString()} is less than bill amount. Opening cash register...`);
+      return openCashPaymentModal(total, subtotal, discount, tax);
+    }
+    tendered = num;
+  }
+  const change = Math.max(0, tendered - total);
+  await executeCheckout('cash', total, tendered, change, subtotal, discount, tax);
+};
+
+window.toggleWorkOfflineMode = () => {
+  if (typeof toggleForceOffline === 'function') {
+    const isNowOffline = toggleForceOffline();
+    showToast(isNowOffline ? 'warning' : 'success', isNowOffline ? '📶 Forced Offline Mode: Sales and receipts save locally in IndexedDB' : '🌐 Online Mode: Cloud connection active');
+  }
+};
 
 async function updateCartCustomer() {
   const cust = await db.customers.get(cartCustomerId);
@@ -1180,7 +1567,7 @@ window.openCashPaymentModal = (total, subtotal, discount, tax) => {
     subtotal,
     discount,
     tax,
-    tendered: 0,
+    tendered: total,
     noteCounts: { 5000: 0, 2000: 0, 1000: 0, 500: 0, 100: 0, 50: 0, 20: 0 },
     coinCounts: { 10: 0, 5: 0, 2: 0, 1: 0 }
   };
@@ -1208,7 +1595,7 @@ window.openCashPaymentModal = (total, subtotal, discount, tax) => {
         </label>
         <div class="cash-input-row">
           <input class="form-input cash-tendered-input" type="number" step="any" id="cash-tendered-input" 
-            value="" placeholder="0.00" oninput="onCashTenderedInput(this.value)" autocomplete="off">
+            value="${total.toFixed(2)}" placeholder="${total.toFixed(2)}" oninput="onCashTenderedInput(this.value)" autocomplete="off">
         </div>
       </div>
 
@@ -1466,15 +1853,12 @@ function renderCashCalcSummary() {
 
 window.confirmCashSale = async () => {
   const total = currentCashCheckout.total;
-  const tendered = currentCashCheckout.tendered;
-  
-  if (tendered < total) {
-    const diff = total - tendered;
-    if (!await showConfirmation(`Tendered amount (${formatMoney(tendered)}) is less than total bill (${formatMoney(total)}). Short by ${formatMoney(diff)}. Finalize anyway?`, { title: 'Payment is short', confirmLabel: 'Finalize sale' })) {
-      return;
-    }
+  let tendered = parseFloat(document.getElementById('cash-tendered-input')?.value);
+  if (isNaN(tendered) || tendered <= 0) {
+    tendered = currentCashCheckout.tendered || total;
   }
 
+  // Directly complete sale and print receipt with NO other confirmation popup
   const change = Math.max(0, tendered - total);
   closeModal();
   await executeCheckout('cash', total, tendered, change, currentCashCheckout.subtotal, currentCashCheckout.discount, currentCashCheckout.tax);
@@ -1504,15 +1888,38 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     cart = []; manualDiscount = 0; cartCustomerId = 1;
     renderCart(); updateCartCustomer();
 
-    // If a restaurant table was checked out, free the table
-    if (typeof activeTableOrders !== 'undefined' && currentDiningType === 'dine_in' && currentTableId) {
-      delete activeTableOrders[currentTableId];
+    // If a restaurant order was checked out, free table and mark its KOTs served
+    if (typeof activeTableOrders !== 'undefined' && currentTableId) {
+      if (currentDiningType === 'dine_in') {
+        delete activeTableOrders[currentTableId];
+      }
+      if (typeof activeKots !== 'undefined' && Array.isArray(activeKots)) {
+        activeKots.forEach(k => {
+          if ((k.table_id === currentTableId || k.id === currentTableId) && k.status !== 'served') {
+            k.status = 'served';
+            k.sale_id = saleId;
+          }
+        });
+      }
       if (typeof saveRestaurantState === 'function') saveRestaurantState();
       if (typeof updateDiningTableUI === 'function') updateDiningTableUI();
+      if (typeof updateKotBadge === 'function') updateKotBadge();
+      if (typeof renderKOTScreen === 'function') renderKOTScreen();
     }
     
     // Display 80mm receipt with Univerzlk branding and auto-print
     showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?tendered:total, true);
+
+    // ⚡ Realtime Broadcast across all connected terminals and kitchen screens
+    if (typeof broadcastRealtimeEvent === 'function') {
+      broadcastRealtimeEvent('SALE_COMPLETED', {
+        sale_id: saleId,
+        total: total,
+        payment_type: paymentType,
+        activeKots: typeof activeKots !== 'undefined' ? activeKots : [],
+        activeTableOrders: typeof activeTableOrders !== 'undefined' ? activeTableOrders : {}
+      });
+    }
 
     // ─── BACKGROUND LOCAL UPDATES (Zero UI Lag) ───
     runInBackground('Post-sale database update', async () => {
@@ -1545,12 +1952,10 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
       customer_id: sale.customer_id
     });
 
-    // Offline sync buffer
-    if(!navigator.onLine) {
-      const queue = JSON.parse(localStorage.getItem('nexpos_offline_queue') || '[]');
-      queue.push({ sale, items: saleItems });
-      localStorage.setItem('nexpos_offline_queue', JSON.stringify(queue));
-      showToast('info', 'Sale saved offline. Will sync when online.');
+    // Offline status notification & UI update
+    if(typeof isOffline === 'function' && isOffline()) {
+      if(typeof updateOfflineStatusUI === 'function') updateOfflineStatusUI();
+      showToast('info', '📶 Sale recorded in offline queue. Will auto-sync when online.');
     }
 
     // Close mobile cart
@@ -1612,9 +2017,15 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
   const shopName = currentSettings.biz_name || 'NexPOS';
   const address = currentSettings.address || '';
   const phone = currentSettings.phone || '';
+  const logo = currentSettings.biz_logo || '';
   
   let html = `
     <div style="text-align:center;margin-bottom:12px;border-bottom:1px dashed var(--border);padding-bottom:8px">
+      ${logo ? `
+        <div style="margin-bottom:8px; display:flex; justify-content:center; align-items:center;">
+          <img src="${logo}" alt="${shopName}" style="max-height:55px; max-width:150px; object-fit:contain; display:block; margin:0 auto;" />
+        </div>
+      ` : ''}
       <h2 style="margin:0;font-size:17px;color:var(--text-primary);letter-spacing:0.5px">${shopName}</h2>
       <div style="color:var(--text-muted);font-size:11px">${address}</div>
       <div style="color:var(--text-muted);font-size:11px">${phone}</div>
@@ -1660,18 +2071,39 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
     banner.style.display = (sale.id) ? 'block' : 'none';
   }
 
-  document.getElementById('receipt-overlay').classList.add('open');
+  const receiptOverlay = document.getElementById('receipt-overlay');
 
-  // 🖨️ Auto-Print Bill on Payment
+  // 🖨️ Auto-Print Bill on Payment (Direct print with zero popup modal blocking)
   const shouldAutoPrint = autoPrint && (currentSettings.receipt_autoprint !== 'false');
   if (shouldAutoPrint) {
-    setTimeout(() => {
-      printReceipt();
-    }, 280);
+    if (receiptOverlay) {
+      receiptOverlay.classList.add('open', 'autoprint-mode');
+    }
+    setTimeout(async () => {
+      await printReceipt();
+      setTimeout(() => {
+        if (receiptOverlay) {
+          receiptOverlay.classList.remove('open', 'autoprint-mode');
+        }
+      }, 400);
+    }, 120);
+  } else {
+    // Regular manual view from history or modal
+    if (receiptOverlay) {
+      receiptOverlay.classList.remove('autoprint-mode');
+      receiptOverlay.classList.add('open');
+    }
   }
 }
 
-window.closeReceipt = () => document.getElementById('receipt-overlay').classList.remove('open');
+window.closeReceipt = () => {
+  const overlay = document.getElementById('receipt-overlay');
+  if (overlay) overlay.classList.remove('open', 'autoprint-mode');
+};
+
+window.addEventListener('afterprint', () => {
+  window.closeReceipt();
+});
 
 window.printReceipt = async () => {
   // If running inside Electron desktop app, use silent thermal printing
@@ -1936,6 +2368,7 @@ window.saveProduct = async () => {
   else await db.products.add(p);
   
   closeModal(); showToast('success', 'Product saved'); renderProductsTable();
+  if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
 };
 
 window.applyTemplate = async (type) => {
@@ -3537,6 +3970,97 @@ function generateSmartSuggestions(invData) {
 }
 
 // --- SETTINGS LOGIC ---
+window.updateLogoPreviewUI = () => {
+  const previewImg = document.getElementById('biz-logo-preview-img');
+  const placeholder = document.getElementById('biz-logo-placeholder');
+  const removeBtn = document.getElementById('btn-remove-logo');
+  const logo = currentSettings.biz_logo;
+
+  if (previewImg && placeholder) {
+    if (logo) {
+      previewImg.src = logo;
+      previewImg.style.display = 'block';
+      placeholder.style.display = 'none';
+      if (removeBtn) removeBtn.style.display = 'inline-flex';
+    } else {
+      previewImg.src = '';
+      previewImg.style.display = 'none';
+      placeholder.style.display = 'block';
+      if (removeBtn) removeBtn.style.display = 'none';
+    }
+  }
+};
+
+window.handleLogoFileInput = (input) => {
+  const file = input?.files?.[0];
+  if (!file) return;
+
+  if (!file.type.startsWith('image/')) {
+    return showToast('error', 'Please select a valid image file (PNG, JPG, WebP, SVG)');
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = async () => {
+      // Scale down image to max 360px width or 180px height for optimal receipt printing & tiny storage
+      const maxW = 360;
+      const maxH = 180;
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxW || height > maxH) {
+        const ratio = Math.min(maxW / width, maxH / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+
+      const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+      const compressedDataUrl = canvas.toDataURL(mimeType, 0.88);
+
+      currentSettings.biz_logo = compressedDataUrl;
+      updateLogoPreviewUI();
+
+      // Auto-save to settings database
+      try {
+        const existing = await db.settings.where('key').equals('biz_logo').first();
+        if (existing) {
+          await db.settings.update(existing.id, { value: compressedDataUrl });
+        } else {
+          await db.settings.add({ key: 'biz_logo', value: compressedDataUrl });
+        }
+        showToast('success', 'Business logo uploaded and saved!');
+      } catch (err) {
+        console.error('Error saving logo:', err);
+        showToast('success', 'Logo ready. Click Save Settings to persist.');
+      }
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+  input.value = '';
+};
+
+window.removeBusinessLogo = async () => {
+  currentSettings.biz_logo = '';
+  updateLogoPreviewUI();
+  try {
+    const existing = await db.settings.where('key').equals('biz_logo').first();
+    if (existing) {
+      await db.settings.update(existing.id, { value: '' });
+    }
+    showToast('info', 'Business logo removed.');
+  } catch (err) {
+    console.warn('Error clearing logo:', err);
+  }
+};
+
 window.loadSettingsForm = () => {
   document.getElementById('set-biz-name').value = currentSettings.biz_name || '';
   document.getElementById('set-biz-type').value = currentSettings.biz_type || 'Retail Shop';
@@ -3556,6 +4080,7 @@ window.loadSettingsForm = () => {
     else btn.classList.remove('active');
   });
 
+  updateLogoPreviewUI();
   renderBizTemplates();
   loadRamisConfigUI();
   if (typeof renderRestaurantSettingsUI === 'function') {
@@ -3736,6 +4261,7 @@ window.saveSettings = async () => {
     const isRestEnabled = document.getElementById('set-restaurant-enabled')?.checked || document.getElementById('set-biz-type')?.value === 'Restaurant';
     const settings = {
       biz_name: document.getElementById('set-biz-name').value,
+      biz_logo: currentSettings.biz_logo || '',
       biz_type: document.getElementById('set-biz-type').value,
       currency: document.getElementById('set-currency').value,
       tax_rate: document.getElementById('set-tax').value,
@@ -5792,6 +6318,7 @@ window.sendOrderToKitchen = async () => {
       product_id: i.product_id,
       name: i.name,
       quantity: i.quantity,
+      unit_price: Number(i.unit_price) || 0,
       unit: i.unit || 'portion',
       notes: i.notes || '',
       is_done: false
@@ -5815,6 +6342,16 @@ window.sendOrderToKitchen = async () => {
   updateDiningTableUI();
   updateKotBadge();
   playKitchenChime();
+
+  // ⚡ Live Realtime Broadcast to Kitchen Screen & other devices
+  if (typeof broadcastRealtimeEvent === 'function') {
+    broadcastRealtimeEvent('KOT_NEW', {
+      kot_number: nextNum,
+      table_name: tableName,
+      activeKots,
+      activeTableOrders
+    });
+  }
 
   showToast('success', `🍳 KOT #${nextNum} sent to Kitchen (${tableName})`);
 
@@ -5991,15 +6528,20 @@ window.renderKOTScreen = () => {
               <i class="fa-solid fa-check"></i> Mark Ready
             </button>
           ` : (k.status === 'ready' ? `
-            <button class="btn btn-success btn-sm" onclick="markKotServed('${k.id}')" style="flex:1; background:var(--success); color:#fff; border:none">
-              <i class="fa-solid fa-bell-concierge"></i> Mark Served
+            <button class="btn btn-success btn-sm" onclick="openKotBillCheckout('${k.id}')" style="flex:1; background:var(--success); color:#fff; border:none; font-weight:700">
+              <i class="fa-solid fa-receipt"></i> Print Bill & Complete
             </button>
           ` : `
-            <button class="btn btn-secondary btn-sm" onclick="markKotReady('${k.id}')" style="flex:1">
-              Reopen
-            </button>
+            <div style="display:flex; gap:6px; flex:1">
+              <button class="btn btn-secondary btn-sm" onclick="reprintKotBill('${k.id}')" style="flex:1; font-weight:600" title="Reprint Customer Bill Receipt">
+                <i class="fa-solid fa-receipt"></i> Reprint Bill
+              </button>
+              <button class="btn btn-ghost btn-sm" onclick="markKotReady('${k.id}')" title="Reopen ticket to Ready">
+                <i class="fa-solid fa-rotate-left"></i>
+              </button>
+            </div>
           `)}
-          <button class="btn btn-secondary btn-sm btn-icon" onclick="reprintKot('${k.id}')" title="Reprint Kitchen Ticket">
+          <button class="btn btn-secondary btn-sm btn-icon" onclick="reprintKot('${k.id}')" title="Reprint Kitchen Ticket (KOT)">
             <i class="fa-solid fa-print"></i>
           </button>
         </div>
@@ -6038,6 +6580,16 @@ window.toggleKotItemDone = async (kotId, itemIdx) => {
   kot.items[itemIdx].is_done = !kot.items[itemIdx].is_done;
   await saveRestaurantState();
   renderKOTScreen();
+
+  if (typeof broadcastRealtimeEvent === 'function') {
+    broadcastRealtimeEvent('KOT_STATUS_UPDATED', {
+      kot_number: kot.kot_number,
+      table_name: kot.table_name,
+      status: kot.status,
+      activeKots,
+      activeTableOrders
+    });
+  }
 };
 
 window.markKotReady = async (kotId) => {
@@ -6047,22 +6599,146 @@ window.markKotReady = async (kotId) => {
   await saveRestaurantState();
   updateKotBadge();
   renderKOTScreen();
+
+  // ⚡ Live Realtime Broadcast to Waiters, POS & Tables
+  if (typeof broadcastRealtimeEvent === 'function') {
+    broadcastRealtimeEvent('KOT_STATUS_UPDATED', {
+      kot_number: kot.kot_number,
+      table_name: kot.table_name,
+      status: 'ready',
+      activeKots,
+      activeTableOrders
+    });
+  }
+
   showToast('success', `KOT #${kot.kot_number} (${kot.table_name}) marked Ready to Serve!`);
 };
 
 window.markKotServed = async (kotId) => {
-  const kot = activeKots.find(k => k.id === kotId);
-  if (!kot) return;
-  kot.status = 'served';
-  await saveRestaurantState();
-  updateKotBadge();
-  renderKOTScreen();
-  showToast('info', `KOT #${kot.kot_number} completed and served.`);
+  // Order must not be completed without printing the bill!
+  return openKotBillCheckout(kotId);
 };
 
 window.reprintKot = (kotId) => {
   const kot = activeKots.find(k => k.id === kotId);
   if (kot) showKotReceipt(kot);
+};
+
+// ─── KDS BILL & ORDER COMPLETION FLOW (Goes directly to POS Dashboard) ───
+window.openKotBillCheckout = async (kotId) => {
+  const kot = activeKots.find(k => k.id === kotId);
+  if (!kot) return showToast('error', 'Kitchen order not found');
+
+  // Gather items:
+  // If dine_in table has activeTableOrders, use the full table order items
+  let orderItems = [];
+  let customerId = 1;
+  const tableOrder = (kot.order_type === 'dine_in' && activeTableOrders[kot.table_id]) ? activeTableOrders[kot.table_id] : null;
+
+  if (tableOrder && Array.isArray(tableOrder.items) && tableOrder.items.length > 0) {
+    orderItems = tableOrder.items.map(it => ({ ...it }));
+    customerId = tableOrder.customerId || 1;
+  } else if (Array.isArray(kot.items) && kot.items.length > 0) {
+    orderItems = kot.items.map(it => ({ ...it }));
+  }
+
+  if (orderItems.length === 0) {
+    return showToast('error', 'No items found in this order to bill.');
+  }
+
+  // Ensure every item has a valid unit_price and stock (lookup from products db if needed)
+  for (const item of orderItems) {
+    if (typeof item.unit_price !== 'number' || isNaN(item.unit_price) || item.unit_price <= 0) {
+      try {
+        let p = null;
+        if (item.product_id) p = await db.products.get(item.product_id);
+        if (!p && item.name) p = await db.products.where('name').equals(item.name).first();
+        item.unit_price = p ? Number(p.retail_price || p.price || 0) : 0;
+        if (p && !item.stock) item.stock = p.stock_qty;
+      } catch (e) {
+        item.unit_price = item.unit_price || 0;
+      }
+    }
+    if (typeof item.stock === 'undefined') item.stock = 999;
+  }
+
+  // Transfer all order details directly to the POS dashboard!
+  currentDiningType = kot.order_type || 'dine_in';
+  currentTableId = kot.table_id || 'T1';
+  cartCustomerId = customerId || 1;
+  cart = orderItems.map(i => ({
+    product_id: i.product_id,
+    name: i.name,
+    unit_price: Number(i.unit_price) || 0,
+    quantity: Number(i.quantity) || 1,
+    stock: i.stock || 999,
+    notes: i.notes || '',
+    unit: i.unit || 'portion'
+  }));
+
+  // Ensure activeTableOrders has this order in case table state is checked
+  if (currentDiningType === 'dine_in' && currentTableId) {
+    if (!activeTableOrders[currentTableId]) {
+      activeTableOrders[currentTableId] = {
+        items: cart.map(i => ({ ...i })),
+        customerId: cartCustomerId,
+        openedAt: kot.created_at || new Date().toISOString(),
+        kots: [kot.kot_number]
+      };
+    }
+  }
+
+  closeModal();
+  nav('pos');
+  updateDiningTableUI();
+  await updateCartCustomer();
+  renderCart();
+
+  showToast('info', `Order "${kot.table_name}" (KOT #${kot.kot_number}) loaded into POS. Choose payment to complete.`);
+
+  // Directly open Cash Payment modal so the user can complete cash sale in 1 click
+  setTimeout(() => {
+    payNow('cash');
+  }, 100);
+};
+
+window.reprintKotBill = async (kotId) => {
+  const kot = activeKots.find(k => k.id === kotId);
+  if (!kot) return showToast('error', 'Kitchen order not found');
+
+  if (kot.sale_id) {
+    const sale = await db.sales.get(kot.sale_id);
+    const items = await db.sale_items.where('sale_id').equals(kot.sale_id).toArray();
+    if (sale && items && items.length > 0) {
+      showReceipt(sale, items, 0, sale.total_amount, true);
+      return;
+    }
+  }
+
+  // Fallback: create receipt view from KOT items
+  const items = (kot.items || []).map(it => ({
+    product_name: it.name,
+    quantity: Number(it.quantity) || 1,
+    unit_price: Number(it.unit_price) || 0,
+    line_total: (Number(it.quantity) || 1) * (Number(it.unit_price) || 0)
+  }));
+  const subtotal = items.reduce((s, it) => s + it.line_total, 0);
+  const taxRate = parseFloat(currentSettings.tax_rate || 0);
+  const tax = Number((subtotal * (taxRate / 100)).toFixed(2));
+  const total = Number((subtotal + tax).toFixed(2));
+
+  const sale = {
+    id: `KOT-${kot.kot_number}`,
+    date: kot.created_at || new Date().toISOString(),
+    subtotal,
+    discount: 0,
+    tax,
+    total_amount: total,
+    payment_type: 'cash',
+    cashier: kot.waiter || 'Staff'
+  };
+
+  showReceipt(sale, items, 0, total, true);
 };
 
 // 🍽️ TABLE MANAGEMENT SCREEN LOGIC
@@ -6253,6 +6929,9 @@ window.clearTableOrder = async (tableId) => {
   closeModal();
   renderTablesScreen();
   updateDiningTableUI();
+  if (typeof broadcastRealtimeEvent === 'function') {
+    broadcastRealtimeEvent('TABLE_UPDATED', { activeTableOrders });
+  }
   showToast('info', `Table cleared and marked vacant.`);
 };
 

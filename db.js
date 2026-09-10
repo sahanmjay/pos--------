@@ -6,41 +6,8 @@ if (typeof supabase !== 'undefined') {
   const { createClient } = supabase;
   supa = createClient(SUPABASE_URL, SUPABASE_KEY);
 } else {
-  console.error("Supabase script not loaded. Running in offline/mock mode.");
-  // Mock supa client to prevent crashes
-  supa = {
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            eq: () => ({
-              limit: () => ({
-                maybeSingle: async () => ({ data: null, error: { message: "Offline mode" } })
-              })
-            })
-          })
-        }),
-        order: () => ({
-          eq: () => ({ data: [], error: { message: "Offline mode" } }),
-          then: (cb) => cb({ data: [], error: { message: "Offline mode" } })
-        }),
-        neq: () => ({
-          order: () => ({ data: [], error: { message: "Offline mode" } })
-        })
-      }),
-      insert: () => ({
-        select: () => ({ single: async () => ({ data: { id: 0 }, error: null }) }),
-        then: (cb) => cb({ error: null })
-      }),
-      update: () => ({
-        eq: async () => ({ error: null })
-      }),
-      delete: () => ({
-        eq: async () => ({ error: null }),
-        neq: async () => ({ error: null })
-      })
-    })
-  };
+  console.warn("Supabase script not loaded. Running in local offline mode.");
+  supa = null;
 }
 
 let currentOrgId = null;
@@ -48,34 +15,224 @@ let isSuperAdmin = false;
 
 const GLOBAL_SAAS_TABLES = ['organizations','super_admins','subscription_plans','platform_log','platform_settings'];
 
-// ─── SUPABASE COMPATIBILITY LAYER (with multi-tenancy) ───
+// ─── OFFLINE MODE STATE ───
+window._forceOfflineMode = localStorage.getItem('nexpos_force_offline') === 'true';
+
+function isOffline() {
+  return window._forceOfflineMode === true || !navigator.onLine || !supa;
+}
+
+function toggleForceOffline() {
+  window._forceOfflineMode = !window._forceOfflineMode;
+  localStorage.setItem('nexpos_force_offline', window._forceOfflineMode ? 'true' : 'false');
+  if (typeof updateOfflineStatusUI === 'function') updateOfflineStatusUI();
+  if (!window._forceOfflineMode && navigator.onLine) {
+    syncOfflineQueue();
+  }
+  return window._forceOfflineMode;
+}
+
+// ─── INDEXEDDB LOCAL STORAGE & STORE-AND-FORWARD ENGINE ───
+const IDB_NAME = 'nexpos_local_offline_db';
+const IDB_VERSION = 1;
+const ALL_IDB_STORES = [
+  'organizations','products','categories','customers','sales','sale_items',
+  'users','settings','attendance','held_carts','payroll','advances',
+  'pos_shifts','shift_closures','audit_log','offline_sales_queue'
+];
+
+let _idbPromise = null;
+function getLocalDB() {
+  if (_idbPromise) return _idbPromise;
+  _idbPromise = new Promise((resolve) => {
+    try {
+      if (!window.indexedDB) {
+        console.warn('IndexedDB not supported on this browser, using memory fallback');
+        return resolve(null);
+      }
+      const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onupgradeneeded = (e) => {
+        const d = e.target.result;
+        ALL_IDB_STORES.forEach(s => {
+          if (!d.objectStoreNames.contains(s)) {
+            d.createObjectStore(s, { keyPath: 'id' });
+          }
+        });
+      };
+      req.onsuccess = (e) => resolve(e.target.result);
+      req.onerror = (e) => {
+        console.warn('Failed to open local IndexedDB:', e);
+        resolve(null);
+      };
+    } catch (err) {
+      console.warn('LocalDB init error:', err);
+      resolve(null);
+    }
+  });
+  return _idbPromise;
+}
+
+async function idbGet(storeName, id) {
+  const db = await getLocalDB();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, 'readonly');
+      const req = tx.objectStore(storeName).get(id);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    } catch (e) { resolve(null); }
+  });
+}
+
+async function idbGetAll(storeName) {
+  const db = await getLocalDB();
+  if (!db) return [];
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, 'readonly');
+      const req = tx.objectStore(storeName).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    } catch (e) { resolve([]); }
+  });
+}
+
+async function idbPut(storeName, item) {
+  const db = await getLocalDB();
+  if (!db || !item) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, 'readwrite');
+      tx.objectStore(storeName).put(item);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    } catch (e) { resolve(false); }
+  });
+}
+
+async function idbPutMany(storeName, items) {
+  const db = await getLocalDB();
+  if (!db || !Array.isArray(items) || items.length === 0) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      for (const item of items) {
+        if (item && item.id !== undefined) store.put(item);
+      }
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    } catch (e) { resolve(false); }
+  });
+}
+
+async function idbDelete(storeName, id) {
+  const db = await getLocalDB();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, 'readwrite');
+      tx.objectStore(storeName).delete(id);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    } catch (e) { resolve(false); }
+  });
+}
+
+async function idbClear(storeName) {
+  const db = await getLocalDB();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, 'readwrite');
+      tx.objectStore(storeName).clear();
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    } catch (e) { resolve(false); }
+  });
+}
+
+// ─── SUPABASE COMPATIBILITY LAYER WITH OFFLINE STORE-AND-FORWARD ───
 
 class SupaQuery {
   constructor(table, filters) {
     this._table = table;
-    this._filters = filters;
+    this._filters = filters || [];
   }
   equals(val) {
     this._filters.push({ field: this._field, val });
     return this;
   }
   async first() {
-    let q = supa.from(this._table).select('*');
-    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
-      q = q.eq('organization_id', currentOrgId);
+    if (isOffline()) {
+      let all = await idbGetAll(this._table);
+      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
+        all = all.filter(x => x.organization_id == currentOrgId);
+      }
+      for (const f of this._filters) {
+        all = all.filter(x => x[f.field] == f.val);
+      }
+      return all[0] || null;
     }
-    for (const f of this._filters) q = q.eq(f.field, f.val);
-    const { data } = await q.limit(1).maybeSingle();
-    return data || null;
+    try {
+      let q = supa.from(this._table).select('*');
+      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
+        q = q.eq('organization_id', currentOrgId);
+      }
+      for (const f of this._filters) q = q.eq(f.field, f.val);
+      const { data, error } = await q.limit(1).maybeSingle();
+      if (!error && data) {
+        idbPut(this._table, data).catch(() => {});
+        return data;
+      }
+    } catch (e) {
+      console.warn(`[Offline fallback] Query.first failed on ${this._table}:`, e);
+    }
+    // Fallback to local
+    let all = await idbGetAll(this._table);
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
+      all = all.filter(x => x.organization_id == currentOrgId);
+    }
+    for (const f of this._filters) {
+      all = all.filter(x => x[f.field] == f.val);
+    }
+    return all[0] || null;
   }
   async toArray() {
-    let q = supa.from(this._table).select('*');
-    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
-      q = q.eq('organization_id', currentOrgId);
+    if (isOffline()) {
+      let all = await idbGetAll(this._table);
+      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
+        all = all.filter(x => x.organization_id == currentOrgId);
+      }
+      for (const f of this._filters) {
+        all = all.filter(x => x[f.field] == f.val);
+      }
+      return all;
     }
-    for (const f of this._filters) q = q.eq(f.field, f.val);
-    const { data } = await q;
-    return data || [];
+    try {
+      let q = supa.from(this._table).select('*');
+      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
+        q = q.eq('organization_id', currentOrgId);
+      }
+      for (const f of this._filters) q = q.eq(f.field, f.val);
+      const { data, error } = await q;
+      if (!error && data) {
+        idbPutMany(this._table, data).catch(() => {});
+        return data;
+      }
+    } catch (e) {
+      console.warn(`[Offline fallback] Query.toArray failed on ${this._table}:`, e);
+    }
+    // Fallback to local
+    let all = await idbGetAll(this._table);
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
+      all = all.filter(x => x.organization_id == currentOrgId);
+    }
+    for (const f of this._filters) {
+      all = all.filter(x => x[f.field] == f.val);
+    }
+    return all;
   }
 }
 
@@ -83,70 +240,198 @@ class SupaTable {
   constructor(name) { this._name = name; }
 
   async toArray() {
-    let q = supa.from(this._name).select('*').order('id', { ascending: true });
-    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
-      q = q.eq('organization_id', currentOrgId);
+    if (isOffline()) {
+      let local = await idbGetAll(this._name);
+      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
+        local = local.filter(x => x.organization_id == currentOrgId);
+      }
+      return local;
     }
-    const { data, error } = await q;
-    if (error) { console.error('toArray', this._name, error); return []; }
-    return data;
+    try {
+      let q = supa.from(this._name).select('*').order('id', { ascending: true });
+      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
+        q = q.eq('organization_id', currentOrgId);
+      }
+      const { data, error } = await q;
+      if (!error && Array.isArray(data)) {
+        idbPutMany(this._name, data).catch(() => {});
+        return data;
+      }
+    } catch (e) {
+      console.warn(`[Offline fallback] toArray on ${this._name}:`, e);
+    }
+    let local = await idbGetAll(this._name);
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
+      local = local.filter(x => x.organization_id == currentOrgId);
+    }
+    return local;
   }
 
   async get(id) {
-    let q = supa.from(this._name).select('*').eq('id', id);
-    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
-      q = q.eq('organization_id', currentOrgId);
+    if (isOffline()) {
+      return await idbGet(this._name, id);
     }
-    const { data } = await q.maybeSingle();
-    return data || null;
+    try {
+      let q = supa.from(this._name).select('*').eq('id', id);
+      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
+        q = q.eq('organization_id', currentOrgId);
+      }
+      const { data, error } = await q.maybeSingle();
+      if (!error && data) {
+        idbPut(this._name, data).catch(() => {});
+        return data;
+      }
+    } catch (e) {
+      console.warn(`[Offline fallback] get on ${this._name}:`, e);
+    }
+    return await idbGet(this._name, id);
   }
 
   async add(item) {
     if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
       item.organization_id = currentOrgId;
     }
-    const { data, error } = await supa.from(this._name).insert(item).select('id').single();
-    if (error) { console.error('add', this._name, error); return null; }
-    return data.id;
+    
+    // Always assign local ID if absent
+    if (item.id === undefined) {
+      item.id = Date.now() + Math.floor(Math.random() * 10000);
+    }
+
+    if (isOffline()) {
+      item._is_offline = true;
+      item._offline_created_at = new Date().toISOString();
+      await idbPut(this._name, item);
+      
+      // If a sale is created offline, queue it for cloud sync
+      if (this._name === 'sales') {
+        await idbPut('offline_sales_queue', item);
+        updateOfflineStatusUI();
+      }
+      return item.id;
+    }
+
+    try {
+      // Online flow
+      const insertPayload = { ...item };
+      // Omit temporary client id so database can generate auto-increment primary key
+      delete insertPayload.id;
+      delete insertPayload._is_offline;
+
+      const { data, error } = await supa.from(this._name).insert(insertPayload).select('id').single();
+      if (!error && data) {
+        item.id = data.id;
+        await idbPut(this._name, item);
+        return data.id;
+      }
+      throw error || new Error('Insert returned no data');
+    } catch (err) {
+      console.warn(`[Offline Fallback] Insertion failed for ${this._name}, saving locally:`, err);
+      item._is_offline = true;
+      item._offline_created_at = new Date().toISOString();
+      await idbPut(this._name, item);
+      if (this._name === 'sales') {
+        await idbPut('offline_sales_queue', item);
+        updateOfflineStatusUI();
+      }
+      return item.id;
+    }
   }
 
   async bulkAdd(items) {
     if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
       items = items.map(i => ({ ...i, organization_id: currentOrgId }));
     }
-    const { error } = await supa.from(this._name).insert(items);
-    if (error) console.error('bulkAdd', this._name, error);
+    items = items.map(i => {
+      if (i.id === undefined) i.id = Date.now() + Math.floor(Math.random() * 10000);
+      return i;
+    });
+
+    // Save locally first
+    await idbPutMany(this._name, items);
+
+    if (!isOffline()) {
+      try {
+        const payloads = items.map(i => {
+          const c = { ...i };
+          delete c.id;
+          delete c._is_offline;
+          return c;
+        });
+        const { error } = await supa.from(this._name).insert(payloads);
+        if (error) console.warn('bulkAdd remote error:', error);
+      } catch (e) {
+        console.warn('bulkAdd online error, kept local:', e);
+      }
+    }
   }
 
   async update(id, changes) {
-    const { error } = await supa.from(this._name).update(changes).eq('id', id);
-    if (error) console.error('update', this._name, error);
+    // Update local cache
+    const existing = await idbGet(this._name, id);
+    if (existing) {
+      const merged = { ...existing, ...changes };
+      await idbPut(this._name, merged);
+    }
+    if (!isOffline()) {
+      try {
+        const { error } = await supa.from(this._name).update(changes).eq('id', id);
+        if (error) console.warn('update remote error:', error);
+      } catch (e) {
+        console.warn('update online error:', e);
+      }
+    }
   }
 
   async delete(id) {
-    const { error } = await supa.from(this._name).delete().eq('id', id);
-    if (error) console.error('delete', this._name, error);
+    await idbDelete(this._name, id);
+    if (!isOffline()) {
+      try {
+        const { error } = await supa.from(this._name).delete().eq('id', id);
+        if (error) console.warn('delete remote error:', error);
+      } catch (e) {
+        console.warn('delete online error:', e);
+      }
+    }
   }
 
   async clear() {
-    let q = supa.from(this._name).delete();
-    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
-      q = q.eq('organization_id', currentOrgId);
-    } else {
-      q = q.neq('id', 0);
+    await idbClear(this._name);
+    if (!isOffline()) {
+      try {
+        let q = supa.from(this._name).delete();
+        if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
+          q = q.eq('organization_id', currentOrgId);
+        } else {
+          q = q.neq('id', 0);
+        }
+        await q;
+      } catch (e) {
+        console.warn('clear online error:', e);
+      }
     }
-    const { error } = await q;
-    if (error) console.error('clear', this._name, error);
   }
 
   async count() {
-    let q = supa.from(this._name).select('*', { count: 'exact', head: true });
-    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
-      q = q.eq('organization_id', currentOrgId);
+    if (isOffline()) {
+      let local = await idbGetAll(this._name);
+      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
+        local = local.filter(x => x.organization_id == currentOrgId);
+      }
+      return local.length;
     }
-    const { count, error } = await q;
-    if (error) return 0;
-    return count;
+    try {
+      let q = supa.from(this._name).select('*', { count: 'exact', head: true });
+      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
+        q = q.eq('organization_id', currentOrgId);
+      }
+      const { count, error } = await q;
+      if (!error && typeof count === 'number') return count;
+    } catch (e) {}
+    let local = await idbGetAll(this._name);
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
+      local = local.filter(x => x.organization_id == currentOrgId);
+    }
+    return local.length;
   }
 
   where(fieldOrObj) {
@@ -187,6 +472,180 @@ const db = {
   platform_log:       new SupaTable('platform_log'),
   platform_settings:  new SupaTable('platform_settings'),
 };
+
+// ─── STORE-AND-FORWARD CLOUD SYNCHRONIZATION ───
+let _isSyncing = false;
+async function syncOfflineQueue() {
+  if (isOffline() || _isSyncing) return 0;
+  _isSyncing = true;
+  let syncedCount = 0;
+  try {
+    const queue = await idbGetAll('offline_sales_queue');
+    if (!queue || queue.length === 0) {
+      _isSyncing = false;
+      updateOfflineStatusUI();
+      return 0;
+    }
+
+    console.log(`[Store-and-Forward] Synchronizing ${queue.length} offline transaction(s)...`);
+    for (const sale of queue) {
+      try {
+        const localSaleId = sale.id;
+        const uploadSale = { ...sale };
+        delete uploadSale.id;
+        delete uploadSale._is_offline;
+        delete uploadSale._offline_created_at;
+
+        // Insert sale into Supabase
+        const { data: newSale, error: saleErr } = await supa.from('sales').insert(uploadSale).select('id').single();
+        if (!saleErr && newSale) {
+          // Sync associated sale items
+          const allItems = await idbGetAll('sale_items');
+          const relatedItems = allItems.filter(it => it.sale_id == localSaleId);
+          for (const it of relatedItems) {
+            const uploadItem = { ...it, sale_id: newSale.id };
+            delete uploadItem.id;
+            delete uploadItem._is_offline;
+            await supa.from('sale_items').insert(uploadItem);
+          }
+          // Remove from sync queue
+          await idbDelete('offline_sales_queue', localSaleId);
+          syncedCount++;
+        }
+      } catch (itemErr) {
+        console.warn('[Store-and-Forward] Error syncing record:', itemErr);
+      }
+    }
+
+    if (syncedCount > 0 && typeof showToast === 'function') {
+      showToast('success', `⚡ Synced ${syncedCount} offline transaction(s) to cloud!`);
+      // Trigger data refresh on active screen
+      if (typeof renderPosGrid === 'function') renderPosGrid();
+      if (typeof loadSalesHistory === 'function') loadSalesHistory();
+    }
+  } catch (err) {
+    console.warn('[Store-and-Forward] Global sync error:', err);
+  } finally {
+    _isSyncing = false;
+    updateOfflineStatusUI();
+  }
+  return syncedCount;
+}
+
+// ─── OFFLINE STATUS UI CONTROLLER ───
+async function updateOfflineStatusUI() {
+  const statusPill = document.getElementById('connection-status');
+  const queueCount = (await idbGetAll('offline_sales_queue')).length;
+  
+  if (statusPill) {
+    if (isOffline()) {
+      statusPill.className = 'status-pill offline';
+      statusPill.innerHTML = `<span class="status-dot"></span> Offline Mode`;
+      statusPill.title = 'Offline mode active. Transactions save locally and sync when reconnected.';
+    } else {
+      statusPill.className = 'status-pill online';
+      statusPill.innerHTML = `<span class="status-dot"></span> Online`;
+      statusPill.title = 'Connected to cloud. Realtime sync active.';
+    }
+  }
+
+  // Queue pill in topbar
+  let queuePill = document.getElementById('offline-queue-pill');
+  if (!queuePill && document.querySelector('.topbar-actions')) {
+    queuePill = document.createElement('span');
+    queuePill.id = 'offline-queue-pill';
+    queuePill.className = 'status-pill warning';
+    queuePill.style.cursor = 'pointer';
+    queuePill.onclick = () => syncOfflineSalesNow();
+    const conn = document.getElementById('connection-status');
+    if (conn && conn.parentNode) conn.parentNode.insertBefore(queuePill, conn.nextSibling);
+  }
+
+  if (queuePill) {
+    if (queueCount > 0) {
+      queuePill.style.display = 'inline-flex';
+      queuePill.innerHTML = `<i class="fa-solid fa-cloud-arrow-up" style="margin-right:4px"></i> <span id="queue-count">${queueCount}</span> Queued (Sync)`;
+      queuePill.title = `${queueCount} sales made offline. Click to upload now.`;
+    } else {
+      queuePill.style.display = 'none';
+    }
+  }
+}
+
+window.syncOfflineSalesNow = async () => {
+  if (isOffline()) {
+    if (typeof showToast === 'function') showToast('warning', 'Currently in offline mode or disconnected. Reconnect to sync.');
+    return;
+  }
+  if (typeof showToast === 'function') showToast('info', 'Synchronizing offline transactions with cloud...');
+  const count = await syncOfflineQueue();
+  if (count === 0 && typeof showToast === 'function') {
+    showToast('info', 'All transactions are already synchronized.');
+  }
+};
+
+window.warmOfflineCache = async (orgId) => {
+  if (isOffline() || !supa) return;
+  try {
+    console.log('[NexPOS Cache] Pre-warming offline cache for organization:', orgId);
+    
+    // 1. Products
+    let prodQuery = supa.from('products').select('*');
+    if (orgId && !isSuperAdmin) prodQuery = prodQuery.eq('organization_id', orgId);
+    const { data: prods } = await prodQuery;
+    if (prods && prods.length) await idbPutMany('products', prods);
+
+    // 2. Categories
+    let catQuery = supa.from('categories').select('*');
+    if (orgId && !isSuperAdmin) catQuery = catQuery.eq('organization_id', orgId);
+    const { data: cats } = await catQuery;
+    if (cats && cats.length) await idbPutMany('categories', cats);
+
+    // 3. Settings
+    let setQuery = supa.from('settings').select('*');
+    if (orgId && !isSuperAdmin) setQuery = setQuery.eq('organization_id', orgId);
+    const { data: sets } = await setQuery;
+    if (sets && sets.length) await idbPutMany('settings', sets);
+
+    // 4. Customers
+    let custQuery = supa.from('customers').select('*');
+    if (orgId && !isSuperAdmin) custQuery = custQuery.eq('organization_id', orgId);
+    const { data: custs } = await custQuery;
+    if (custs && custs.length) await idbPutMany('customers', custs);
+
+    // 5. Organization
+    if (orgId) {
+      const { data: org } = await supa.from('organizations').select('*').eq('id', orgId).maybeSingle();
+      if (org) await idbPut('organizations', org);
+    }
+
+    // 6. Users for this org (for offline login!)
+    let userQuery = supa.from('users').select('*');
+    if (orgId && !isSuperAdmin) userQuery = userQuery.eq('organization_id', orgId);
+    const { data: usrs } = await userQuery;
+    if (usrs && usrs.length) await idbPutMany('users', usrs);
+
+    console.log('[NexPOS Cache] Offline cache primed with products, categories, settings & users.');
+  } catch (err) {
+    console.warn('[NexPOS Cache] Pre-warming notice:', err);
+  }
+};
+
+window.addEventListener('online', () => {
+  console.log('[NexPOS] Online connection restored');
+  updateOfflineStatusUI();
+  syncOfflineQueue();
+});
+
+window.addEventListener('offline', () => {
+  console.log('[NexPOS] Offline mode activated');
+  updateOfflineStatusUI();
+});
+
+// Auto-check sync periodically every 20 seconds if online
+setInterval(() => {
+  if (!isOffline()) syncOfflineQueue();
+}, 20000);
 
 // ─── SUPER ADMIN HELPERS ───
 
@@ -236,6 +695,10 @@ async function saGetAllPlatformSettings() {
 }
 
 async function saLoginSuperAdmin(username, password) {
+  if (isOffline()) {
+    console.warn('Super admin login requires online connection');
+    return null;
+  }
   const { data, error } = await supa
     .from('super_admins')
     .select('*')
@@ -251,49 +714,39 @@ async function saLoginSuperAdmin(username, password) {
 }
 
 async function saGetAllOrganizations() {
-  const { data, error } = await supa
-    .from('organizations')
-    .select('*')
-    .order('created_at', { ascending: false });
-  if (error) { console.error('Get Orgs Error:', error); return []; }
-  return data || [];
-}
-
-async function saGetOrgStats(orgId) {
-  const stats = {};
-  const { count: userCount } = await supa.from('users').select('*', { count: 'exact', head: true }).eq('organization_id', orgId);
-  const { count: productCount } = await supa.from('products').select('*', { count: 'exact', head: true }).eq('organization_id', orgId);
-  const { count: saleCount } = await supa.from('sales').select('*', { count: 'exact', head: true }).eq('organization_id', orgId);
-  
-  const { data: salesData } = await supa.from('sales').select('total_amount').eq('organization_id', orgId);
-  const totalRevenue = (salesData || []).reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
-
-  stats.users = userCount || 0;
-  stats.products = productCount || 0;
-  stats.sales = saleCount || 0;
-  stats.revenue = totalRevenue;
-  return stats;
+  if (isOffline()) {
+    return await idbGetAll('organizations');
+  }
+  try {
+    const { data, error } = await supa
+      .from('organizations')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    if (data) idbPutMany('organizations', data).catch(() => {});
+    return data || [];
+  } catch (e) {
+    return await idbGetAll('organizations');
+  }
 }
 
 async function saCreateOrganization(orgData, adminData) {
-  // Create organization
+  if (isOffline()) throw new Error('Creating a new business organization requires internet connection.');
   const { data: org, error: orgErr } = await supa
     .from('organizations')
     .insert({
       name: orgData.name,
       slug: orgData.slug,
       business_type: orgData.business_type || 'Retail Shop',
+      plan: orgData.plan || 'Starter',
       currency: orgData.currency || 'Rs.',
       tax_rate: orgData.tax_rate || 0,
       phone: orgData.phone || '',
+      email: orgData.email || '',
       address: orgData.address || '',
-      subscription: orgData.plan_id || 'free',
-      is_active: true,
-      plan_id: orgData.plan_id || 'free',
-      max_users: orgData.max_users || 3,
-      max_products: orgData.max_products || 100,
+      is_active: true
     })
-    .select()
+    .select('*')
     .single();
 
   if (orgErr) { console.error('Create Org Error:', orgErr); return { error: orgErr.message }; }
@@ -363,7 +816,6 @@ async function saToggleOrgStatus(orgId, isActive) {
 }
 
 async function saDeleteOrganization(orgId) {
-  // Delete all related data in order
   const tables = ['sale_items','sales','held_carts','attendance','payroll','advances','shift_closures','audit_log','products','categories','customers','settings','users'];
   for (const t of tables) {
     await supa.from(t).delete().eq('organization_id', orgId);
@@ -378,18 +830,22 @@ async function saUpdateOrganization(orgId, changes) {
 }
 
 async function saLogPlatformEvent(actorType, actorId, actorName, action, targetOrg, targetName, details = {}) {
-  await supa.from('platform_log').insert({
-    actor_type: actorType,
-    actor_id: actorId,
-    actor_name: actorName,
-    action,
-    target_org: targetOrg || null,
-    target_name: targetName || '',
-    details
-  });
+  if (isOffline()) return;
+  try {
+    await supa.from('platform_log').insert({
+      actor_type: actorType,
+      actor_id: actorId,
+      actor_name: actorName,
+      action,
+      target_org: targetOrg || null,
+      target_name: targetName || '',
+      details
+    });
+  } catch (e) {}
 }
 
 async function saGetPlatformLogs(limit = 100) {
+  if (isOffline()) return [];
   const { data, error } = await supa
     .from('platform_log')
     .select('*')
@@ -405,14 +861,22 @@ async function saGetPlatformStats() {
   
   let totalUsers = 0, totalProducts = 0, totalSales = 0, totalRevenue = 0;
   
-  const { count: uCount } = await supa.from('users').select('*', { count: 'exact', head: true });
-  const { count: pCount } = await supa.from('products').select('*', { count: 'exact', head: true });
-  const { data: allSales } = await supa.from('sales').select('total_amount');
-  
-  totalUsers = uCount || 0;
-  totalProducts = pCount || 0;
-  totalSales = (allSales || []).length;
-  totalRevenue = (allSales || []).reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+  if (!isOffline()) {
+    const { count: uCount } = await supa.from('users').select('*', { count: 'exact', head: true });
+    const { count: pCount } = await supa.from('products').select('*', { count: 'exact', head: true });
+    const { data: allSales } = await supa.from('sales').select('total_amount');
+    
+    totalUsers = uCount || 0;
+    totalProducts = pCount || 0;
+    totalSales = (allSales || []).length;
+    totalRevenue = (allSales || []).reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+  } else {
+    totalUsers = (await idbGetAll('users')).length;
+    totalProducts = (await idbGetAll('products')).length;
+    const localSales = await idbGetAll('sales');
+    totalSales = localSales.length;
+    totalRevenue = localSales.reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+  }
 
   return {
     totalOrgs: orgs.length,
@@ -426,6 +890,10 @@ async function saGetPlatformStats() {
 }
 
 async function saGetOrgUsers(orgId) {
+  if (isOffline()) {
+    const all = await idbGetAll('users');
+    return all.filter(u => u.organization_id == orgId);
+  }
   const { data, error } = await supa.from('users').select('*').eq('organization_id', orgId);
   if (error) return [];
   return data || [];
@@ -458,7 +926,7 @@ const BUSINESS_TEMPLATES = {
     ]
   },
   'Bookshop': {
-    icon: '📚', categories: ['Fiction','Non-Fiction','Textbooks','Stationery','Art Supplies','Magazines'],
+    icon: '📚', categories: ['Fiction','Non-Fiction','Textbooks','Stationery','Art Supplies'],
     products: [
       { name:'Novel - Bestseller', sku:'BK-001', category:'Fiction', retail_price:1200, cost_price:750, stock_qty:30, unit:'pcs' },
       { name:'Science Textbook', sku:'BK-002', category:'Textbooks', retail_price:2500, cost_price:1600, stock_qty:25, unit:'pcs' },
@@ -470,7 +938,7 @@ const BUSINESS_TEMPLATES = {
     ]
   },
   'Meat Shop': {
-    icon: '🥩', categories: ['Chicken','Beef','Mutton','Fish & Seafood','Processed','Marinades'],
+    icon: '🥩', categories: ['Chicken','Beef','Mutton','Fish & Seafood','Processed'],
     products: [
       { name:'Chicken Breast 1kg', sku:'MT-001', category:'Chicken', retail_price:1200, cost_price:850, stock_qty:40, unit:'kg' },
       { name:'Chicken Drumsticks 1kg', sku:'MT-002', category:'Chicken', retail_price:980, cost_price:700, stock_qty:35, unit:'kg' },
@@ -482,7 +950,7 @@ const BUSINESS_TEMPLATES = {
     ]
   },
   'Bakery': {
-    icon: '🍞', categories: ['Bread','Cakes','Pastries','Cookies','Beverages'],
+    icon: '🥐', categories: ['Bread','Cakes','Pastries','Cookies'],
     products: [
       { name:'White Bread Loaf', sku:'BK-001', category:'Bread', retail_price:180, cost_price:100, stock_qty:50, unit:'pcs' },
       { name:'Chocolate Cake', sku:'CK-001', category:'Cakes', retail_price:2500, cost_price:1400, stock_qty:10, unit:'pcs' },
@@ -539,7 +1007,6 @@ const PRODUCT_ICONS = {
   'default':'📦'
 };
 
-// ─── BUSINESS TYPE CONFIGS (extended per guide Fix 4) ───
 const BUSINESS_CONFIGS = {
   'Retail Shop':    { units: ['pcs'], extraFields: ['size','color','brand'], receiptFooter: 'Thank you for shopping with us!' },
   'Grocery Store':  { units: ['kg','packs','pcs','litre','g'], extraFields: ['expiry_date','supplier_name'], receiptFooter: 'Fresh goods, every day!' },

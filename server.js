@@ -22,6 +22,32 @@ const MIME = {
 // Initialize RAMIS Background Queue
 const ramisQueue = getQueue();
 
+// ─── REALTIME SERVER-SENT EVENTS (SSE) HUB ───
+const sseClients = new Set();
+
+function broadcastRealtime(eventData, excludeClientId = null) {
+  const message = `data: ${JSON.stringify(eventData)}\n\n`;
+  for (const client of sseClients) {
+    if (excludeClientId && client.id === excludeClientId) continue;
+    try {
+      client.res.write(message);
+    } catch (err) {
+      sseClients.delete(client);
+    }
+  }
+}
+
+// 20-second heartbeat to maintain persistent SSE connections
+setInterval(() => {
+  for (const client of sseClients) {
+    try {
+      client.res.write(': heartbeat\n\n');
+    } catch (e) {
+      sseClients.delete(client);
+    }
+  }
+}, 20000);
+
 function startServer(port, callback) {
   const server = http.createServer((req, res) => {
     // CORS Headers for API
@@ -36,6 +62,55 @@ function startServer(port, callback) {
     }
 
     const reqUrl = req.url.split('?')[0];
+
+    // ─── REALTIME SSE STREAM & BROADCAST ROUTES ───
+    if (reqUrl === '/api/realtime/events' && req.method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*'
+      });
+
+      const clientId = 'client_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+      const clientObj = { id: clientId, res };
+      sseClients.add(clientObj);
+
+      res.write(`data: ${JSON.stringify({ type: 'CONNECTED', clientId, clientsCount: sseClients.size, timestamp: Date.now() })}\n\n`);
+
+      // Inform other peers of new connection
+      broadcastRealtime({ type: 'PEER_JOINED', clientId, clientsCount: sseClients.size, timestamp: Date.now() }, clientId);
+
+      req.on('close', () => {
+        sseClients.delete(clientObj);
+        broadcastRealtime({ type: 'PEER_LEFT', clientId, clientsCount: sseClients.size, timestamp: Date.now() });
+      });
+      return;
+    }
+
+    if (reqUrl === '/api/realtime/broadcast' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const senderId = payload.senderId || null;
+          broadcastRealtime({ ...payload, timestamp: Date.now() }, senderId);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, clientsCount: sseClients.size }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: err.message }));
+        }
+      });
+      return;
+    }
+
+    if (reqUrl === '/api/realtime/status' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, clientsCount: sseClients.size }));
+      return;
+    }
 
     // ─── RAMIS BACKGROUND QUEUE API ROUTES ───
     if (reqUrl === '/api/ramis/enqueue' && req.method === 'POST') {
