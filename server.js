@@ -22,6 +22,15 @@ const MIME = {
 // Initialize RAMIS Background Queue
 const ramisQueue = getQueue();
 
+// Global resilience handlers to prevent unexpected process crashes
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ [Server] Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('⚠️ [Server] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+
 // ─── REALTIME SERVER-SENT EVENTS (SSE) HUB ───
 const sseClients = new Set();
 
