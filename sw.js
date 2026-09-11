@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexpos-v14-burn-v6';
+const CACHE_NAME = 'nexpos-v15-uifix-v7';
 const ASSETS = [
   '/',
   '/index.html',

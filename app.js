@@ -87,14 +87,8 @@ async function syncOfflineSales() {
 function updateConnectionBadge() {
   if (typeof updateOfflineStatusUI === 'function') {
     updateOfflineStatusUI();
-  } else {
-    const el = document.getElementById('connection-status');
-    if (!el) return;
-    const isOnline = navigator.onLine && !window._forceOfflineMode;
-    el.classList.toggle('online', isOnline);
-    el.classList.toggle('offline', !isOnline);
-    el.innerHTML = `<span class="status-dot"></span> ${isOnline ? 'Online' : 'Offline'}`;
   }
+  renderSystemState();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -213,14 +207,37 @@ window.broadcastRealtimeEvent = async (type, payload = {}) => {
   } catch (e) {}
 };
 
+// Network reachability and realtime sync are two signals, but a cashier can
+// only act on one answer. Showing "Online" beside "Reconnecting" told them
+// nothing, so both feed this resolver and one pill reports the result.
+let _realtimeConnected = true;
+
+function renderSystemState() {
+  const el = document.getElementById('connection-status');
+  if (!el) return;
+  const online = navigator.onLine && !window._forceOfflineMode;
+
+  let state, label, title;
+  if (!online)                  { state = 'offline'; label = 'Offline'; title = 'No network — sales are queued locally and sync when the connection returns'; }
+  else if (!_realtimeConnected) { state = 'syncing'; label = 'Syncing'; title = 'Online, reconnecting live sync to other terminals'; }
+  else                          { state = 'online';  label = 'Connected'; title = 'Online and syncing across all terminals'; }
+
+  el.classList.remove('online', 'offline', 'syncing');
+  el.classList.add(state);
+  el.title = title;
+  el.innerHTML = '<span class="status-dot"></span> ' + label;
+}
+
 function updateRealtimeStatusBadge(connected, text) {
+  _realtimeConnected = !!connected;
   const pill = document.getElementById('realtime-status-pill');
   const txt = document.getElementById('realtime-status-text');
-  if (!pill) return;
-
-  pill.classList.toggle('realtime-live', connected);
-  pill.classList.toggle('realtime-offline', !connected);
+  if (pill) {
+    pill.classList.toggle('realtime-live', connected);
+    pill.classList.toggle('realtime-offline', !connected);
+  }
   if (txt) txt.textContent = connected ? (text || '⚡ Live Sync') : '⚠️ Reconnecting';
+  renderSystemState();
 }
 
 window.testRealtimePing = () => {
@@ -352,7 +369,8 @@ async function handleIncomingRealtimeEvent(event) {
 function updateClock() {
   const d = new Date();
   const el = document.getElementById('topbar-clock');
-  if(el) el.textContent = d.toLocaleString('en-US', { weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+  // Was "Fri, Sep 11, 10:27 PM" and clipped; the cashier needs the time.
+  if(el) el.textContent = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
 }
 
 async function loadSettings() {
@@ -1513,10 +1531,17 @@ function updateTotals() {
   const total = taxable + tax;
   
   document.getElementById('cart-subtotal').textContent = formatMoney(subtotal);
-  document.getElementById('cart-discount').textContent = '- ' + formatMoney(discount);
+  document.getElementById('cart-discount').textContent = (discount > 0 ? '- ' : '') + formatMoney(discount);
   document.getElementById('tax-rate-display').textContent = currentSettings.tax_rate || '0';
   document.getElementById('cart-tax').textContent = formatMoney(tax);
   document.getElementById('cart-total').textContent = formatMoney(total);
+
+  // A zero discount is not a saving and a 0% tax line is not information —
+  // mute them so the eye goes straight to the figures that moved.
+  const discRow = document.getElementById('cart-discount')?.closest('.cart-line');
+  if (discRow) discRow.classList.toggle('is-zero', discount <= 0);
+  const taxRow = document.getElementById('cart-tax')?.closest('.cart-line');
+  if (taxRow) taxRow.style.display = taxRate > 0 ? '' : 'none';
   
   return { subtotal, discount, tax, total };
 }
@@ -1916,11 +1941,13 @@ window.openCashPaymentModal = (total, subtotal, discount, tax) => {
     discount,
     tax,
     tendered: total,
-    noteCounts: { 5000: 0, 2000: 0, 1000: 0, 500: 0, 100: 0, 50: 0, 20: 0 },
+    noteCounts: { 5000: 0, 1000: 0, 500: 0, 100: 0, 50: 0, 20: 0 },
     coinCounts: { 10: 0, 5: 0, 2: 0, 1: 0 }
   };
   
-  const notes = [5000, 2000, 1000, 500, 100, 50, 20];
+  // LKR notes in circulation. There is no Rs. 2,000 note — a cashier can
+  // never be handed one, so offering it only invites a miscount.
+  const notes = [5000, 1000, 500, 100, 50, 20];
   const coins = [10, 5, 2, 1];
 
   const html = `
@@ -1998,7 +2025,7 @@ window.openCashPaymentModal = (total, subtotal, discount, tax) => {
 
   const footer = `
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-    <button class="btn btn-primary" id="btn-confirm-cash" onclick="confirmCashSale()" style="padding:12px 20px; font-weight:700">
+    <button class="btn btn-primary cash-payment-btn" id="btn-confirm-cash" onclick="confirmCashSale()" style="padding:12px 20px; font-weight:700">
       Complete Cash Sale →
     </button>
   `;
