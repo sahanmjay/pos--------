@@ -34,7 +34,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Register Service Worker for PWA
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW Error:', err));
+    // sw.js calls skipWaiting() + clients.claim(), so a new worker takes control of
+    // this already-open page while it keeps running the previously cached HTML and JS.
+    // index.html cannot cache-bust itself the way ?v= handles the other assets, so
+    // reload once when control changes — otherwise new UI never appears until the
+    // user happens to hard-refresh.
+    const hadController = !!navigator.serviceWorker.controller;
+    let swReloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || swReloading) return;   // first install: nothing stale to replace
+      swReloading = true;
+      location.reload();
+    });
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => reg.update().catch(() => {}))
+      .catch(err => console.error('SW Error:', err));
   }
   
   // Listen for online/offline status
