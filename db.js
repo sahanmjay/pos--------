@@ -4,7 +4,23 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 let supa;
 if (typeof supabase !== 'undefined') {
   const { createClient } = supabase;
-  supa = createClient(SUPABASE_URL, SUPABASE_KEY);
+  try {
+    // Clear any stale Supabase auth tokens that cause HTTP 401s on anon calls
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('sb-') && k.endsWith('-auth-token')) {
+        localStorage.removeItem(k);
+      }
+    }
+  } catch(e) {}
+
+  supa = createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false
+    }
+  });
 } else {
   console.warn("Supabase script not loaded. Running in local offline mode.");
   supa = null;
@@ -737,7 +753,7 @@ async function saLoginSuperAdmin(username, password) {
 }
 
 async function saGetAllOrganizations() {
-  if (isOffline()) {
+  if (isOffline() || !supa) {
     return await idbGetAll('organizations');
   }
   try {
@@ -745,10 +761,17 @@ async function saGetAllOrganizations() {
       .from('organizations')
       .select('*')
       .order('created_at', { ascending: false });
-    if (error) throw error;
-    if (data) idbPutMany('organizations', data).catch(() => {});
-    return data || [];
+    if (error) {
+      console.warn('[saGetAllOrganizations] Supabase error:', error);
+      return await idbGetAll('organizations');
+    }
+    if (data && data.length) {
+      idbPutMany('organizations', data).catch(() => {});
+      return data;
+    }
+    return await idbGetAll('organizations');
   } catch (e) {
+    console.warn('[saGetAllOrganizations] Cloud fetch notice:', e);
     return await idbGetAll('organizations');
   }
 }
@@ -975,13 +998,51 @@ async function saGetPlatformStats() {
 }
 
 async function saGetOrgUsers(orgId) {
-  if (isOffline()) {
+  if (isOffline() || !supa) {
     const all = await idbGetAll('users');
     return all.filter(u => u.organization_id == orgId);
   }
   const { data, error } = await supa.from('users').select('*').eq('organization_id', orgId);
   if (error) return [];
   return data || [];
+}
+
+async function saGetOrgStats(orgId) {
+  let users = 0;
+  let products = 0;
+  let sales = 0;
+  let revenue = 0;
+
+  if (isOffline() || !supa) {
+    const allUsers = await idbGetAll('users');
+    users = allUsers.filter(u => u.organization_id == orgId).length;
+    const allProds = await idbGetAll('products');
+    products = allProds.filter(p => p.organization_id == orgId).length;
+    const allSales = await idbGetAll('sales');
+    const orgSales = allSales.filter(s => s.organization_id == orgId);
+    sales = orgSales.length;
+    revenue = orgSales.reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+  } else {
+    try {
+      const [uRes, pRes, sRes] = await Promise.all([
+        supa.from('users').select('*', { count: 'exact', head: true }).eq('organization_id', orgId),
+        supa.from('products').select('*', { count: 'exact', head: true }).eq('organization_id', orgId),
+        supa.from('sales').select('total_amount').eq('organization_id', orgId)
+      ]);
+      users = uRes?.count || 0;
+      products = pRes?.count || 0;
+      if (sRes?.data) {
+        sales = sRes.data.length;
+        revenue = sRes.data.reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+      }
+    } catch (e) {
+      console.warn('saGetOrgStats notice:', e);
+      const allUsers = await idbGetAll('users');
+      users = allUsers.filter(u => u.organization_id == orgId).length;
+    }
+  }
+
+  return { users, products, sales, revenue };
 }
 
 // ─── BUSINESS TEMPLATES ───

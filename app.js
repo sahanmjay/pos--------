@@ -5140,16 +5140,22 @@ window.saRenderDashboard = async () => {
 
 // ─── SA BUSINESSES LIST ───
 window.saRenderBusinesses = async () => {
-  const orgs = await saGetAllOrganizations();
+  let orgs = [];
+  try {
+    orgs = await saGetAllOrganizations();
+  } catch (err) {
+    console.error('saGetAllOrganizations error:', err);
+  }
   const search = (document.getElementById('sa-biz-search')?.value || '').toLowerCase();
   const statusFilter = document.getElementById('sa-biz-status-filter')?.value || '';
 
-  let filtered = orgs;
-  if (search) filtered = filtered.filter(o => o.name.toLowerCase().includes(search) || o.slug.toLowerCase().includes(search));
+  let filtered = orgs || [];
+  if (search) filtered = filtered.filter(o => (o.name||'').toLowerCase().includes(search) || (o.slug||'').toLowerCase().includes(search));
   if (statusFilter === 'active') filtered = filtered.filter(o => o.is_active);
   if (statusFilter === 'inactive') filtered = filtered.filter(o => !o.is_active);
 
   const tbody = document.getElementById('sa-businesses-tbody');
+  if (!tbody) return;
   if (!filtered.length) {
     tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-muted)">No businesses found</td></tr>';
     return;
@@ -5157,20 +5163,27 @@ window.saRenderBusinesses = async () => {
 
   const rows = [];
   for (const o of filtered) {
-    const stats = await saGetOrgStats(o.id);
-    const d = new Date(o.created_at);
+    let stats = { users: 0, products: 0, sales: 0, revenue: 0 };
+    try {
+      if (typeof saGetOrgStats === 'function') {
+        stats = await saGetOrgStats(o.id);
+      }
+    } catch (e) {
+      console.warn('Stats lookup notice for org:', o.id, e);
+    }
+    const d = o.created_at ? new Date(o.created_at) : new Date();
     rows.push(`
     <tr>
       <td class="fw-600">${o.name}</td>
-      <td>${o.business_type}</td>
+      <td>${o.business_type || 'General'}</td>
       <td><code style="font-size:12px;background:var(--surface-3);padding:2px 6px;border-radius:4px">${o.slug}</code></td>
       <td><span class="badge badge-active">${(o.plan_id || 'free').toUpperCase()}</span></td>
-      <td>${stats.users}</td>
+      <td>${stats.users || 0}</td>
       <td><span class="badge ${o.is_active ? 'badge-active' : 'badge-inactive'}">${o.is_active ? 'Active' : 'Inactive'}</span></td>
       <td style="font-size:12px">${d.toLocaleDateString()}</td>
       <td>
         <button class="btn btn-ghost btn-sm btn-icon" onclick="saViewBusinessDetail('${o.id}')" title="View">👁️</button>
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="saQuickImpersonate('${o.id}','${o.name.replace(/'/g, "\\'")}')" title="Enter POS">🔑</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="saQuickImpersonate('${o.id}','${(o.name||'').replace(/'/g, "\\'")}')" title="Enter POS">🔑</button>
       </td>
     </tr>`);
   }
