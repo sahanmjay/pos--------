@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexpos-v15-uifix-v7';
+const CACHE_NAME = 'nexpos-v16-silentprint-v8';
 const ASSETS = [
   '/',
   '/index.html',

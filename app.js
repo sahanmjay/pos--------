@@ -2455,7 +2455,7 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
       receiptOverlay.classList.add('open', 'autoprint-mode');
     }
     setTimeout(async () => {
-      await printReceipt();
+      await printReceipt({ quiet: true });
       setTimeout(() => {
         if (receiptOverlay) {
           receiptOverlay.classList.remove('open', 'autoprint-mode');
@@ -2480,26 +2480,93 @@ window.addEventListener('afterprint', () => {
   window.closeReceipt();
 });
 
-window.printReceipt = async () => {
-  // If running inside Electron desktop app, use silent thermal printing
+// Electron can enumerate printers; a browser cannot, so the field falls back
+// to a free-text hint explaining where the target actually comes from.
+window.populatePrinterSetting = async () => {
+  const sel = document.getElementById('set-receipt-printer');
+  const hint = document.getElementById('printer-hint');
+  if (!sel) return;
+
+  const saved = currentSettings.receipt_printer || '';
+  const inElectron = !!(window.electronAPI && window.electronAPI.isElectron);
+
+  if (!inElectron) {
+    sel.innerHTML = '<option value="">Windows default printer</option>';
+    sel.value = '';
+    sel.disabled = true;
+    if (hint) hint.textContent =
+      'In browser mode the bill always goes to the Windows default printer. ' +
+      'Set your 80mm thermal printer as the default, and start NexPOS with ' +
+      'Launch-NexPOS.bat so Chrome runs in kiosk-printing mode (no dialog).';
+    return;
+  }
+
+  sel.disabled = false;
+  try {
+    const printers = await window.electronAPI.getPrinters();
+    const list = Array.isArray(printers) ? printers : [];
+    sel.innerHTML = '<option value="">Auto-detect thermal printer</option>' +
+      list.map(p => {
+        const name = escapeHtml(p.name || '');
+        return `<option value="${name}"${p.name === saved ? ' selected' : ''}>${name}${p.isDefault ? ' (system default)' : ''}</option>`;
+      }).join('');
+    sel.value = saved;
+    if (hint) hint.textContent = list.length
+      ? `${list.length} printer(s) detected. Bills print silently — no dialog.`
+      : 'No printers detected. Check the printer is connected and installed in Windows.';
+  } catch (e) {
+    console.warn('Printer list unavailable:', e);
+    if (hint) hint.textContent = 'Could not read the printer list from Windows.';
+  }
+};
+
+window.testPrintReceipt = async () => {
+  const chosen = (document.getElementById('set-receipt-printer')?.value || '').trim();
+  if (window.electronAPI && window.electronAPI.isElectron) {
+    showToast('info', 'Sending test slip…');
+    try {
+      const r = await window.electronAPI.silentPrint({ printerName: chosen });
+      if (r && r.success) showToast('success', `Test slip sent to ${r.printer || 'default printer'}`);
+      else showToast('error', `Test failed: ${(r && r.error) || 'printer unavailable'}`);
+    } catch (e) {
+      showToast('error', 'Test failed: ' + (e.message || e));
+    }
+    return;
+  }
+  showToast('info', 'Browser mode prints to the Windows default printer. Ring up a sale to test it.');
+};
+
+// A bill prints on every sale, so a success toast each time is noise. Only a
+// failure is worth interrupting the cashier for.
+window.printReceipt = async (opts = {}) => {
+  const quiet = opts.quiet === true;
+
   if (window.electronAPI && window.electronAPI.isElectron) {
     try {
-      showToast('info', '🖨️ Sending to thermal printer...');
-      const result = await window.electronAPI.silentPrint();
-      if (result.success) {
-        showToast('success', `✅ Printed silently to ${result.printer || 'default printer'}`);
-      } else {
-        showToast('error', `Print failed: ${result.error || 'Unknown error'}. Falling back to browser print.`);
-        window.print();
+      const result = await window.electronAPI.silentPrint({
+        printerName: (currentSettings.receipt_printer || '').trim()
+      });
+      if (result && result.success) {
+        if (!quiet) showToast('success', `Printed to ${result.printer || 'default printer'}`);
+        return true;
       }
+      // Genuine failure — the cashier needs to know the bill did not come out
+      showToast('error', `Print failed: ${(result && result.error) || 'printer unavailable'}`);
+      window.print();
+      return false;
     } catch (err) {
       console.error('Electron print error:', err);
       window.print();
+      return false;
     }
-  } else {
-    // Browser mode — standard print dialog
-    window.print();
   }
+
+  // Browser. window.print() cannot be silenced from here — it goes straight to
+  // the default printer only when Chrome/Edge was started with
+  // --kiosk-printing (Launch-NexPOS.bat does this). Otherwise the OS shows the
+  // dialog and there is no web API that can suppress it.
+  window.print();
+  return true;
 };
 
 window.shareReceiptPDF = async () => {
@@ -4472,6 +4539,7 @@ window.loadSettingsForm = () => {
   document.getElementById('set-address').value = currentSettings.address || '';
   const autoPrintReceipt = document.getElementById('set-receipt-autoprint');
   if (autoPrintReceipt) autoPrintReceipt.value = currentSettings.receipt_autoprint !== 'false' ? 'true' : 'false';
+  populatePrinterSetting();
   
   const theme = currentSettings.theme || 'default';
   const themeSelect = document.getElementById('set-theme');
@@ -4671,6 +4739,7 @@ window.saveSettings = async () => {
       address: document.getElementById('set-address').value,
       theme: document.getElementById('set-theme') ? document.getElementById('set-theme').value : 'default',
       receipt_autoprint: document.getElementById('set-receipt-autoprint')?.value || 'true',
+      receipt_printer: document.getElementById('set-receipt-printer')?.value || '',
       restaurant_mode: isRestEnabled ? 'true' : 'false',
       kot_autoprint: document.getElementById('set-kot-autoprint')?.value || 'true',
       kot_sound: document.getElementById('set-kot-sound')?.value || 'true',

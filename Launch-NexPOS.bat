@@ -40,17 +40,25 @@ for %%i in (
 :: Launch in app mode (frameless dedicated window)
 if defined CHROME (
   echo  Opening NexPOS in Chrome App Mode...
-  start "" "%CHROME%" --app=http://localhost:3000 --window-size=1366,768 --disable-extensions
+  start "" "%CHROME%" --app=http://localhost:3000 --window-size=1366,768 --disable-extensions --kiosk-printing
 ) else if defined EDGE (
   echo  Opening NexPOS in Edge App Mode...
-  start "" "%EDGE%" --app=http://localhost:3000 --window-size=1366,768 --disable-extensions
+  start "" "%EDGE%" --app=http://localhost:3000 --window-size=1366,768 --disable-extensions --kiosk-printing
 ) else (
-  echo  Opening NexPOS in default browser...
+  echo  Chrome/Edge not found - opening the default browser.
+  echo  NOTE: silent printing needs Chrome or Edge; this window will
+  echo  show the print dialog on every bill.
   start http://localhost:3000
 )
 
 echo.
 echo  NexPOS is running at: http://localhost:3000
+echo.
+echo  SILENT PRINTING IS ON (--kiosk-printing).
+echo  Bills print straight to the WINDOWS DEFAULT PRINTER with no dialog,
+echo  so set your 80mm thermal printer as the default in
+echo  Settings ^> Bluetooth ^& devices ^> Printers ^& scanners.
+echo.
 echo  Press Ctrl+C or close this window to stop the server.
 echo.
 
