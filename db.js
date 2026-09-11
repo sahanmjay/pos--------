@@ -732,27 +732,61 @@ async function saGetAllOrganizations() {
 
 async function saCreateOrganization(orgData, adminData) {
   if (isOffline()) throw new Error('Creating a new business organization requires internet connection.');
-  const { data: org, error: orgErr } = await supa
-    .from('organizations')
-    .insert({
-      name: orgData.name,
-      slug: orgData.slug,
-      business_type: orgData.business_type || 'Retail Shop',
-      plan: orgData.plan || 'Starter',
-      currency: orgData.currency || 'Rs.',
-      tax_rate: orgData.tax_rate || 0,
-      phone: orgData.phone || '',
-      email: orgData.email || '',
-      address: orgData.address || '',
-      is_active: true
-    })
-    .select('*')
-    .single();
+  
+  // Construct payload matching public.organizations schema in Supabase
+  let candidatePayload = {
+    name: orgData.name,
+    slug: orgData.slug,
+    business_type: orgData.business_type || 'Retail Shop',
+    plan_id: orgData.plan_id || 'free',
+    subscription: orgData.plan_id || 'free',
+    currency: orgData.currency || 'Rs.',
+    tax_rate: orgData.tax_rate || 0,
+    phone: orgData.phone || '',
+    address: orgData.address || '',
+    max_users: orgData.max_users || 3,
+    max_products: orgData.max_products || 100,
+    is_active: true
+  };
+
+  let org = null;
+  let orgErr = null;
+  let attempts = 0;
+
+  // Schema-resilient insert: automatically prunes any column that the Supabase schema cache does not recognize
+  while (attempts < 5) {
+    attempts++;
+    const res = await supa
+      .from('organizations')
+      .insert(candidatePayload)
+      .select('*')
+      .single();
+    
+    org = res.data;
+    orgErr = res.error;
+
+    if (!orgErr && org) break;
+
+    if (orgErr && orgErr.message) {
+      const match = orgErr.message.match(/Could not find the '([^']+)' column of 'organizations' in the schema cache/i);
+      if (match && match[1]) {
+        const badCol = match[1];
+        console.warn(`[saCreateOrganization] Column '${badCol}' not in Supabase schema cache. Removing and retrying...`);
+        delete candidatePayload[badCol];
+        continue;
+      }
+    }
+    break;
+  }
 
   if (orgErr) { console.error('Create Org Error:', orgErr); return { error: orgErr.message }; }
+  if (!org) return { error: 'Failed to create organization record.' };
+
+  // Save new organization to local IndexedDB
+  await idbPut('organizations', org);
 
   // Create admin user for the business
-  const { error: userErr } = await supa
+  const { data: newUser, error: userErr } = await supa
     .from('users')
     .insert({
       username: adminData.username,
@@ -761,15 +795,19 @@ async function saCreateOrganization(orgData, adminData) {
       role: 'Admin',
       is_active: true,
       organization_id: org.id
-    });
+    })
+    .select('*')
+    .maybeSingle();
 
   if (userErr) { console.error('Create Admin Error:', userErr); return { error: userErr.message }; }
+  if (newUser) await idbPut('users', newUser);
 
   // Seed default walk-in customer
-  await supa.from('customers').insert({
+  const { data: defaultCust } = await supa.from('customers').insert({
     name: 'Walk-in Customer', phone: '', email: '', outstanding_balance: 0,
     organization_id: org.id
-  });
+  }).select('*').maybeSingle();
+  if (defaultCust) await idbPut('customers', defaultCust);
 
   // Seed default settings
   const defaultSettings = [
@@ -824,9 +862,33 @@ async function saDeleteOrganization(orgId) {
 }
 
 async function saUpdateOrganization(orgId, changes) {
-  const { error } = await supa.from('organizations').update(changes).eq('id', orgId);
-  if (error) console.error('Update Org Error:', error);
-  return !error;
+  let payload = { ...changes };
+  delete payload.email;
+  delete payload.plan;
+  if (payload.plan_id && !payload.subscription) payload.subscription = payload.plan_id;
+
+  let attempts = 0;
+  let updateErr = null;
+  while (attempts < 5) {
+    attempts++;
+    const { error } = await supa.from('organizations').update(payload).eq('id', orgId);
+    updateErr = error;
+    if (!updateErr) break;
+
+    if (updateErr && updateErr.message) {
+      const match = updateErr.message.match(/Could not find the '([^']+)' column of 'organizations' in the schema cache/i);
+      if (match && match[1]) {
+        const badCol = match[1];
+        console.warn(`[saUpdateOrganization] Column '${badCol}' not in Supabase schema cache. Removing and retrying...`);
+        delete payload[badCol];
+        continue;
+      }
+    }
+    break;
+  }
+
+  if (updateErr) console.error('Update Org Error:', updateErr);
+  return !updateErr;
 }
 
 async function saLogPlatformEvent(actorType, actorId, actorName, action, targetOrg, targetName, details = {}) {

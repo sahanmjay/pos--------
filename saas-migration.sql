@@ -53,6 +53,7 @@ ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS plan_id TEXT DEFAULT '
 ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS last_activity TIMESTAMPTZ DEFAULT now();
 ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS max_users INTEGER DEFAULT 3;
 ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS max_products INTEGER DEFAULT 100;
+ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS email TEXT DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS public.users (
   id SERIAL PRIMARY KEY,
