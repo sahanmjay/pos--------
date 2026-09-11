@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexpos-v13-heldbills-v5';
+const CACHE_NAME = 'nexpos-v14-burn-v6';
 const ASSETS = [
   '/',
   '/index.html',

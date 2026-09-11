@@ -1983,7 +1983,7 @@ body {
   #receipt-overlay:not(.open), #kot-receipt-overlay:not(.open) { display: none !important; }
   #receipt-overlay .modal, #kot-receipt-overlay .modal { position: static !important; width: 80mm !important; max-width: 80mm !important; margin: 0 !important; padding: 2mm 4mm 8mm 4mm !important; background: #fff !important; color: #000 !important; border: none !important; box-shadow: none !important; transform: none !important; border-radius: 0 !important; }
   .modal-header, .modal-footer, #receipt-status-banner, .modal-close, #app, #login-screen, .toast-container, #scanner-container { display: none !important; }
-  #receipt-body, #kot-receipt-body { display: block !important; width: 100% !important; font-family: 'Courier New', Courier, Consolas, monospace !important; font-size: 12px !important; line-height: 1.3 !important; color: #000 !important; background: #fff !important; word-break: break-word !important; }
+  #receipt-body, #kot-receipt-body { display: block !important; width: 100% !important; font-family: 'Courier New', Courier, Consolas, monospace !important; font-size: 13px !important; font-weight: 700 !important; line-height: 1.4 !important; letter-spacing: 0.3px !important; color: #000 !important; background: #fff !important; word-break: break-word !important; }
 
   /* ── MONOCHROME PASS ──────────────────────────────────────────────
      The markup is already achromatic, so this is the backstop: any style
@@ -1999,7 +1999,20 @@ body {
     text-shadow: none !important;
     opacity: 1 !important;
     filter: none !important;
+    font-weight: 700 !important;
   }
+
+  /* ── SOLID BURN PASS ──────────────────────────────────────────────
+     Nothing on the sales bill may print below 12.5px. The receipt markup
+     carries 9–11.5px inline sizes for on-screen density, and at those sizes
+     the head cannot resolve a glyph — that is why the address, item names,
+     subtotal and footer came out washed out while the 17px shop name and
+     18px total burned solid. Headline sizes below outrank this floor.
+     Scoped to #receipt-body: the KOT slip already sets 14–16px deliberately. */
+  #receipt-body * { font-size: 12.5px !important; }
+  #receipt-body h3 { font-size: 19px !important; font-weight: 800 !important; }
+  /* KOT header row is the only sub-12px text on the ticket */
+  #kot-receipt-body th { font-size: 12.5px !important; }
   /* Deliberate reverse-out blocks (KOT special instructions) stay solid */
   #receipt-body .thermal-invert, #kot-receipt-body .thermal-invert {
     background: #000 !important;
@@ -2019,14 +2032,19 @@ body {
   }
   /* Logos: push to near 1-bit so mid greys become solid dots, not mush */
   #receipt-body img, #kot-receipt-body img { max-height: 48px !important; max-width: 140px !important; object-fit: contain !important; display: block !important; margin: 0 auto 5px auto !important; filter: grayscale(100%) contrast(280%) brightness(108%) !important; -webkit-filter: grayscale(100%) contrast(280%) brightness(108%) !important; }
-  #receipt-body h2, #kot-receipt-body h2 { font-size: 16px !important; color: #000 !important; margin-bottom: 2px !important; text-transform: uppercase !important; letter-spacing: 0.5px !important; }
-  #receipt-body table, #kot-receipt-body table { width: 100% !important; border-collapse: collapse !important; color: #000 !important; }
+  #receipt-body h2, #kot-receipt-body h2 { font-size: 17px !important; font-weight: 800 !important; color: #000 !important; margin-bottom: 2px !important; text-transform: uppercase !important; letter-spacing: 0.5px !important; }
+  #receipt-body table, #kot-receipt-body table { width: 100% !important; border-collapse: collapse !important; color: #000 !important; table-layout: fixed !important; }
+  #receipt-body table th:nth-child(1), #receipt-body table td:nth-child(1) { width: 50% !important; text-align: left !important; padding-right: 3px !important; }
+  #receipt-body table th:nth-child(2), #receipt-body table td:nth-child(2) { width: 12% !important; text-align: center !important; }
+  #receipt-body table th:nth-child(3), #receipt-body table td:nth-child(3) { width: 38% !important; text-align: right !important; }
   #receipt-body th, #receipt-body td, #kot-receipt-body th, #kot-receipt-body td { color: #000 !important; padding: 2px 0 !important; }
   /* Keep a line item and its price on the same strip of paper */
   #receipt-body tr, #kot-receipt-body tr, .thermal-univerzlk-footer { page-break-inside: avoid !important; break-inside: avoid !important; }
   .thermal-dashed { border-top: 1px dashed #000 !important; margin: 5px 0 !important; }
-  .thermal-univerzlk-footer { margin-top: 8px !important; padding-top: 6px !important; border-top: 1px dashed #000 !important; text-align: center !important; font-family: 'Courier New', Courier, monospace !important; font-size: 9.5px !important; line-height: 1.25 !important; color: #000 !important; }
-  .thermal-univerzlk-footer .univerzlk-title { font-weight: bold !important; font-size: 10.5px !important; letter-spacing: 0.3px !important; }
-  .thermal-univerzlk-footer .univerzlk-tagline { font-size: 9px !important; text-transform: uppercase !important; }
-  .thermal-univerzlk-footer .univerzlk-contact { font-weight: bold !important; font-size: 9.5px !important; margin-top: 1px !important; }
+  /* Slanted glyphs land on a ragged dot grid and blur — print upright */
+  #receipt-body *, #kot-receipt-body * { font-style: normal !important; }
+  .thermal-univerzlk-footer { margin-top: 8px !important; padding-top: 6px !important; border-top: 1px dashed #000 !important; text-align: center !important; font-family: 'Courier New', Courier, monospace !important; font-size: 12px !important; font-weight: 700 !important; line-height: 1.4 !important; color: #000 !important; }
+  .thermal-univerzlk-footer .univerzlk-title { font-weight: 800 !important; font-size: 12.5px !important; letter-spacing: 0.3px !important; }
+  .thermal-univerzlk-footer .univerzlk-tagline { font-size: 12px !important; text-transform: uppercase !important; }
+  .thermal-univerzlk-footer .univerzlk-contact { font-weight: 800 !important; font-size: 12px !important; margin-top: 2px !important; }
 }
