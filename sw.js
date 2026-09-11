@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexpos-v7-offline';
+const CACHE_NAME = 'nexpos-v8-offline';
 const ASSETS = [
   '/',
   '/index.html',

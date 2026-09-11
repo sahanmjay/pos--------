@@ -54,6 +54,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       input.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') doLogin();
       });
+      input.addEventListener('input', () => {
+        const err = document.getElementById('login-error');
+        if (err) err.style.display = 'none';
+      });
     }
   });
   
@@ -445,14 +449,12 @@ async function logSecurityEvent(type, details = {}) {
   }
 }
 
-let loginAttempts = JSON.parse(localStorage.getItem('pos_login_attempts') || '{"count":0, "lockoutUntil":0}');
+// Account lockout disabled
+try { localStorage.removeItem('pos_login_attempts'); } catch(e) {}
+let loginAttempts = { count: 0, lockoutUntil: 0 };
 
 function checkLoginLockout() {
-  if (loginAttempts.lockoutUntil > Date.now()) {
-    const mins = Math.ceil((loginAttempts.lockoutUntil - Date.now()) / 60000);
-    return `Account locked. Try again in ${mins} minute(s).`;
-  }
-  return null;
+  return null; // No lockout
 }
 
 function isEmergencyAdminLogin(username, password) {
@@ -612,13 +614,8 @@ async function doLogin() {
       return;
     }
 
-    // 4. Invalid credentials
-    loginAttempts.count++;
-    if (loginAttempts.count >= 5) {
-      loginAttempts.lockoutUntil = Date.now() + (15 * 60 * 1000);
-      loginAttempts.count = 0;
-    }
-    localStorage.setItem('pos_login_attempts', JSON.stringify(loginAttempts));
+    // 4. Invalid credentials (no account lockout)
+    try { localStorage.removeItem('pos_login_attempts'); } catch(e) {}
     await logSecurityEvent('LOGIN_FAILURE', { username: u });
     err.textContent = 'Invalid username or password';
     err.style.display = 'block';
