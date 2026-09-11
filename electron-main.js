@@ -151,6 +151,9 @@ function setupIPC() {
           {
             silent: true,
             printBackground: true,
+            // Thermal heads are single-colour. Asking the driver for monochrome
+            // stops it halftoning any remaining tint into faint grey stipple.
+            color: false,
             deviceName: targetPrinter,
             margins: { marginType: 'none' },
             pageSize: options.pageSize || { width: 80000, height: 297000 }, // 80mm x ~297mm

@@ -17,7 +17,7 @@
 <link rel="shortcut icon" href="favicon.ico">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=20260911_bespoke_v1">
+<link rel="stylesheet" href="style.css?v=20260911_mono_v3">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -1425,7 +1425,7 @@
     <div id="receipt-status-banner" style="display:none; background:var(--surface-3); padding:8px; text-align:center; font-size:12px; font-weight:700; color:var(--text-secondary); border-bottom:1px solid var(--border)">
       🔒 TRANSACTION LOCKED — RECORD FINALIZED
     </div>
-    <div class="modal-body" id="receipt-body" style="font-family:var(--mono); font-size:13px; color:var(--text-primary); line-height:1.4"></div>
+    <div class="modal-body thermal-paper" id="receipt-body" style="font-family:var(--mono); font-size:13px; line-height:1.4"></div>
     <div class="modal-footer" style="flex-wrap:wrap; gap:8px">
       <button class="btn btn-primary btn-sm" onclick="printReceipt()">🖨️ Print</button>
       <button class="btn btn-secondary btn-sm" onclick="shareReceiptPDF()">📄 WhatsApp PDF</button>
@@ -1442,7 +1442,7 @@
       <div class="modal-title"><i class="fa-solid fa-utensils"></i> Kitchen Order Ticket (KOT)</div>
       <button class="modal-close" onclick="closeKotReceipt()">✕</button>
     </div>
-    <div class="modal-body" id="kot-receipt-body" style="font-family:var(--mono); font-size:13px; color:var(--text-primary); line-height:1.4"></div>
+    <div class="modal-body thermal-paper" id="kot-receipt-body" style="font-family:var(--mono); font-size:13px; line-height:1.4"></div>
     <div class="modal-footer" style="flex-wrap:wrap; gap:8px">
       <button class="btn btn-primary btn-sm" onclick="printKotReceipt()"><i class="fa-solid fa-print"></i> Print KOT</button>
       <button class="btn btn-ghost btn-sm" onclick="closeKotReceipt()">Close</button>
@@ -1472,8 +1472,8 @@
 </div>
 
 <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js';document.head.appendChild(s);"></script>
-<script src="db.js?v=20260911_sa_fix2"></script>
-<script src="app.js?v=20260911_sa_fix2"></script>
+<script src="db.js?v=20260911_mono_v3"></script>
+<script src="app.js?v=20260911_mono_v3"></script>
 <script>
 window.addEventListener('keydown', (e) => {
   if ((e.key === '/' || ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K'))) && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {

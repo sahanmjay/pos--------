@@ -2072,45 +2072,45 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
   const logo = currentSettings.biz_logo || '';
   
   let html = `
-    <div style="text-align:center;margin-bottom:12px;border-bottom:1px dashed var(--border);padding-bottom:8px">
+    <div style="text-align:center;margin-bottom:12px;border-bottom:1px dashed var(--rule);padding-bottom:8px">
       ${logo ? `
         <div style="margin-bottom:8px; display:flex; justify-content:center; align-items:center;">
           <img src="${logo}" alt="${shopName}" style="max-height:55px; max-width:150px; object-fit:contain; display:block; margin:0 auto;" />
         </div>
       ` : ''}
-      <h2 style="margin:0;font-size:17px;color:var(--text-primary);letter-spacing:0.5px">${shopName}</h2>
-      <div style="color:var(--text-muted);font-size:11px">${address}</div>
-      <div style="color:var(--text-muted);font-size:11px">${phone}</div>
+      <h2 style="margin:0;font-size:17px;color:var(--ink);letter-spacing:0.5px">${shopName}</h2>
+      <div style="color:var(--ink-3);font-size:11px">${address}</div>
+      <div style="color:var(--ink-3);font-size:11px">${phone}</div>
     </div>
-    <div style="margin-bottom:8px;color:var(--text-primary);font-size:11.5px">
+    <div style="margin-bottom:8px;color:var(--ink);font-size:11.5px">
       <div>Receipt: <span class="fw-600">#${sale.id}</span></div>
       <div>Date: ${new Date(sale.date).toLocaleString()}</div>
       <div>Cashier: ${sale.cashier}</div>
-      <div>Pay Method: <span class="badge badge-completed" style="font-size:10px">${sale.payment_type.toUpperCase()}</span></div>
+      <div>Pay Method: <span style="font-weight:700">${sale.payment_type.toUpperCase()}</span></div>
     </div>
-    <table style="width:100%;text-align:left;border-bottom:1px dashed var(--border);margin-bottom:8px;color:var(--text-primary);font-size:11.5px">
-      <tr style="color:var(--text-muted);font-size:10.5px;text-transform:uppercase"><th>Item</th><th>Qty</th><th style="text-align:right">Total</th></tr>
+    <table style="width:100%;text-align:left;border-bottom:1px dashed var(--rule);margin-bottom:8px;color:var(--ink);font-size:11.5px">
+      <tr style="color:var(--ink-3);font-size:10.5px;text-transform:uppercase"><th>Item</th><th>Qty</th><th style="text-align:right">Total</th></tr>
   `;
   
   items.forEach(i => {
-    html += `<tr style="border-bottom:1px solid var(--surface-2)"><td style="padding:3px 0">${i.product_name}</td><td>${i.quantity}</td><td style="text-align:right" class="td-mono">${formatMoney(i.line_total)}</td></tr>`;
+    html += `<tr><td style="padding:3px 0">${i.product_name}</td><td>${i.quantity}</td><td style="text-align:right" class="td-mono">${formatMoney(i.line_total)}</td></tr>`;
   });
   
   html += `</table>
-    <div style="text-align:right;color:var(--text-primary);font-size:12px">
-      <div style="color:var(--text-muted)">Subtotal: ${formatMoney(sale.subtotal)}</div>
-      ${sale.discount>0 ? `<div style="color:var(--danger)">Discount: -${formatMoney(sale.discount)}</div>` : ''}
-      ${sale.tax>0 ? `<div style="color:var(--text-muted)">Tax: ${formatMoney(sale.tax)}</div>` : ''}
-      <h3 style="margin:4px 0;color:var(--brand);font-size:18px">Total: ${formatMoney(sale.total_amount)}</h3>
-      ${sale.payment_type==='cash' ? `<div style="font-size:11.5px">Tendered: ${formatMoney(tendered)}</div><div style="font-weight:700;color:var(--success);font-size:12.5px">Change: ${formatMoney(change)}</div>` : ''}
+    <div style="text-align:right;color:var(--ink);font-size:12px">
+      <div style="color:var(--ink-3)">Subtotal: ${formatMoney(sale.subtotal)}</div>
+      ${sale.discount>0 ? `<div style="color:var(--ink-2)">Discount: -${formatMoney(sale.discount)}</div>` : ''}
+      ${sale.tax>0 ? `<div style="color:var(--ink-3)">Tax: ${formatMoney(sale.tax)}</div>` : ''}
+      <h3 style="margin:4px 0;color:var(--ink);font-size:18px;font-weight:800">Total: ${formatMoney(sale.total_amount)}</h3>
+      ${sale.payment_type==='cash' ? `<div style="font-size:11.5px">Tendered: ${formatMoney(tendered)}</div><div style="font-weight:700;color:var(--ink);font-size:12.5px">Change: ${formatMoney(change)}</div>` : ''}
     </div>
-    <div style="text-align:center;margin-top:10px;border-top:1px dashed var(--border);padding-top:6px;color:var(--text-muted);font-style:italic;font-size:10.5px">Thank you for your business!</div>
+    <div style="text-align:center;margin-top:10px;border-top:1px dashed var(--rule);padding-top:6px;color:var(--ink-3);font-style:italic;font-size:10.5px">Thank you for your business!</div>
     
     <!-- 80mm Custom Branding Footer -->
-    <div class="thermal-univerzlk-footer" style="text-align:center;margin-top:8px;border-top:1px dashed var(--border);padding-top:6px;font-family:'Courier New',Courier,monospace;font-size:10px;line-height:1.35;color:var(--text-secondary)">
-      <div class="univerzlk-title" style="font-weight:700;font-size:11px;color:var(--text-primary)">Powered by Univerzlk (pvt)Ltd</div>
-      <div class="univerzlk-tagline" style="font-size:9px;color:var(--text-muted)">Ask for POS Systems</div>
-      <div class="univerzlk-contact" style="font-size:9.5px;font-weight:600;color:var(--brand)">+94 77 887 3302 | univerzlk.com</div>
+    <div class="thermal-univerzlk-footer" style="text-align:center;margin-top:8px;border-top:1px dashed var(--rule);padding-top:6px;font-family:'Courier New',Courier,monospace;font-size:10px;line-height:1.35;color:var(--ink-2)">
+      <div class="univerzlk-title" style="font-weight:700;font-size:11px;color:var(--ink)">Powered by Univerzlk (pvt)Ltd</div>
+      <div class="univerzlk-tagline" style="font-size:9px;color:var(--ink-3)">Ask for POS Systems</div>
+      <div class="univerzlk-contact" style="font-size:9.5px;font-weight:600;color:var(--ink)">+94 77 887 3302 | univerzlk.com</div>
     </div>
   `;
   
@@ -2215,18 +2215,37 @@ window.shareReceiptPDF = async () => {
     tempDiv.style.padding = '30px';
     tempDiv.style.color = 'black';
     tempDiv.style.fontFamily = '"DM Mono", monospace';
+    tempDiv.className = 'thermal-paper';
     tempDiv.innerHTML = receiptBody.innerHTML;
     document.body.appendChild(tempDiv);
 
     const canvas = await html2canvas(tempDiv, { scale: 3, useCORS: true, backgroundColor: '#ffffff' });
     document.body.removeChild(tempDiv);
 
-    // 3. Create PDF Blob
-    const imgData = canvas.toDataURL('image/jpeg', 0.9);
+    // Flatten every pixel to luminance so the shared bill carries no colour at
+    // all — a tinted logo or a stray themed style cannot survive this pass.
+    // Throws if a cross-origin logo tainted the canvas, in which case the
+    // already-achromatic markup is good enough on its own.
+    try {
+      const ctx = canvas.getContext('2d');
+      const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const px = frame.data;
+      for (let i = 0; i < px.length; i += 4) {
+        const grey = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0;
+        px[i] = px[i + 1] = px[i + 2] = grey;
+      }
+      ctx.putImageData(frame, 0, 0);
+    } catch (e) {
+      console.warn('Greyscale pass skipped (canvas tainted):', e);
+    }
+
+    // 3. Create PDF Blob — PNG, not JPEG: chroma subsampling smears coloured
+    // fringes around black glyphs, and flat black-on-white compresses smaller
+    const imgData = canvas.toDataURL('image/png');
     const pdfW = 80;
     const pdfH = (canvas.height * pdfW) / canvas.width;
     const pdf = new jsPDF({ unit: 'mm', format: [pdfW, pdfH] });
-    pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH);
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
     const pdfBlob = pdf.output('blob');
 
     // 4. Secure File Naming (UUID to prevent guessing)
@@ -2277,7 +2296,15 @@ window.shareReceiptPDF = async () => {
 };
 
 window.printViaRawBT = (sale, items) => {
-  // ESC/POS raw commands for RawBT app
+  // The Bluetooth button calls this with no arguments, which used to throw on
+  // items.forEach — fall back to whatever receipt is on screen
+  if (!sale || !items) {
+    if (!currentReceiptData) return showToast('error', 'No receipt data found');
+    sale = currentReceiptData.sale;
+    items = currentReceiptData.items;
+  }
+
+  // ESC/POS raw commands for RawBT app — text only, so inherently monochrome
   let r = "rawbt:";
   r += "\x1B\x40"; // Init
   r += "\x1B\x61\x01"; // Center
@@ -6473,12 +6500,12 @@ window.showKotReceipt = (kot) => {
       </thead>
       <tbody>
         ${kot.items.map(i => `
-          <tr style="border-bottom:1px solid #eee">
+          <tr>
             <td style="padding:6px 0; vertical-align:top; font-size:15px; font-weight:900">[ ${i.quantity}x ]</td>
             <td style="padding:6px 0; vertical-align:top">
               <div style="font-size:14px; font-weight:700">${i.name}</div>
               ${i.notes ? `
-                <div style="margin-top:2px; font-size:12px; font-weight:800; background:#000; color:#fff; display:inline-block; padding:1px 5px; border-radius:2px">
+                <div class="thermal-invert" style="margin-top:2px; font-size:12px; font-weight:800; background:#000; color:#fff; display:inline-block; padding:1px 5px; border-radius:2px">
                   * ${i.notes.toUpperCase()} *
                 </div>
               ` : ''}
@@ -6494,6 +6521,7 @@ window.showKotReceipt = (kot) => {
 
   body.innerHTML = html;
   overlay.style.display = 'flex';
+  overlay.classList.add('open');
 };
 
 window.printKotReceipt = () => {
@@ -6502,7 +6530,7 @@ window.printKotReceipt = () => {
 
 window.closeKotReceipt = () => {
   const overlay = document.getElementById('kot-receipt-overlay');
-  if (overlay) overlay.style.display = 'none';
+  if (overlay) { overlay.style.display = 'none'; overlay.classList.remove('open'); }
 };
 
 // 🍳 KITCHEN DISPLAY SCREEN (KDS) LOGIC
