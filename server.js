@@ -179,6 +179,56 @@ function startServer(port, callback) {
       return;
     }
 
+    if (reqUrl === '/api/debug/db-status' && req.method === 'GET') {
+      const https = require('https');
+      const supaFetch = (table) => new Promise((resolve) => {
+        const options = {
+          hostname: 'rakklmxpukcehbyjuxjy.supabase.co',
+          path: `/rest/v1/${table}?select=*`,
+          method: 'GET',
+          headers: {
+            'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJha2tsbXhwdWtjZWhieWp1eGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNjY0MjgsImV4cCI6MjA5Mzc0MjQyOH0.05GCQVOXhH1CGWjgQkpu9mMKipT4wcPht4u3nf6c8Rc',
+            'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJha2tsbXhwdWtjZWhieWp1eGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNjY0MjgsImV4cCI6MjA5Mzc0MjQyOH0.05GCQVOXhH1CGWjgQkpu9mMKipT4wcPht4u3nf6c8Rc'
+          }
+        };
+        const r = https.request(options, (sRes) => {
+          let d = '';
+          sRes.on('data', c => d += c);
+          sRes.on('end', () => {
+            try { resolve({ status: sRes.statusCode, data: JSON.parse(d) }); }
+            catch (e) { resolve({ status: sRes.statusCode, raw: d }); }
+          });
+        });
+        r.on('error', err => resolve({ error: err.message }));
+        r.end();
+      });
+
+      Promise.all([
+        supaFetch('organizations'),
+        supaFetch('users'),
+        supaFetch('categories'),
+        supaFetch('products')
+      ]).then(([orgs, users, cats, prods]) => {
+        console.log('[DEBUG DB STATUS]:', {
+          orgsCount: Array.isArray(orgs.data) ? orgs.data.length : orgs,
+          usersCount: Array.isArray(users.data) ? users.data.length : users,
+          catsCount: Array.isArray(cats.data) ? cats.data.length : cats,
+          prodsCount: Array.isArray(prods.data) ? prods.data.length : prods
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          organizations: orgs,
+          users: users,
+          categories: cats,
+          products: prods
+        }, null, 2));
+      }).catch(err => {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      });
+      return;
+    }
+
     // ─── STATIC FILE SERVING ───
     let relativePath = reqUrl === '/' ? 'index.html' : reqUrl.replace(/^\/+/, '');
     let filePath = path.join(__dirname, relativePath);

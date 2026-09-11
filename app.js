@@ -379,6 +379,36 @@ async function loadSettings() {
     }
     if (!currentSettings.receipt_autoprint) currentSettings.receipt_autoprint = 'true';
     if (!currentSettings.biz_logo) currentSettings.biz_logo = '';
+
+    // Self-Healing: Verify and sync active organization with cloud
+    if (db.currentOrgId && !isSuperAdmin && supa && !isOffline()) {
+      try {
+        let activeOrg = org;
+        if (!activeOrg) {
+          const candidateName = currentSettings.biz_name || (currentUser && (currentUser.display_name || currentUser.username)) || '';
+          if (candidateName) {
+            const { data: matched } = await supa.from('organizations').select('*').ilike('name', candidateName).maybeSingle();
+            if (matched) {
+              console.log(`[Self-Healing] Re-linked local org ${db.currentOrgId} to cloud org ${matched.id} (${matched.name})`);
+              db.currentOrgId = matched.id;
+              if (currentUser) currentUser.organization_id = matched.id;
+              activeOrg = matched;
+            }
+          }
+        }
+        
+        // If store currently has 0 products and 0 categories, auto-seed starter template
+        const prodCount = await db.products.count();
+        const catCount = await db.categories.count();
+        if (prodCount === 0 && catCount === 0) {
+          const typeToSeed = (activeOrg && activeOrg.business_type) || currentSettings.biz_type || 'Restaurant';
+          console.log(`[Self-Healing] Auto-populating initial catalogue for ${typeToSeed}...`);
+          await loadBusinessTemplate(typeToSeed);
+        }
+      } catch (healErr) {
+        console.warn('[Self-Healing] Org check notice:', healErr);
+      }
+    }
   } catch (e) {
     console.warn('loadSettings error:', e);
   }
@@ -1286,7 +1316,7 @@ function getIcon(cat) {
 async function renderPosGrid() {
   const term = (document.getElementById('pos-search')?.value || '').toLowerCase();
   let products = await db.products.toArray();
-  products = products.filter(p => p.is_active === true).reverse();
+  products = products.filter(p => p.is_active !== false).reverse();
   
   if(posCategory) products = products.filter(p => p.category === posCategory);
   if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term) || (p.barcode||'').toLowerCase().includes(term));
@@ -1301,11 +1331,23 @@ async function renderPosGrid() {
   }
 
   if (products.length === 0) {
+    const isFiltered = !!term || !!posCategory;
+    const bizType = currentSettings.biz_type || 'Restaurant';
     grid.innerHTML = `
       <div class="pos-no-results">
-        <div class="pos-no-results-icon"><i class="fa-solid fa-box-open"></i></div>
-        <div class="pos-no-results-title">No matching products</div>
-        <div class="pos-no-results-desc">Try clearing the search query or select another category</div>
+        <div class="pos-no-results-icon"><i class="fa-solid ${isFiltered ? 'fa-box-open' : 'fa-utensils'}"></i></div>
+        <div class="pos-no-results-title">${isFiltered ? 'No matching products' : 'Product Catalogue is Empty'}</div>
+        <div class="pos-no-results-desc">${isFiltered ? 'Try clearing the search query or select another category' : 'No menu items have been added to this store yet.'}</div>
+        ${!isFiltered ? `
+          <div style="display:flex; gap:12px; margin-top:20px; justify-content:center; flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="quickSeedTemplateCatalogue()" style="padding:10px 22px; font-size:14px; border-radius:10px; font-weight:600; display:inline-flex; align-items:center; gap:8px">
+              <i class="fa-solid fa-wand-magic-sparkles"></i> Load Starter Menu (${bizType})
+            </button>
+            <button class="btn btn-secondary" onclick="openProductForm()" style="padding:10px 22px; font-size:14px; border-radius:10px; font-weight:600; display:inline-flex; align-items:center; gap:8px">
+              <i class="fa-solid fa-plus"></i> Add New Product
+            </button>
+          </div>
+        ` : ''}
       </div>
     `;
     return;
@@ -1343,6 +1385,19 @@ async function renderPosGrid() {
     `;
   }).join('');
 }
+
+window.quickSeedTemplateCatalogue = async () => {
+  const bizType = currentSettings.biz_type || 'Restaurant';
+  showToast('info', `Loading starter catalogue for ${bizType}...`);
+  try {
+    await loadBusinessTemplate(bizType);
+    await renderPosCategories();
+    await renderPosGrid();
+    showToast('success', `✨ Starter ${bizType} catalogue loaded successfully!`);
+  } catch (err) {
+    showToast('error', 'Error loading catalogue: ' + err.message);
+  }
+};
 
 async function addToCart(id) {
   const p = await db.products.get(id);

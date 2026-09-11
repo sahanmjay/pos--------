@@ -254,8 +254,22 @@ class SupaTable {
       }
       const { data, error } = await q;
       if (!error && Array.isArray(data)) {
+        let local = await idbGetAll(this._name);
+        if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
+          local = local.filter(x => x.organization_id == currentOrgId);
+        }
+        // If cloud returns 0 rows but local cache has items, don't wipe out the user's data!
+        if (data.length === 0 && local.length > 0) {
+          console.warn(`[db.toArray] Cloud '${this._name}' has 0 items, preserving ${local.length} local items.`);
+          return local;
+        }
+
+        // Merge any locally-created offline items
+        const cloudIds = new Set(data.map(d => d.id));
+        const pendingLocal = local.filter(l => !cloudIds.has(l.id) && l._is_offline);
+
         idbPutMany(this._name, data).catch(() => {});
-        return data;
+        return [...data, ...pendingLocal];
       }
     } catch (e) {
       console.warn(`[Offline fallback] toArray on ${this._name}:`, e);
@@ -395,8 +409,17 @@ class SupaTable {
   }
 
   async clear() {
-    await idbClear(this._name);
-    if (!isOffline()) {
+    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
+      const all = await idbGetAll(this._name);
+      for (const item of all) {
+        if (item.organization_id == currentOrgId) {
+          await idbDelete(this._name, item.id);
+        }
+      }
+    } else {
+      await idbClear(this._name);
+    }
+    if (!isOffline() && supa) {
       try {
         let q = supa.from(this._name).delete();
         if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
@@ -1084,11 +1107,35 @@ async function loadBusinessTemplate(type) {
   const tmpl = BUSINESS_TEMPLATES[type];
   if (!tmpl) return;
 
+  const targetOrgId = currentOrgId || '00000000-0000-0000-0000-000000000001';
+
+  // Ensure organization exists in Supabase before inserting to prevent foreign key violations
+  if (!isOffline() && supa && targetOrgId) {
+    try {
+      const { data: orgExists } = await supa.from('organizations').select('id').eq('id', targetOrgId).maybeSingle();
+      if (!orgExists) {
+        console.log(`[loadBusinessTemplate] Ensuring organization ${targetOrgId} exists in Supabase...`);
+        const orgName = (typeof currentSettings !== 'undefined' && currentSettings.biz_name) || (type + ' Store');
+        await supa.from('organizations').upsert({
+          id: targetOrgId,
+          name: orgName,
+          slug: orgName.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Math.floor(Math.random() * 1000),
+          business_type: type,
+          currency: (typeof currentSettings !== 'undefined' && currentSettings.currency) || 'Rs.',
+          tax_rate: (typeof currentSettings !== 'undefined' && parseFloat(currentSettings.tax_rate)) || 0,
+          is_active: true
+        });
+      }
+    } catch (e) {
+      console.warn('[loadBusinessTemplate] Organization check notice:', e);
+    }
+  }
+
   await db.categories.clear();
   await db.products.clear();
 
   for (const c of tmpl.categories) {
-    await db.categories.add({ name: c });
+    await db.categories.add({ name: c, organization_id: targetOrgId });
   }
 
   for (const p of tmpl.products) {
@@ -1097,7 +1144,8 @@ async function loadBusinessTemplate(type) {
       barcode: '',
       wholesale_price: Math.round(p.retail_price * 0.8),
       low_stock_threshold: 5,
-      is_active: true
+      is_active: true,
+      organization_id: targetOrgId
     });
   }
 }

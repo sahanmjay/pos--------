@@ -269,3 +269,58 @@ INSERT INTO public.platform_settings (key, value) VALUES
   ('ai_plan_requirement', 'pro'),
   ('ai_api_key', '')
 ON CONFLICT (key) DO NOTHING;
+
+
+-- ─── 11. SEED DEFAULT BUSINESSES & STARTER INVENTORY ───
+-- Default Main Business
+INSERT INTO public.organizations (id, name, slug, business_type, currency, tax_rate, subscription, plan_id, max_users, max_products, is_active)
+VALUES ('00000000-0000-0000-0000-000000000001', 'NexPOS Main Store', 'main-store', 'Restaurant', 'Rs.', 0, 'enterprise', 'enterprise', 999, 99999, true)
+ON CONFLICT (id) DO UPDATE SET is_active = true;
+
+-- Default Business Admin
+INSERT INTO public.users (username, password, display_name, role, is_active, organization_id)
+SELECT 'admin', '231', 'Administrator', 'Admin', true, '00000000-0000-0000-0000-000000000001'
+WHERE NOT EXISTS (SELECT 1 FROM public.users WHERE username = 'admin' AND organization_id = '00000000-0000-0000-0000-000000000001');
+
+-- Business "testingone"
+INSERT INTO public.organizations (id, name, slug, business_type, currency, tax_rate, subscription, plan_id, max_users, max_products, is_active)
+VALUES ('cc5471c9-578e-428c-a85e-ad06f09094bd', 'testingone', 'testingone', 'Restaurant', 'Rs.', 0, 'free', 'free', 10, 500, true)
+ON CONFLICT (slug) DO UPDATE SET is_active = true;
+
+-- Admin for "testingone"
+INSERT INTO public.users (username, password, display_name, role, is_active, organization_id)
+SELECT 'namal', 'admin', 'namal', 'Admin', true, 'cc5471c9-578e-428c-a85e-ad06f09094bd'
+WHERE NOT EXISTS (SELECT 1 FROM public.users WHERE username = 'namal');
+
+-- Starter Categories & Products for both stores
+DO $$
+DECLARE
+  org_rec RECORD;
+BEGIN
+  FOR org_rec IN SELECT id FROM public.organizations WHERE slug IN ('main-store', 'testingone') LOOP
+    -- Customer
+    IF NOT EXISTS (SELECT 1 FROM public.customers WHERE organization_id = org_rec.id) THEN
+      INSERT INTO public.customers (name, phone, email, outstanding_balance, organization_id)
+      VALUES ('Walk-in Customer', '', '', 0, org_rec.id);
+    END IF;
+
+    -- Categories
+    INSERT INTO public.categories (name, organization_id)
+    SELECT c, org_rec.id FROM unnest(ARRAY['Rice & Curry', 'Noodles', 'Snacks', 'Beverages', 'Desserts', 'Specials']) AS c
+    WHERE NOT EXISTS (SELECT 1 FROM public.categories WHERE name = c AND organization_id = org_rec.id);
+
+    -- Products
+    INSERT INTO public.products (name, sku, category, retail_price, wholesale_price, cost_price, stock_qty, unit, is_active, organization_id)
+    SELECT p.name, p.sku, p.cat, p.price, p.wprice, p.cprice, 999, p.unit, true, org_rec.id
+    FROM (VALUES
+      ('Rice & Curry Plate', 'RC-001', 'Rice & Curry', 450, 360, 200, 'plates'),
+      ('Chicken Fried Rice', 'FR-001', 'Rice & Curry', 650, 520, 280, 'plates'),
+      ('Egg Noodles', 'ND-001', 'Noodles', 550, 440, 230, 'plates'),
+      ('Spring Rolls (4pc)', 'SN-001', 'Snacks', 380, 300, 150, 'portions'),
+      ('Fresh Juice', 'BV-001', 'Beverages', 350, 280, 100, 'glasses'),
+      ('Ice Cream Sundae', 'DS-001', 'Desserts', 480, 380, 180, 'portions')
+    ) AS p(name, sku, cat, price, wprice, cprice, unit)
+    WHERE NOT EXISTS (SELECT 1 FROM public.products WHERE sku = p.sku AND organization_id = org_rec.id);
+  END LOOP;
+END $$;
+
