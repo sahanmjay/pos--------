@@ -987,7 +987,7 @@ function nav(screenId) {
   document.getElementById('breadcrumb').innerHTML = bc;
   
   // Call init function for screen
-  if(screenId === 'pos') { renderPosCategories(); renderPosGrid(); }
+  if(screenId === 'pos') { renderPosCategories(); renderPosGrid(); refreshHeldBillsCount(); }
   if(screenId === 'dashboard') initDashboard();
   if(screenId === 'kot') renderKOTScreen();
   if(screenId === 'tables') renderTablesScreen();
@@ -1580,13 +1580,295 @@ window.applyDiscount = async () => {
   if(d !== null && !isNaN(d)) { manualDiscount = parseFloat(d); renderCart(); }
 };
 
+/* ═══════════════════════════════════════════════════════════════
+   HELD BILLS — park a bill against a table, resume it later
+   held_carts.items is JSONB. Legacy rows hold a bare array of cart
+   items; rows written here hold { v:2, items, meta } so a parked bill
+   also remembers its table, order type and discount. Keeping the extra
+   fields inside the existing column means this works against the live
+   database with no migration, and with no risk of an unknown-column
+   rejection silently demoting the bill to local-only storage.
+   ═══════════════════════════════════════════════════════════════ */
+
+window.escapeHtml = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+function isRestaurantMode() {
+  return currentSettings.restaurant_mode === 'true' || currentSettings.biz_type === 'Restaurant';
+}
+
+function packHeldCart(items, meta) { return { v: 2, items, meta }; }
+
+function readHeldCart(row) {
+  const raw = row && row.items;
+  if (Array.isArray(raw)) return { items: raw, meta: {} };                       // legacy row
+  if (raw && Array.isArray(raw.items)) return { items: raw.items, meta: raw.meta || {} };
+  return { items: [], meta: {} };
+}
+
+function heldCartTotal(items) {
+  return items.reduce((s, i) => s + (Number(i.unit_price) || 0) * (Number(i.quantity) || 0), 0);
+}
+
+function heldCartAge(dateStr) {
+  const mins = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
+  if (!isFinite(mins) || mins < 1) return 'just now';
+  if (mins < 60) return mins + ' min ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + (hrs === 1 ? ' hour ago' : ' hours ago');
+  const days = Math.floor(hrs / 24);
+  return days + (days === 1 ? ' day ago' : ' days ago');
+}
+
+const DINING_LABELS = { dine_in: 'Dine-In', takeaway: 'Takeaway', delivery: 'Delivery' };
+
+// ─── HOLD: name the bill and pick its table ───
+let holdSelectedTableId = null;
+
 window.holdCart = async () => {
-  if(cart.length === 0) return showToast('error', 'Cart is empty');
-  const name = await showPrompt('Enter a name for this held cart:', 'Cart ' + new Date().toLocaleTimeString(), { title: 'Hold cart', inputLabel: 'Cart name', confirmLabel: 'Hold cart' });
-  if(!name) return;
-  await db.held_carts.add({ name, items: cart, customer_id: cartCustomerId, date: new Date().toISOString() });
-  cart = []; manualDiscount = 0; cartCustomerId = 1;
-  renderCart(); updateCartCustomer(); showToast('success', 'Cart held');
+  if (cart.length === 0) return showToast('error', 'Cart is empty');
+
+  const restaurant = isRestaurantMode();
+  holdSelectedTableId = currentTableId;
+
+  const suggested = (restaurant && currentDiningType === 'dine_in')
+    ? (getTableObj(currentTableId)?.name || 'Table')
+    : 'Bill ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  const itemCount = cart.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+  const { total } = updateTotals();
+
+  const tableCards = restaurant ? restaurantTables.map(t => {
+    const busy = activeTableOrders[t.id] && activeTableOrders[t.id].items && activeTableOrders[t.id].items.length > 0;
+    return `
+      <button type="button" class="hold-table-card${t.id === holdSelectedTableId ? ' selected' : ''}"
+              data-table-id="${escapeHtml(t.id)}" onclick="holdPickTable('${escapeHtml(t.id)}')">
+        <span class="hold-table-icon">${busy ? '🍽️' : '🪑'}</span>
+        <span class="hold-table-name">${escapeHtml(t.name)}</span>
+        <span class="hold-table-seats">${t.seats} seats</span>
+      </button>`;
+  }).join('') : '';
+
+  const html = `
+    <div class="form-group">
+      <label class="form-label">Bill name</label>
+      <input class="form-input" id="hold-bill-name" value="${escapeHtml(suggested)}" placeholder="e.g. Table 4 / Mr Perera">
+    </div>
+    ${restaurant ? `
+      <div class="form-group">
+        <label class="form-label">Order type</label>
+        <select class="form-input" id="hold-dining-type" onchange="holdToggleTablePicker()">
+          <option value="dine_in" ${currentDiningType === 'dine_in' ? 'selected' : ''}>Dine-In</option>
+          <option value="takeaway" ${currentDiningType === 'takeaway' ? 'selected' : ''}>Takeaway</option>
+          <option value="delivery" ${currentDiningType === 'delivery' ? 'selected' : ''}>Delivery</option>
+        </select>
+      </div>
+      <div class="form-group" id="hold-table-group" style="display:${currentDiningType === 'dine_in' ? 'block' : 'none'}">
+        <label class="form-label">Table</label>
+        <div class="hold-table-grid" id="hold-table-grid">${tableCards}</div>
+      </div>
+    ` : ''}
+    <div class="hold-summary">
+      <span>${itemCount} item${itemCount === 1 ? '' : 's'}</span>
+      <strong>${formatMoney(total)}</strong>
+    </div>
+  `;
+
+  openModal('Hold Bill', html, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" id="hold-confirm-btn" onclick="confirmHoldBill()">⏸ Hold Bill</button>
+  `);
+
+  setTimeout(() => {
+    const f = document.getElementById('hold-bill-name');
+    if (f) { f.focus(); f.select(); }
+  }, 100);
+};
+
+window.holdPickTable = (tableId) => {
+  holdSelectedTableId = tableId;
+  document.querySelectorAll('#hold-table-grid .hold-table-card').forEach(el => {
+    el.classList.toggle('selected', el.dataset.tableId === tableId);
+  });
+  // Re-suggest the name only while it still matches a table name, so anything
+  // the cashier typed themselves is never overwritten
+  const nameField = document.getElementById('hold-bill-name');
+  const tName = getTableObj(tableId)?.name;
+  if (nameField && tName && restaurantTables.some(t => t.name === nameField.value)) {
+    nameField.value = tName;
+  }
+};
+
+window.holdToggleTablePicker = () => {
+  const type = document.getElementById('hold-dining-type')?.value;
+  const group = document.getElementById('hold-table-group');
+  if (group) group.style.display = (type === 'dine_in') ? 'block' : 'none';
+};
+
+window.confirmHoldBill = async () => {
+  const nameField = document.getElementById('hold-bill-name');
+  const name = (nameField ? nameField.value : '').trim();
+  if (!name) return showToast('error', 'Give the bill a name so you can find it again');
+  if (cart.length === 0) return showToast('error', 'Cart is empty');
+
+  const restaurant = isRestaurantMode();
+  const diningType = restaurant ? (document.getElementById('hold-dining-type')?.value || currentDiningType) : null;
+  const tableId = (restaurant && diningType === 'dine_in') ? holdSelectedTableId : null;
+
+  const meta = {
+    table_id: tableId,
+    table_name: tableId ? (getTableObj(tableId)?.name || tableId) : null,
+    dining_type: diningType,
+    discount: Number(manualDiscount) || 0,
+    held_by: (currentUser && (currentUser.display_name || currentUser.username)) || '',
+    total: heldCartTotal(cart)
+  };
+
+  const btn = document.getElementById('hold-confirm-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Holding...'; }
+
+  try {
+    await db.held_carts.add({
+      name,
+      items: packHeldCart(cart.map(i => ({ ...i })), meta),
+      customer_id: cartCustomerId,
+      date: new Date().toISOString()
+    });
+
+    cart = [];
+    manualDiscount = 0;
+    cartCustomerId = 1;
+
+    closeModal();
+    renderCart();
+    updateCartCustomer();
+    refreshHeldBillsCount();
+    showToast('success', `Bill "${name}" held${meta.table_name ? ' for ' + meta.table_name : ''}`);
+  } catch (err) {
+    console.error('Hold bill error:', err);
+    showToast('error', 'Could not hold the bill: ' + (err.message || err));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⏸ Hold Bill'; }
+  }
+};
+
+// ─── HELD BILLS LIST ───
+window.openHeldBills = async () => {
+  let rows = [];
+  try {
+    rows = await db.held_carts.toArray();
+  } catch (e) {
+    console.error('Held bills load error:', e);
+    return showToast('error', 'Could not load held bills');
+  }
+  rows.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const body = rows.length ? `
+    <div class="held-bill-list">
+      ${rows.map(r => {
+        const { items, meta } = readHeldCart(r);
+        const count = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+        const total = heldCartTotal(items);
+        const typeLabel = DINING_LABELS[meta.dining_type] || '';
+        return `
+          <div class="held-bill-row">
+            <div class="held-bill-main">
+              <div class="held-bill-name">${escapeHtml(r.name)}</div>
+              <div class="held-bill-tags">
+                ${meta.table_name ? `<span class="held-tag">🪑 ${escapeHtml(meta.table_name)}</span>` : ''}
+                ${typeLabel ? `<span class="held-tag">${escapeHtml(typeLabel)}</span>` : ''}
+                <span class="held-tag">${count} item${count === 1 ? '' : 's'}</span>
+                ${meta.held_by ? `<span class="held-tag">${escapeHtml(meta.held_by)}</span>` : ''}
+              </div>
+              <div class="held-bill-time">${heldCartAge(r.date)} · ${new Date(r.date).toLocaleString()}</div>
+            </div>
+            <div class="held-bill-side">
+              <div class="held-bill-total">${formatMoney(total)}</div>
+              <div class="held-bill-actions">
+                <button class="btn btn-primary btn-sm" onclick="resumeHeldBill('${escapeHtml(r.id)}')">▶ Resume</button>
+                <button class="btn btn-ghost btn-sm btn-icon" onclick="deleteHeldBill('${escapeHtml(r.id)}')" title="Delete held bill">🗑️</button>
+              </div>
+            </div>
+          </div>`;
+      }).join('')}
+    </div>
+  ` : `
+    <div class="held-empty">
+      <div class="held-empty-icon">⏸</div>
+      <div class="held-empty-title">No held bills</div>
+      <div class="held-empty-sub">Park the current bill with the Hold button and it will wait here.</div>
+    </div>
+  `;
+
+  openModal(`Held Bills${rows.length ? ' (' + rows.length + ')' : ''}`, body,
+    `<button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
+};
+
+window.resumeHeldBill = async (id) => {
+  let rows = [];
+  try { rows = await db.held_carts.toArray(); } catch (e) { return showToast('error', 'Could not load held bills'); }
+  const row = rows.find(r => String(r.id) === String(id));
+  if (!row) { refreshHeldBillsCount(); return showToast('error', 'That held bill is no longer available'); }
+
+  const { items, meta } = readHeldCart(row);
+  if (!items.length) return showToast('error', 'That held bill has no items');
+
+  // Resuming replaces the cart, so never do it silently over unsaved work
+  if (cart.length > 0) {
+    const ok = await showConfirmation(
+      `The current cart has ${cart.length} item(s) and will be cleared. Hold it first if you still need it.`,
+      { title: 'Replace current cart?', confirmLabel: 'Replace cart', danger: true });
+    if (!ok) return;
+  }
+
+  cart = items.map(i => ({ ...i }));
+  manualDiscount = Number(meta.discount) || 0;
+  cartCustomerId = row.customer_id || 1;
+
+  if (isRestaurantMode() && meta.dining_type) {
+    setDiningType(meta.dining_type);
+    if (meta.dining_type === 'dine_in' && meta.table_id) {
+      currentTableId = meta.table_id;
+      updateDiningTableUI();
+    }
+  }
+
+  await db.held_carts.delete(row.id);
+
+  closeModal();
+  renderCart();
+  updateCartCustomer();
+  refreshHeldBillsCount();
+  if (typeof nav === 'function') nav('pos');
+  showToast('success', `Resumed "${row.name}"${meta.table_name ? ' · ' + meta.table_name : ''}`);
+};
+
+window.deleteHeldBill = async (id) => {
+  let rows = [];
+  try { rows = await db.held_carts.toArray(); } catch (e) { return showToast('error', 'Could not load held bills'); }
+  const row = rows.find(r => String(r.id) === String(id));
+  if (!row) { refreshHeldBillsCount(); return openHeldBills(); }
+
+  const ok = await showConfirmation(`Delete held bill "${row.name}"? The parked items cannot be recovered.`,
+    { title: 'Delete held bill', confirmLabel: 'Delete', danger: true });
+  if (!ok) return;
+
+  await db.held_carts.delete(row.id);
+  showToast('success', 'Held bill deleted');
+  refreshHeldBillsCount();
+  openHeldBills();
+};
+
+window.refreshHeldBillsCount = async () => {
+  try {
+    const rows = await db.held_carts.toArray();
+    const badge = document.getElementById('held-count');
+    if (badge) {
+      badge.textContent = rows.length;
+      badge.style.display = rows.length ? 'inline-flex' : 'none';
+    }
+  } catch (e) {
+    console.warn('Held bill count notice:', e);
+  }
 };
 
 // ─── CASH DENOMINATIONS & PAYMENT STATE ───
