@@ -3476,7 +3476,7 @@ window.deleteUser = async (id, name) => {
 
 // --- PAYROLL LOGIC ---
 window.renderPayroll = async () => {
-  const users = await db.users.where('is_active').equals(true).toArray();
+  const users = await activeStaff();
   const tbody = document.getElementById('payroll-tbody');
   
   const rows = [];
@@ -3530,7 +3530,7 @@ window.renderPayroll = async () => {
 };
 
 window.openPayrollRunModal = async (userId = null) => {
-  const users = await db.users.where('is_active').equals(true).toArray();
+  const users = await activeStaff();
   const workers = users.filter(u => u.role !== 'Admin');
   
   let u = userId ? await db.users.get(userId) : null;
@@ -3672,7 +3672,18 @@ window.renderAdvances = async () => {
 };
 
 window.openAdvanceForm = async () => {
-  const users = await db.users.where('role').equals('Worker').toArray();
+  const users = await activeStaff();
+  if (!users.length) {
+    openModal('Salary Advance', `
+      <div class="att-empty">
+        <div class="att-empty-icon" aria-hidden="true">👥</div>
+        <div class="att-empty-title">No staff to advance</div>
+        <div class="att-empty-sub">Add a staff member, or set an existing one back to Active, and they will appear here.</div>
+      </div>`,
+      `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
+       <button class="btn btn-primary" onclick="closeModal(); nav('user-mgmt');">Open Staff Management</button>`);
+    return;
+  }
   const html = `
     <div class="form-group">
       <label class="form-label">Worker</label>
@@ -3700,9 +3711,10 @@ window.saveAdvance = async () => {
   const amount = parseFloat(document.getElementById('adv-amount').value);
   const reason = document.getElementById('adv-reason').value;
 
-  if (!userId || !amount) return showToast('error', 'Worker and amount are required');
+  if (!userId || !amount) return showToast('error', 'Select a staff member and enter an amount');
 
   const u = await db.users.get(userId);
+  if (!u) return showToast('error', 'That staff account no longer exists. Refresh and try again.');
   await db.advances.add({
     user_id: userId,
     employee_name: u.display_name,
@@ -3737,7 +3749,10 @@ window.renderAttendance = async () => {
   const tbody = document.getElementById('attendance-tbody');
   
   if (records.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">No attendance records for this date</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:26px 14px">' +
+      '<div style="font-weight:700;margin-bottom:4px">No attendance recorded for this date</div>' +
+      '<div class="text-muted" style="font-size:12.5px">Use the Clock In/Out button above to record a shift.</div>' +
+      '</td></tr>';
     return;
   }
   
@@ -3761,15 +3776,49 @@ window.renderAttendance = async () => {
   }).join('');
 };
 
+// Active staff. Only an explicit false excludes someone: a NULL is_active
+// (a row that predates the column default, or an import) still counts, which
+// .where('is_active').equals(true) silently did not.
+async function activeStaff() {
+  const all = await db.users.toArray();
+  return all.filter(u => u.is_active !== false);
+}
+
 window.clockInUser = async () => {
-  const users = await db.users.where('is_active').equals(true).toArray();
   const dateVal = new Date().toISOString().split('T')[0];
-  
+
+  const all = await db.users.toArray();
+  const users = all.filter(u => u.is_active !== false); // see activeStaff()
+
+  if (!users.length) {
+    const why = all.length
+      ? `All ${all.length} staff account${all.length === 1 ? ' is' : 's are'} marked inactive.`
+      : 'No staff accounts exist yet.';
+    openModal('Clock In / Clock Out', `
+      <div class="att-empty">
+        <div class="att-empty-icon" aria-hidden="true">👥</div>
+        <div class="att-empty-title">No one to clock in</div>
+        <div class="att-empty-sub">${escapeHtml(why)} Add a staff member, or set an existing one back to Active, and they will appear here.</div>
+      </div>`,
+      `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
+       <button class="btn btn-primary" onclick="closeModal(); nav('user-mgmt');">Open Staff Management</button>`);
+    return;
+  }
+
+  // Show where each person already stands today, so the cashier is not guessing
+  const today = await db.attendance.where('date').equals(dateVal).toArray();
+  const stateOf = (id) => {
+    const r = today.find(x => String(x.user_id) === String(id));
+    if (!r || !r.clock_in) return '';
+    if (r.clock_out) return ' — done for today';
+    return ' — clocked in ' + new Date(r.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
   const html = `
     <div class="form-group">
-      <label class="form-label">Select Employee</label>
+      <label class="form-label" for="att-emp-id">Select Employee</label>
       <select class="form-input" id="att-emp-id">
-        ${users.map(u => `<option value="${u.id}">${u.display_name} (${u.role})</option>`).join('')}
+        ${users.map(u => `<option value="${u.id}">${escapeHtml(u.display_name || u.username)} (${escapeHtml(u.role || 'Staff')})${escapeHtml(stateOf(u.id))}</option>`).join('')}
       </select>
     </div>
     <div class="form-group" style="margin-top:10px">
@@ -3784,8 +3833,15 @@ window.clockInUser = async () => {
 };
 
 window.submitClockIn = async (isClockIn) => {
-  const empId = parseInt(document.getElementById('att-emp-id').value);
+  const raw = document.getElementById('att-emp-id')?.value;
+  const empId = parseInt(raw, 10);
+  if (!raw || !Number.isFinite(empId)) {
+    return showToast('error', 'Pick an employee first');
+  }
   const emp = await db.users.get(empId);
+  if (!emp) {
+    return showToast('error', 'That staff account no longer exists. Refresh and try again.');
+  }
   const dateVal = new Date().toISOString().split('T')[0];
   const now = new Date().toISOString();
   

@@ -1994,6 +1994,12 @@ body {
 /* ═══════════════════════════════════════
    BILL EDIT & DELETE
    ═══════════════════════════════════════ */
+/* Attendance — nobody to clock in */
+.att-empty { padding: 26px 16px; text-align: center; }
+.att-empty-icon { font-size: 34px; opacity: .4; }
+.att-empty-title { margin-top: 10px; font-size: 16px; font-weight: 800; letter-spacing: -0.2px; }
+.att-empty-sub { margin: 6px auto 0; max-width: 42ch; font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+
 .row-actions { display: flex; gap: 2px; align-items: center; }
 .row-actions .danger-action:hover { background: var(--danger-bg); color: var(--danger); }
 
