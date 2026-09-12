@@ -471,7 +471,7 @@ async function loadSettings() {
   document.querySelectorAll('.restaurant-only').forEach(el => {
     if (el.classList.contains('sidebar-divider')) el.style.display = isRestaurant ? 'block' : 'none';
     else if (el.classList.contains('pos-dining-bar')) el.style.display = isRestaurant ? 'flex' : 'none';
-    else if (el.id === 'btn-fire-kot') el.style.display = isRestaurant ? 'inline-flex' : 'none';
+    else if (el.id === 'btn-fire-kot' || el.id === 'btn-table-bill') el.style.display = isRestaurant ? 'inline-flex' : 'none';
     else el.style.display = isRestaurant ? 'block' : 'none';
   });
   if (isRestaurant && typeof initRestaurantSuite === 'function') {
@@ -2453,7 +2453,13 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
   const receiptOverlay = document.getElementById('receipt-overlay');
 
   // 🖨️ Auto-Print Bill on Payment (Direct print with zero popup modal blocking)
-  const shouldAutoPrint = autoPrint && (currentSettings.receipt_autoprint !== 'false');
+  const alreadyGiven = autoPrint && lastBillPrintedSig &&
+        lastBillPrintedSig === cartSignature(items, sale.total_amount);
+  const shouldAutoPrint = autoPrint && !alreadyGiven && (currentSettings.receipt_autoprint !== 'false');
+  if (alreadyGiven) {
+    showToast('info', 'Settled against the bill already printed — no second copy');
+  }
+  if (autoPrint) lastBillPrintedSig = null; // this basket is done either way
   if (shouldAutoPrint) {
     if (receiptOverlay) {
       receiptOverlay.classList.add('open', 'autoprint-mode');
@@ -2538,6 +2544,116 @@ window.testPrintReceipt = async () => {
     return;
   }
   showToast('info', 'Browser mode prints to the Windows default printer. Ring up a sale to test it.');
+};
+
+// ═══════════════════════════════════════════════════════════════
+// PRINT BILL
+// The single slip the guest receives. The server prints it, carries it to
+// the table, and the guest pays against it — there is no second receipt.
+// Printing does not ring up the sale: nothing is written, no stock moves,
+// no bill number is consumed. Checkout settles it and skips reprinting the
+// same bill, so only one piece of paper ever reaches the table.
+// ═══════════════════════════════════════════════════════════════
+// Identifies an exact basket + total, so checkout can tell whether the bill
+// in the guest's hand is still the one being settled.
+let lastBillPrintedSig = null;
+function cartSignature(lines, total) {
+  const items = lines
+    .map(i => String(i.product_id) + ':' + Number(i.quantity))
+    .sort()
+    .join('|');
+  return items + '@' + Number(total || 0).toFixed(2);
+}
+
+window.printTableBill = async () => {
+  if (!cart.length) return showToast('error', 'Cart is empty — nothing to bill');
+
+  const { subtotal, discount, tax, total } = updateTotals();
+  const shopName = currentSettings.biz_name || 'NexPOS';
+  const address = currentSettings.address || '';
+  const phone = currentSettings.phone || '';
+  const logo = currentSettings.biz_logo || '';
+  const taxRate = parseFloat(currentSettings.tax_rate || 0) || 0;
+
+  const restaurant = isRestaurantMode();
+  const tObj = (typeof getTableObj === 'function') ? getTableObj(currentTableId) : null;
+  const typeLabel = currentDiningType === 'takeaway' ? 'Takeaway'
+                  : currentDiningType === 'delivery' ? 'Delivery' : 'Dine-In';
+  const placeLabel = (restaurant && currentDiningType === 'dine_in')
+    ? (tObj?.name || currentTableId) : typeLabel;
+
+  const custName = await (async () => {
+    try {
+      const c = await db.customers.get(cartCustomerId);
+      return c?.name || 'Walk-in Customer';
+    } catch (e) { return 'Walk-in Customer'; }
+  })();
+
+  let html = `
+    <div style="text-align:center;margin-bottom:10px;border-bottom:1px dashed var(--rule);padding-bottom:8px">
+      ${logo ? `<div style="margin-bottom:8px"><img src="${logo}" alt="${escapeHtml(shopName)}" style="max-height:55px;max-width:150px;object-fit:contain;display:block;margin:0 auto" /></div>` : ''}
+      <h2 style="margin:0;font-size:17px;color:var(--ink);letter-spacing:0.5px">${escapeHtml(shopName)}</h2>
+      <div style="color:var(--ink-3);font-size:11px">${escapeHtml(address)}</div>
+      <div style="color:var(--ink-3);font-size:11px">${escapeHtml(phone)}</div>
+    </div>
+
+    <div style="margin-bottom:8px;color:var(--ink);font-size:11.5px">
+      ${restaurant ? `<div>${currentDiningType === 'dine_in' ? 'Table' : 'Order'}: <span style="font-weight:800">${escapeHtml(placeLabel)}</span>${tObj && currentDiningType === 'dine_in' ? ` (${tObj.seats} seats)` : ''}</div>` : ''}
+      ${restaurant ? `<div>Order Type: <span style="font-weight:700">${escapeHtml(typeLabel)}</span></div>` : ''}
+      <div>Customer: ${escapeHtml(custName)}</div>
+      <div>Server: ${escapeHtml((currentUser && (currentUser.display_name || currentUser.username)) || '—')}</div>
+      <div>Date: ${new Date().toLocaleString()}</div>
+    </div>
+
+    <table style="width:100%;text-align:left;border-bottom:1px dashed var(--rule);margin-bottom:8px;color:var(--ink);font-size:11.5px">
+      <tr style="color:var(--ink-3);font-size:10.5px;text-transform:uppercase"><th>Item</th><th>Qty</th><th style="text-align:right">Total</th></tr>
+  `;
+
+  cart.forEach(i => {
+    html += `<tr><td style="padding:3px 0">${escapeHtml(i.name)}</td><td>${i.quantity}</td><td style="text-align:right" class="td-mono">${formatMoney(i.unit_price * i.quantity)}</td></tr>`;
+  });
+
+  html += `</table>
+    <div style="text-align:right;color:var(--ink);font-size:12px">
+      <div style="color:var(--ink-3)">Subtotal: ${formatMoney(subtotal)}</div>
+      ${discount > 0 ? `<div style="color:var(--ink-2)">Discount: -${formatMoney(discount)}</div>` : ''}
+      ${taxRate > 0 ? `<div style="color:var(--ink-3)">Tax (${taxRate}%): ${formatMoney(tax)}</div>` : ''}
+      <h3 style="margin:4px 0;color:var(--ink);font-size:18px;font-weight:800">Total: ${formatMoney(total)}</h3>
+    </div>
+
+    <div style="text-align:center;margin-top:10px;border-top:1px dashed var(--rule);padding-top:6px;color:var(--ink-3);font-size:10.5px">Thank you for your business!</div>
+
+    <div class="thermal-univerzlk-footer" style="text-align:center;margin-top:8px;border-top:1px dashed var(--rule);padding-top:6px;font-family:'Courier New',Courier,monospace;font-size:10px;line-height:1.35;color:var(--ink-2)">
+      <div class="univerzlk-title" style="font-weight:700;font-size:11px;color:var(--ink)">Powered by Univerzlk (pvt)Ltd</div>
+      <div class="univerzlk-tagline" style="font-size:9px;color:var(--ink-3)">Ask for POS Systems</div>
+      <div class="univerzlk-contact" style="font-size:9.5px;font-weight:600;color:var(--ink)">+94 77 887 3302 | univerzlk.com</div>
+    </div>
+  `;
+
+  const body = document.getElementById('receipt-body');
+  const overlay = document.getElementById('receipt-overlay');
+  if (!body || !overlay) return showToast('error', 'Receipt view unavailable');
+
+  // A table bill is never a filed sale, so nothing is stored against
+  // currentReceiptData — sharing or reprinting a receipt must not pick this up.
+  const banner = document.getElementById('receipt-status-banner');
+  if (banner) banner.style.display = 'none';
+  body.innerHTML = html;
+
+  overlay.classList.add('open', 'autoprint-mode');
+  setTimeout(async () => {
+    await printReceipt({ quiet: true });
+    setTimeout(() => overlay.classList.remove('open', 'autoprint-mode'), 400);
+  }, 120);
+
+  lastBillPrintedSig = cartSignature(cart, total);
+  showToast('success', `Bill printed for ${placeLabel}`);
+  logSecurityEvent('TABLE_BILL_PRINTED', {
+    place: placeLabel,
+    order_type: currentDiningType,
+    items: cart.length,
+    total,
+  });
 };
 
 // A bill prints on every sale, so a success toast each time is noise. Only a

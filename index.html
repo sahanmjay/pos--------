@@ -17,7 +17,7 @@
 <link rel="shortcut icon" href="favicon.ico">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=20260912_staff_v11">
+<link rel="stylesheet" href="style.css?v=20260912_onebill_v13">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -651,6 +651,9 @@
                   <button class="btn btn-secondary" onclick="holdCart()">⏸ Hold</button>
                   <button class="btn btn-secondary" onclick="openHeldBills()" id="btn-held-bills" title="Resume a parked bill">📂 Resume<span class="held-count-badge" id="held-count" style="display:none">0</span></button>
                   <button class="btn btn-secondary" onclick="applyDiscount()">🏷️ Discount</button>
+                  <button class="btn btn-secondary btn-table-bill restaurant-only" id="btn-table-bill" onclick="printTableBill()" title="Print the bill to take to the table (no payment taken)" style="display:none">
+                    <i class="fa-solid fa-receipt"></i> Print Bill
+                  </button>
                   <button class="btn btn-warning btn-kot-action restaurant-only" id="btn-fire-kot" onclick="sendOrderToKitchen()" title="Fire order to kitchen KOT" style="display:none">
                     <i class="fa-solid fa-fire-burner"></i> Send to KOT
                   </button>
@@ -1485,8 +1488,8 @@
 </div>
 
 <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js';document.head.appendChild(s);"></script>
-<script src="db.js?v=20260912_staff_v11"></script>
-<script src="app.js?v=20260912_staff_v11"></script>
+<script src="db.js?v=20260912_onebill_v13"></script>
+<script src="app.js?v=20260912_onebill_v13"></script>
 <script>
 window.addEventListener('keydown', (e) => {
   if ((e.key === '/' || ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K'))) && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {

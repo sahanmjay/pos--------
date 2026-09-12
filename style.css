@@ -1994,6 +1994,20 @@ body {
 /* ═══════════════════════════════════════
    BILL EDIT & DELETE
    ═══════════════════════════════════════ */
+/* Table bill — the pre-payment slip a server carries to the guest.
+   Tinted apart from Hold/Resume/Discount because it is the one action that
+   puts paper in a customer’s hands before money changes hands. */
+.btn-table-bill {
+  background: var(--info-bg) !important;
+  color: var(--info) !important;
+  border-color: rgba(2,132,199,0.28) !important;
+}
+.btn-table-bill:hover {
+  background: var(--info) !important;
+  color: #fff !important;
+  border-color: var(--info) !important;
+}
+
 /* Attendance — nobody to clock in */
 .att-empty { padding: 26px 16px; text-align: center; }
 .att-empty-icon { font-size: 34px; opacity: .4; }
