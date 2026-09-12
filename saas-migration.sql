@@ -114,6 +114,10 @@ CREATE TABLE IF NOT EXISTS public.sales (
   organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE
 );
 
+-- The cost of a line at the moment it was sold. Without it, repricing a
+-- product rewrites the profit on every sale that ever included it.
+ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS cost_price NUMERIC DEFAULT 0;
+
 -- Each business numbers its own bills 1, 2, 3. sales.id is a SERIAL shared by
 -- every tenant, so it is unusable as a customer-facing receipt number.
 ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS bill_no INTEGER;

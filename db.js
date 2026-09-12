@@ -492,6 +492,8 @@ const db = {
   set isSuperAdmin(val) { isSuperAdmin = val; },
   // Whether public.sales carries the per-business bill_no column
   salesSupportsBillNo,
+  // Whether public.sale_items can store the cost at the moment of sale
+  saleItemsSupportCost,
   organizations: new SupaTable('organizations'),
   products:      new SupaTable('products'),
   categories:    new SupaTable('categories'),
@@ -781,6 +783,23 @@ async function saGetAllOrganizations() {
 // public.sales.bill_no is added by saas-migration.sql. Writing a column the
 // schema does not have would be swallowed by add() and the sale would only
 // exist locally, so establish support once and cache the answer.
+// public.sale_items.cost_price is added by saas-migration.sql. Writing it to a
+// schema that lacks it would be swallowed by add() and the sale line would only
+// exist locally, so support is established once and cached.
+let _costSnapSupported = null;
+async function saleItemsSupportCost() {
+  if (_costSnapSupported !== null) return _costSnapSupported;
+  if (isOffline()) return false;
+  try {
+    const { error } = await supa.from('sale_items').select('cost_price').limit(1);
+    _costSnapSupported = !error;
+    if (error) console.warn('[cost_price] Column not present on sale_items — profit falls back to the current product cost. Run saas-migration.sql.');
+  } catch (e) {
+    _costSnapSupported = false;
+  }
+  return _costSnapSupported;
+}
+
 let _billNoSupported = null;
 async function salesSupportsBillNo() {
   if (_billNoSupported !== null) return _billNoSupported;

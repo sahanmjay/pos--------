@@ -1444,6 +1444,9 @@ async function addToCart(id) {
       product_id: p.id,
       name: p.name,
       unit_price: p.retail_price,
+      // Cost is captured here and stored on the sale line, so changing a
+      // product's cost tomorrow never rewrites yesterday's profit.
+      cost_price: Number(p.cost_price) || 0,
       quantity: 1,
       stock: p.stock_qty
     });
@@ -2252,11 +2255,14 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
   
   const saleItems = cart.map(i => ({
     product_id: i.product_id, product_name: i.name,
-    quantity: i.quantity, unit_price: i.unit_price, line_total: i.quantity * i.unit_price
+    quantity: i.quantity, unit_price: i.unit_price, line_total: i.quantity * i.unit_price,
+    cost_price: Number(i.cost_price) || 0
   }));
 
   try {
     const checkoutCart = cart.map(item => ({ ...item }));
+    // Omit rather than have add() quietly demote the line to local-only storage
+    if (!(await db.saleItemsSupportCost())) saleItems.forEach(si => { delete si.cost_price; });
     // Only set when the column exists — see salesSupportsBillNo()
     if (await db.salesSupportsBillNo()) sale.bill_no = await nextBillNo();
     const saleId = await db.sales.add(sale);
@@ -3435,25 +3441,183 @@ window.exportSalesCSV = async () => {
 };
 
 // Categories & Users management (simplified for completion)
+// ═══════════════════════════════════════════════════════════════
+// CATEGORIES
+// Products store their category as a NAME string, not an id, so a rename
+// has to carry every affected product with it — otherwise those products
+// point at a category that no longer exists and drop out of every filter.
+// ═══════════════════════════════════════════════════════════════
+
+// How many products sit in each category, and which are left without one
+async function categoryUsage() {
+  const products = await db.products.toArray();
+  const counts = {};
+  let orphans = 0;
+  for (const p of products) {
+    const key = (p.category || '').trim();
+    if (!key) { orphans++; continue; }
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return { counts, orphans, total: products.length };
+}
+
 window.renderCategoriesTable = async () => {
-  const cats = await db.categories.toArray();
-  document.getElementById('categories-tbody').innerHTML = cats.map(c => `<tr><td class="fw-600">${c.name}</td><td>-</td><td><button class="btn btn-ghost btn-sm btn-icon" onclick="deleteCategory(${c.id})">🗑️</button></td></tr>`).join('');
+  const tbody = document.getElementById('categories-tbody');
+  if (!tbody) return;
+
+  const [cats, usage] = await Promise.all([db.categories.toArray(), categoryUsage()]);
+  cats.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+  if (!cats.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:26px 14px">' +
+      '<div style="font-weight:700;margin-bottom:4px">No categories yet</div>' +
+      '<div class="text-muted" style="font-size:12.5px">Add one with <strong>+ New Category</strong> to group your products.</div>' +
+      '</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = cats.map(c => {
+    const n = usage.counts[String(c.name).trim()] || 0;
+    return `
+      <tr>
+        <td class="fw-600">${escapeHtml(c.name)}</td>
+        <td class="text-muted">${n} product${n === 1 ? '' : 's'}</td>
+        <td>
+          <div class="row-actions">
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="openCategoryForm(${c.id})" title="Rename category">✏️</button>
+            <button class="btn btn-ghost btn-sm btn-icon danger-action" onclick="deleteCategory(${c.id})" title="Delete category">🗑️</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
 };
-window.deleteCategory = async (id) => {
-  await db.categories.delete(id);
-  renderCategoriesTable();
+
+window.openCategoryForm = async (id = null) => {
+  let cat = { id: null, name: '' };
+  let inUse = 0;
+
+  if (id != null) {
+    cat = await db.categories.get(id);
+    if (!cat) return showToast('error', 'That category no longer exists');
+    const usage = await categoryUsage();
+    inUse = usage.counts[String(cat.name).trim()] || 0;
+  }
+
+  const html = `
+    <input type="hidden" id="f-cat-id" value="${cat.id != null ? cat.id : ''}">
+    <input type="hidden" id="f-cat-original" value="${escapeHtml(cat.name || '')}">
+    <div class="form-group">
+      <label class="form-label" for="f-cat-name">Name</label>
+      <input class="form-input" id="f-cat-name" value="${escapeHtml(cat.name || '')}" placeholder="e.g. Rice &amp; Curry" autocomplete="off">
+    </div>
+    ${inUse > 0 ? `
+      <div class="cat-note">
+        ${inUse} product${inUse === 1 ? '' : 's'} use this category. Renaming moves ${inUse === 1 ? 'it' : 'them all'} to the new name.
+      </div>` : ''}
+  `;
+
+  openModal(id != null ? 'Rename Category' : 'New Category', html, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" id="cat-save-btn" onclick="saveCategory()">${id != null ? 'Save changes' : 'Add category'}</button>
+  `);
+
+  setTimeout(() => {
+    const f = document.getElementById('f-cat-name');
+    if (f) { f.focus(); f.select(); }
+  }, 100);
 };
-window.openCategoryForm = () => {
-  openModal('New Category', '<div class="form-group"><label class="form-label">Name</label><input class="form-input" id="f-cat-name"></div>', `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveCategory()">Save</button>`);
-};
+
 window.saveCategory = async () => {
-  const name = document.getElementById('f-cat-name').value;
+  const idRaw = document.getElementById('f-cat-id')?.value;
+  const id = idRaw ? parseInt(idRaw, 10) : null;
+  const original = (document.getElementById('f-cat-original')?.value || '').trim();
+  const name = (document.getElementById('f-cat-name')?.value || '').trim();
+
   if (!name) return showToast('error', 'Name is required');
-  await db.categories.add({ name });
-  closeModal();
-  renderCategoriesTable();
-  showToast('success', 'Category added');
+
+  const cats = await db.categories.toArray();
+  const clash = cats.find(c => String(c.name).trim().toLowerCase() === name.toLowerCase() && c.id !== id);
+  if (clash) return showToast('error', `"${clash.name}" already exists`);
+
+  const btn = document.getElementById('cat-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  try {
+    if (id == null) {
+      await db.categories.add({ name });
+      closeModal();
+      showToast('success', `Category "${name}" added`);
+    } else {
+      if (name === original) { closeModal(); return; }
+
+      await db.categories.update(id, { name });
+
+      // Carry the products across. Without this they keep pointing at the old
+      // name and disappear from the POS category filter.
+      const products = await db.products.toArray();
+      const affected = products.filter(p => String(p.category || '').trim() === original);
+      for (const p of affected) {
+        await db.products.update(p.id, { category: name });
+      }
+
+      closeModal();
+      showToast('success', affected.length
+        ? `Renamed to "${name}" · ${affected.length} product${affected.length === 1 ? '' : 's'} moved`
+        : `Renamed to "${name}"`);
+      logSecurityEvent('CATEGORY_RENAMED', { from: original, to: name, products: affected.length });
+      if (typeof renderPosCategories === 'function') renderPosCategories();
+      if (typeof renderPosGrid === 'function') renderPosGrid();
+    }
+    renderCategoriesTable();
+  } catch (err) {
+    console.error('Save category error:', err);
+    showToast('error', 'Could not save the category: ' + (err.message || err));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = id != null ? 'Save changes' : 'Add category'; }
+  }
 };
+
+window.deleteCategory = async (id) => {
+  const cat = await db.categories.get(id);
+  if (!cat) { renderCategoriesTable(); return; }
+
+  const usage = await categoryUsage();
+  const inUse = usage.counts[String(cat.name).trim()] || 0;
+
+  const ok = await showConfirmation(
+    inUse
+      ? `${inUse} product${inUse === 1 ? '' : 's'} use "${cat.name}". They will be moved to Uncategorized, not deleted.`
+      : `Delete the category "${cat.name}"?`,
+    { title: `Delete "${cat.name}"?`, confirmLabel: 'Delete category', danger: true });
+  if (!ok) return;
+
+  try {
+    if (inUse) {
+      // Products are never deleted with their category — they would vanish
+      // from the POS entirely. They fall back to Uncategorized.
+      const products = await db.products.toArray();
+      for (const p of products) {
+        if (String(p.category || '').trim() === String(cat.name).trim()) {
+          await db.products.update(p.id, { category: 'Uncategorized' });
+        }
+      }
+    }
+    await db.categories.delete(id);
+
+    showToast('success', inUse
+      ? `"${cat.name}" deleted · ${inUse} product${inUse === 1 ? '' : 's'} moved to Uncategorized`
+      : `"${cat.name}" deleted`);
+    logSecurityEvent('CATEGORY_DELETED', { name: cat.name, products_reassigned: inUse });
+
+    renderCategoriesTable();
+    if (typeof renderPosCategories === 'function') renderPosCategories();
+    if (typeof renderPosGrid === 'function') renderPosGrid();
+  } catch (err) {
+    console.error('Delete category error:', err);
+    showToast('error', 'Could not delete the category: ' + (err.message || err));
+  }
+};
+
 window.renderUsersTable = async () => {
   const users = await db.users.toArray();
   const today = new Date().toISOString().split('T')[0];
@@ -4312,8 +4476,16 @@ async function fetchReportData(start, end) {
     .slice(0, 5);
     
   // 6. Gross Profit & Margins
+  // Use the cost captured when the line was sold. Falling back to the product's
+  // current cost is only for rows written before cost was snapshotted — those
+  // still move if the product is repriced, which is exactly what this fixes.
   let totalCost = 0;
-  periodItems.forEach(i => { totalCost += i.quantity * (prodMap[i.product_id]?.cost || 0); });
+  periodItems.forEach(i => {
+    const unitCost = Number.isFinite(Number(i.cost_price))
+      ? Number(i.cost_price)
+      : (prodMap[i.product_id]?.cost || 0);
+    totalCost += i.quantity * unitCost;
+  });
   const grossProfit = revenue - totalCost;
   const profitMargin = (grossProfit / (revenue || 1)) * 100;
   

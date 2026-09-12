@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexpos-v21-onebill-v13';
+const CACHE_NAME = 'nexpos-v23-categories-v15';
 const ASSETS = [
   '/',
   '/index.html',

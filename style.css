@@ -2008,6 +2008,13 @@ body {
   border-color: var(--info) !important;
 }
 
+/* Category rename — warn before a rename drags products with it */
+.cat-note {
+  margin-top: 10px; padding: 9px 12px; border-radius: var(--radius);
+  background: var(--info-bg); border: 1px solid rgba(2,132,199,0.22);
+  font-size: 12px; font-weight: 600; color: var(--info); line-height: 1.45;
+}
+
 /* Attendance — nobody to clock in */
 .att-empty { padding: 26px 16px; text-align: center; }
 .att-empty-icon { font-size: 34px; opacity: .4; }
