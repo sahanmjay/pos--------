@@ -2257,6 +2257,8 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
 
   try {
     const checkoutCart = cart.map(item => ({ ...item }));
+    // Only set when the column exists — see salesSupportsBillNo()
+    if (await db.salesSupportsBillNo()) sale.bill_no = await nextBillNo();
     const saleId = await db.sales.add(sale);
     await db.sale_items.bulkAdd(saleItems.map(si => ({...si, sale_id: saleId})));
 
@@ -2317,6 +2319,7 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     // ─── BACKGROUND RAMIS IRD SCHEDULE 1 ENQUEUE ───
     enqueueRamisInvoice({
       id: saleId,
+      bill_no: sale.bill_no,
       date: sale.date,
       subtotal: sale.subtotal,
       discount: sale.discount,
@@ -2354,7 +2357,8 @@ async function enqueueRamisInvoice(saleData) {
     // Calculate taxable value of supply (Supply Value excluding VAT)
     const valueOfSupply = Number(((saleData.subtotal || 0) - (saleData.discount || 0)).toFixed(2));
     const vatAmount = Number((saleData.tax || 0).toFixed(2));
-    const invoiceNo = `INV-${String(saleData.id).padStart(6, '0')}`;
+    // The IRD expects a clean per-business sequence, not a shared table id
+    const invoiceNo = `INV-${String(saleData.bill_no || saleData.id).padStart(6, '0')}`;
     const invoiceDate = new Date(saleData.date).toISOString().split('T')[0];
 
     const payload = {
@@ -2406,7 +2410,7 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
       <div style="color:var(--ink-3);font-size:11px">${phone}</div>
     </div>
     <div style="margin-bottom:8px;color:var(--ink);font-size:11.5px">
-      <div>Receipt: <span class="fw-600">#${sale.id}</span></div>
+      <div>Receipt: <span class="fw-600">#${billNumber(sale)}</span></div>
       <div>Date: ${new Date(sale.date).toLocaleString()}</div>
       <div>Cashier: ${sale.cashier}</div>
       <div>Pay Method: <span style="font-weight:700">${sale.payment_type.toUpperCase()}</span></div>
@@ -2737,7 +2741,7 @@ async function initDashboard() {
   `;
   
   document.getElementById('dash-recent-sales').innerHTML = sales.sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5).map(s => `
-    <div class="activity-item"><div class="activity-dot"></div><div style="flex:1"><div class="activity-text fw-600">Sale #${s.id} — ${formatMoney(s.total_amount)}</div><div class="activity-time">${new Date(s.date).toLocaleString()} · ${s.payment_type.toUpperCase()}</div></div></div>
+    <div class="activity-item"><div class="activity-dot"></div><div style="flex:1"><div class="activity-text fw-600">Sale #${billNumber(s)} — ${formatMoney(s.total_amount)}</div><div class="activity-time">${new Date(s.date).toLocaleString()} · ${s.payment_type.toUpperCase()}</div></div></div>
   `).join('') || '<div class="text-muted">No sales yet</div>';
   
   document.getElementById('dash-low-stock').innerHTML = lowStock.slice(0,5).map(p => `
@@ -2850,6 +2854,7 @@ window.applyTemplate = async (type) => {
 // --- SALES HISTORY ---
 window.renderSalesHistory = async () => {
   let sales = await db.sales.toArray();
+  if (await backfillBillNumbers(sales)) sales = await db.sales.toArray();
   sales.sort((a,b)=>new Date(b.date)-new Date(a.date));
   
   const from = document.getElementById('sale-date-from').value;
@@ -2863,7 +2868,7 @@ window.renderSalesHistory = async () => {
   
   document.getElementById('sales-tbody').innerHTML = sales.map(s => `
     <tr>
-      <td class="td-mono fw-600">#${s.id}</td>
+      <td class="td-mono fw-600">#${billNumber(s)}</td>
       <td class="text-muted">${new Date(s.date).toLocaleString()}</td>
       <td>${cMap[s.customer_id]||'Walk-in'}</td>
       <td>${s.items_count}</td>
@@ -2896,6 +2901,62 @@ window.viewSaleDetails = async (id) => {
 // on account, and a RAMIS queue entry. Amending a bill has to unwind or
 // adjust every one of them, or the till drifts out of step with the shelf.
 // ═══════════════════════════════════════════════════════════════
+
+// ─── PER-BUSINESS BILL NUMBERS ───
+// sales.id is a SERIAL shared by every tenant in the table, so this shop's
+// receipts jump whenever another business rings a sale; an offline sale gets
+// a timestamp id like 1789119592618. bill_no is this business's own counter.
+async function nextBillNo() {
+  const sales = await db.sales.toArray();
+  let max = 0;
+  for (const s of sales) {
+    const n = Number(s.bill_no);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max + 1;
+}
+
+// Falls back to the record id for bills rung up before numbering existed.
+function billNumber(sale) {
+  const n = Number(sale && sale.bill_no);
+  return Number.isFinite(n) && n > 0 ? n : (sale && sale.id != null ? sale.id : '—');
+}
+
+// Bills predating this feature have no number. Fill the gaps once, oldest
+// first, so the sequence reads 1, 2, 3 with no renumbering of anything that
+// already has one.
+let _backfillDone = false;
+async function backfillBillNumbers(sales) {
+  if (_backfillDone) return false;
+  const missing = sales.filter(s => !Number.isFinite(Number(s.bill_no)) || Number(s.bill_no) <= 0);
+  if (!missing.length) { _backfillDone = true; return false; }
+  if (!(await db.salesSupportsBillNo())) { _backfillDone = true; return false; }
+
+  _backfillDone = true;
+  missing.sort((a, b) => new Date(a.date) - new Date(b.date));
+  let next = sales.reduce((m, s) => {
+    const n = Number(s.bill_no);
+    return Number.isFinite(n) && n > m ? n : m;
+  }, 0);
+
+  let done = 0;
+  for (const s of missing) {
+    next++;
+    try {
+      await db.sales.update(s.id, { bill_no: next });
+      s.bill_no = next;
+      done++;
+    } catch (e) {
+      console.warn('Bill number backfill stopped at sale', s.id, e);
+      break;
+    }
+  }
+  if (done) {
+    showToast('info', `Numbered ${done} earlier bill${done === 1 ? '' : 's'} (1–${next})`);
+    logSecurityEvent('BILLS_NUMBERED', { count: done, through: next });
+  }
+  return done > 0;
+}
 
 function canAmendBills() {
   return !!(currentUser && currentUser.role === 'Admin');
@@ -2958,7 +3019,7 @@ window.openSaleEditor = async (id) => {
 
   const html = `
     <div class="sale-edit-meta">
-      <div><span>Bill</span><strong>#${sale.id}</strong></div>
+      <div><span>Bill</span><strong>#${billNumber(sale)}</strong></div>
       <div><span>Date</span><strong>${new Date(sale.date).toLocaleString()}</strong></div>
       <div><span>Cashier</span><strong>${escapeHtml(sale.cashier || '—')}</strong></div>
       <div><span>Payment</span><strong>${escapeHtml(String(sale.payment_type || '').toUpperCase())}</strong></div>
@@ -2998,7 +3059,7 @@ window.openSaleEditor = async (id) => {
     <div class="sale-edit-note" id="sale-edit-note"></div>
   `;
 
-  openModal(`Edit Bill #${sale.id}`, html, `
+  openModal(`Edit Bill #${billNumber(sale)}`, html, `
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
     <button class="btn btn-primary" id="sale-edit-save" onclick="saveSaleEdit()">Save changes</button>
   `);
@@ -3086,7 +3147,7 @@ window.saveSaleEdit = async () => {
   const delta = total - (Number(sale.total_amount) || 0);
 
   const ok = await showConfirmation(
-    `Bill #${id} becomes ${formatMoney(total)} (was ${formatMoney(sale.total_amount)}). Stock and customer credit are adjusted to match.`,
+    `Bill #${billNumber(sale)} becomes ${formatMoney(total)} (was ${formatMoney(sale.total_amount)}). Stock and customer credit are adjusted to match.`,
     { title: 'Save bill changes?', confirmLabel: 'Save changes' });
   if (!ok) return;
 
@@ -3126,7 +3187,7 @@ window.saveSaleEdit = async () => {
 
     closeModal();
     editingSale = null;
-    showToast('success', `Bill #${id} updated to ${formatMoney(total)}`);
+    showToast('success', `Bill #${billNumber(sale)} updated to ${formatMoney(total)}`);
     renderSalesHistory();
     if (typeof renderPosGrid === 'function') renderPosGrid();
     if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
@@ -3151,9 +3212,9 @@ window.deleteSale = async (id) => {
     ? ` ${formatMoney(sale.total_amount)} comes off the customer's credit balance.` : '';
 
   const ok = await showConfirmation(
-    `Bill #${id} for ${formatMoney(sale.total_amount)} will be removed permanently and ${units} unit(s) returned to stock.${creditLine} ` +
+    `Bill #${billNumber(sale)} for ${formatMoney(sale.total_amount)} will be removed permanently and ${units} unit(s) returned to stock.${creditLine} ` +
     `If this bill was already submitted to RAMIS it stays filed with the IRD — reverse it there separately. This cannot be undone.`,
-    { title: `Delete bill #${id}?`, confirmLabel: 'Delete bill', danger: true });
+    { title: `Delete bill #${billNumber(sale)}?`, confirmLabel: 'Delete bill', danger: true });
   if (!ok) return;
 
   try {
@@ -3171,7 +3232,7 @@ window.deleteSale = async (id) => {
       items: items.map(i => ({ p: i.product_id, n: i.product_name, q: i.quantity })),
     });
 
-    showToast('success', `Bill #${id} deleted · ${units} unit(s) returned to stock`);
+    showToast('success', `Bill #${billNumber(sale)} deleted · ${units} unit(s) returned to stock`);
     renderSalesHistory();
     if (typeof renderPosGrid === 'function') renderPosGrid();
     if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});

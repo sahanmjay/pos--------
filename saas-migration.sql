@@ -114,6 +114,12 @@ CREATE TABLE IF NOT EXISTS public.sales (
   organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE
 );
 
+-- Each business numbers its own bills 1, 2, 3. sales.id is a SERIAL shared by
+-- every tenant, so it is unusable as a customer-facing receipt number.
+ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS bill_no INTEGER;
+CREATE UNIQUE INDEX IF NOT EXISTS sales_org_bill_no_idx
+  ON public.sales (organization_id, bill_no) WHERE bill_no IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS public.sale_items (
   id SERIAL PRIMARY KEY,
   sale_id INTEGER,

@@ -490,6 +490,8 @@ const db = {
   set currentOrgId(val) { currentOrgId = val; },
   get isSuperAdmin() { return isSuperAdmin; },
   set isSuperAdmin(val) { isSuperAdmin = val; },
+  // Whether public.sales carries the per-business bill_no column
+  salesSupportsBillNo,
   organizations: new SupaTable('organizations'),
   products:      new SupaTable('products'),
   categories:    new SupaTable('categories'),
@@ -774,6 +776,23 @@ async function saGetAllOrganizations() {
     console.warn('[saGetAllOrganizations] Cloud fetch notice:', e);
     return await idbGetAll('organizations');
   }
+}
+
+// public.sales.bill_no is added by saas-migration.sql. Writing a column the
+// schema does not have would be swallowed by add() and the sale would only
+// exist locally, so establish support once and cache the answer.
+let _billNoSupported = null;
+async function salesSupportsBillNo() {
+  if (_billNoSupported !== null) return _billNoSupported;
+  if (isOffline()) return false;
+  try {
+    const { error } = await supa.from('sales').select('bill_no').limit(1);
+    _billNoSupported = !error;
+    if (error) console.warn('[bill_no] Column not present — bill numbers fall back to record id. Run saas-migration.sql.');
+  } catch (e) {
+    _billNoSupported = false;
+  }
+  return _billNoSupported;
 }
 
 async function saCreateOrganization(orgData, adminData) {

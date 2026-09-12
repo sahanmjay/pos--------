@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexpos-v17-billedit-v9';
+const CACHE_NAME = 'nexpos-v18-billno-v10';
 const ASSETS = [
   '/',
   '/index.html',
