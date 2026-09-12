@@ -114,6 +114,72 @@ CREATE TABLE IF NOT EXISTS public.sales (
   organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE
 );
 
+-- ─── TABLES THE APP WRITES TO BUT THE SCHEMA NEVER CREATED ───
+-- Without these, every payroll run, advance, shift close and audit entry was
+-- rejected by PostgREST and silently kept in local browser storage only.
+CREATE TABLE IF NOT EXISTS public.payroll (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER,
+  employee_name TEXT NOT NULL,
+  period_start TEXT,
+  period_end TEXT,
+  pay_basis TEXT DEFAULT 'hourly',
+  basic_rate NUMERIC DEFAULT 0,
+  basic_units NUMERIC DEFAULT 0,
+  total_hours NUMERIC DEFAULT 0,
+  ot_hours NUMERIC DEFAULT 0,
+  ot_rate NUMERIC DEFAULT 0,
+  basic_pay NUMERIC DEFAULT 0,
+  ot_pay NUMERIC DEFAULT 0,
+  advances_deducted NUMERIC DEFAULT 0,
+  total_salary NUMERIC NOT NULL,
+  paid_at TIMESTAMPTZ DEFAULT now(),
+  organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS public.advances (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER,
+  employee_name TEXT NOT NULL,
+  amount NUMERIC NOT NULL,
+  reason TEXT DEFAULT '',
+  status TEXT DEFAULT 'PENDING',
+  date TEXT,
+  organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS public.pos_shifts (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER,
+  cashier TEXT,
+  opened_at TIMESTAMPTZ DEFAULT now(),
+  closed_at TIMESTAMPTZ,
+  opening_float NUMERIC DEFAULT 0,
+  closing_cash NUMERIC DEFAULT 0,
+  status TEXT DEFAULT 'OPEN',
+  organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS public.audit_log (
+  id SERIAL PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  user_id INTEGER,
+  username TEXT,
+  details TEXT,
+  timestamp TIMESTAMPTZ DEFAULT now(),
+  ip TEXT,
+  organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE
+);
+
+-- Staff can be paid hourly, daily or on a fixed monthly salary
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS pay_basis TEXT DEFAULT 'hourly';
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS daily_rate NUMERIC DEFAULT 0;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS monthly_rate NUMERIC DEFAULT 0;
+ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS pay_basis TEXT DEFAULT 'hourly';
+ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS basic_rate NUMERIC DEFAULT 0;
+ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS basic_units NUMERIC DEFAULT 0;
+ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS ot_rate NUMERIC DEFAULT 0;
+
 -- The cost of a line at the moment it was sold. Without it, repricing a
 -- product rewrites the profit on every sale that ever included it.
 ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS cost_price NUMERIC DEFAULT 0;

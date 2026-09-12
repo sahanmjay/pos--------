@@ -17,7 +17,7 @@
 <link rel="shortcut icon" href="favicon.ico">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=20260912_categories_v15">
+<link rel="stylesheet" href="style.css?v=20260912_payroll_v16">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -1003,8 +1003,9 @@
                 <thead>
                   <tr>
                     <th>Employee</th>
+                    <th>Basis</th>
                     <th>Last Paid</th>
-                    <th>Hours Worked</th>
+                    <th>Worked</th>
                     <th>Basic Pay</th>
                     <th>OT Pay</th>
                     <th>Advances</th>
@@ -1013,6 +1014,25 @@
                   </tr>
                 </thead>
                 <tbody id="payroll-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card" style="margin-top:18px">
+            <div class="page-header" style="padding:14px 18px 0;margin:0">
+              <div>
+                <div class="page-title" style="font-size:16px">Payslips Issued</div>
+                <div class="page-subtitle">Reprint any slip that has already been paid</div>
+              </div>
+            </div>
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Employee</th><th>Period</th><th>Basis</th>
+                    <th>Basic</th><th>OT</th><th>Advances</th><th>Net Paid</th><th>Slip</th>
+                  </tr>
+                </thead>
+                <tbody id="payslip-tbody"></tbody>
               </table>
             </div>
           </div>
@@ -1488,8 +1508,8 @@
 </div>
 
 <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js';document.head.appendChild(s);"></script>
-<script src="db.js?v=20260912_categories_v15"></script>
-<script src="app.js?v=20260912_categories_v15"></script>
+<script src="db.js?v=20260912_payroll_v16"></script>
+<script src="app.js?v=20260912_payroll_v16"></script>
 <script>
 window.addEventListener('keydown', (e) => {
   if ((e.key === '/' || ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K'))) && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {

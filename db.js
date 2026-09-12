@@ -494,6 +494,8 @@ const db = {
   salesSupportsBillNo,
   // Whether public.sale_items can store the cost at the moment of sale
   saleItemsSupportCost,
+  // Whether public.payroll can record which basis a payslip was paid on
+  payrollSupportsBasis,
   organizations: new SupaTable('organizations'),
   products:      new SupaTable('products'),
   categories:    new SupaTable('categories'),
@@ -786,6 +788,23 @@ async function saGetAllOrganizations() {
 // public.sale_items.cost_price is added by saas-migration.sql. Writing it to a
 // schema that lacks it would be swallowed by add() and the sale line would only
 // exist locally, so support is established once and cached.
+// payroll.pay_basis and friends arrive with saas-migration.sql. Same guard as
+// the other probes: a rejected column would be swallowed by add() and the
+// payslip would exist only in this browser.
+let _payBasisSupported = null;
+async function payrollSupportsBasis() {
+  if (_payBasisSupported !== null) return _payBasisSupported;
+  if (isOffline()) return false;
+  try {
+    const { error } = await supa.from('payroll').select('pay_basis').limit(1);
+    _payBasisSupported = !error;
+    if (error) console.warn('[payroll] pay_basis column not present — payslips fall back to hourly. Run saas-migration.sql.');
+  } catch (e) {
+    _payBasisSupported = false;
+  }
+  return _payBasisSupported;
+}
+
 let _costSnapSupported = null;
 async function saleItemsSupportCost() {
   if (_costSnapSupported !== null) return _costSnapSupported;

@@ -3702,8 +3702,18 @@ window.openUserForm = async (id = null) => {
       <div class="form-group"><label class="form-label">Password *</label><input class="form-input" type="password" id="f-usr-pass" value="${u.password}" placeholder="Assign password"></div>
       <div class="form-group"><label class="form-label">Display Name *</label><input class="form-input" id="f-usr-disp" value="${u.display_name}" placeholder="e.g. Kasun Silva"></div>
       <div class="form-group"><label class="form-label">Role</label><select class="form-input" id="f-usr-role" onchange="togglePayFields(this.value)"><option ${u.role==='Admin'?'selected':''}>Admin</option><option ${u.role==='Counter'?'selected':''}>Counter</option><option ${u.role==='Cashier'?'selected':''}>Cashier</option><option ${u.role==='HR'?'selected':''}>HR</option><option ${u.role==='Inventory'?'selected':''}>Inventory</option><option ${u.role==='Worker'?'selected':''}>Worker</option></select></div>
-      <div id="pay-fields" style="grid-column: span 2; display: ${u.role==='Worker'?'grid':'none'}; grid-template-columns: 1fr 1fr; gap: 14px;">
-        <div class="form-group"><label class="form-label">Hourly Rate (Basic)</label><input class="form-input" type="number" step="0.01" id="f-usr-h-rate" value="${u.hourly_rate||0}"></div>
+      <div id="pay-fields" style="grid-column: span 2; display: ${u.role==='Admin'?'none':'grid'}; grid-template-columns: 1fr 1fr; gap: 14px;">
+        <div class="form-group">
+          <label class="form-label">Pay Basis</label>
+          <select class="form-input" id="f-usr-basis" onchange="togglePayBasis(this.value)">
+            <option value="hourly" ${payBasisOf(u)==='hourly'?'selected':''}>Hourly — paid per hour worked</option>
+            <option value="daily" ${payBasisOf(u)==='daily'?'selected':''}>Daily — paid per day present</option>
+            <option value="monthly" ${payBasisOf(u)==='monthly'?'selected':''}>Monthly — fixed salary</option>
+          </select>
+        </div>
+        <div class="form-group" id="pay-rate-hourly"><label class="form-label">Hourly Rate</label><input class="form-input" type="number" step="0.01" id="f-usr-h-rate" value="${u.hourly_rate||0}"></div>
+        <div class="form-group" id="pay-rate-daily"><label class="form-label">Daily Rate</label><input class="form-input" type="number" step="0.01" id="f-usr-d-rate" value="${u.daily_rate||0}"></div>
+        <div class="form-group" id="pay-rate-monthly"><label class="form-label">Monthly Salary</label><input class="form-input" type="number" step="0.01" id="f-usr-m-rate" value="${u.monthly_rate||0}"></div>
         <div class="form-group"><label class="form-label">OT Rate (per hr)</label><input class="form-input" type="number" step="0.01" id="f-usr-ot-rate" value="${u.ot_rate||0}"></div>
       </div>
       <div class="form-group"><label class="form-label">Status</label><select class="form-input" id="f-usr-active"><option value="true" ${u.is_active?'selected':''}>Active</option><option value="false" ${!u.is_active?'selected':''}>Inactive</option></select></div>
@@ -3734,8 +3744,11 @@ window.saveUser = async () => {
     display_name: displayName, 
     role: document.getElementById('f-usr-role').value, 
     is_active: document.getElementById('f-usr-active').value === 'true',
-    hourly_rate: parseFloat(document.getElementById('f-usr-h-rate').value) || 0,
-    ot_rate: parseFloat(document.getElementById('f-usr-ot-rate').value) || 0
+    pay_basis: document.getElementById('f-usr-basis')?.value || 'hourly',
+    hourly_rate: parseFloat(document.getElementById('f-usr-h-rate')?.value) || 0,
+    daily_rate: parseFloat(document.getElementById('f-usr-d-rate')?.value) || 0,
+    monthly_rate: parseFloat(document.getElementById('f-usr-m-rate')?.value) || 0,
+    ot_rate: parseFloat(document.getElementById('f-usr-ot-rate')?.value) || 0
   };
   if(id) await db.users.update(parseInt(id), u); else await db.users.add(u);
   closeModal(); 
@@ -3755,182 +3768,393 @@ window.deleteUser = async (id, name) => {
 };
 
 // --- PAYROLL LOGIC ---
+// ═══════════════════════════════════════════════════════════════
+// PAYROLL
+// Staff are paid on one of three bases. Everything downstream — the
+// pending table, the run modal and the payslip — reads the basis rather
+// than assuming hours, so a monthly-salaried cook is not paid Rs. 0
+// because nobody clocked them in.
+//   hourly  — basic hours x hourly rate
+//   daily   — days present x daily rate
+//   monthly — fixed monthly salary for the period
+// Overtime is always paid per hour on top, whatever the basis.
+// ═══════════════════════════════════════════════════════════════
+
+const PAY_BASES = {
+  hourly:  { label: 'Hourly',  unit: 'hrs',  rateField: 'hourly_rate',  rateLabel: 'Hourly Rate' },
+  daily:   { label: 'Daily',   unit: 'days', rateField: 'daily_rate',   rateLabel: 'Daily Rate' },
+  monthly: { label: 'Monthly', unit: 'mth',  rateField: 'monthly_rate', rateLabel: 'Monthly Salary' },
+};
+
+function payBasisOf(u) {
+  const b = String(u && u.pay_basis || '').toLowerCase();
+  return PAY_BASES[b] ? b : 'hourly';
+}
+
+const OT_THRESHOLD_HOURS = 8;
+
+// Splits a stretch of attendance into basic hours, overtime hours and the
+// number of distinct days actually worked.
+function summariseAttendance(records) {
+  let basicHours = 0, otHours = 0;
+  const days = new Set();
+  for (const a of records) {
+    if (!a.clock_in || !a.clock_out) continue;
+    const h = (new Date(a.clock_out) - new Date(a.clock_in)) / 3600000;
+    if (!isFinite(h) || h <= 0) continue;
+    days.add(a.date);
+    if (h > OT_THRESHOLD_HOURS) { basicHours += OT_THRESHOLD_HOURS; otHours += h - OT_THRESHOLD_HOURS; }
+    else { basicHours += h; }
+  }
+  return { basicHours, otHours, totalHours: basicHours + otHours, daysWorked: days.size };
+}
+
+// The single source of truth for what someone is owed.
+function computePay(user, summary, advances) {
+  const basis = payBasisOf(user);
+  const otRate = Number(user.ot_rate) || 0;
+  let rate, units, basicPay;
+
+  if (basis === 'daily') {
+    rate = Number(user.daily_rate) || 0;
+    units = summary.daysWorked;
+    basicPay = rate * units;
+  } else if (basis === 'monthly') {
+    rate = Number(user.monthly_rate) || 0;
+    units = 1;                    // one month's salary for the period
+    basicPay = rate;
+  } else {
+    rate = Number(user.hourly_rate) || 0;
+    units = summary.basicHours;
+    basicPay = rate * units;
+  }
+
+  const otPay = summary.otHours * otRate;
+  const gross = basicPay + otPay;
+  const net = gross - advances;
+  return { basis, rate, units, basicPay, otRate, otHours: summary.otHours, otPay, gross, advances, net };
+}
+
+// What the pending table and the run modal both need for one person.
+async function payrollFor(user) {
+  const attendance = await db.attendance.where('user_id').equals(user.id).toArray();
+  const lastPaid = user.last_paid_date ? new Date(user.last_paid_date) : new Date(0);
+  const pending = attendance.filter(a => a.clock_out && new Date(a.clock_out) > lastPaid);
+  const summary = summariseAttendance(pending);
+  const advRows = await db.advances.where({ user_id: user.id, status: 'PENDING' }).toArray();
+  const advances = advRows.reduce((s, a) => s + (Number(a.amount) || 0), 0);
+  return { summary, advances, pay: computePay(user, summary, advances) };
+}
+
+window.togglePayBasis = (basis) => {
+  ['hourly', 'daily', 'monthly'].forEach(b => {
+    const el = document.getElementById('pay-rate-' + b);
+    if (el) el.style.display = (b === basis) ? 'block' : 'none';
+  });
+};
+
 window.renderPayroll = async () => {
   const users = await activeStaff();
   const tbody = document.getElementById('payroll-tbody');
-  
+  if (!tbody) return;
+
   const rows = [];
   for (const u of users) {
     if (u.role === 'Admin') continue;
-    
-    const attendance = await db.attendance.where('user_id').equals(u.id).toArray();
-    const lastPaid = u.last_paid_date ? new Date(u.last_paid_date) : new Date(0);
-    const pendingAttendance = attendance.filter(a => a.clock_out && new Date(a.clock_out) > lastPaid);
-    
-    let totalHours = 0;
-    let basicHours = 0;
-    let otHours = 0;
-    
-    pendingAttendance.forEach(a => {
-      const dayHours = (new Date(a.clock_out) - new Date(a.clock_in)) / (1000 * 60 * 60);
-      totalHours += dayHours;
-      if (dayHours > 8) {
-        basicHours += 8;
-        otHours += (dayHours - 8);
-      } else {
-        basicHours += dayHours;
-      }
-    });
-
-    // Get pending advances
-    const advances = await db.advances.where({user_id: u.id, status: 'PENDING'}).toArray();
-    const totalAdvances = advances.reduce((sum, a) => sum + a.amount, 0);
-
-    const basicPay = basicHours * (u.hourly_rate || 0);
-    const otPay = otHours * (u.ot_rate || 0);
-    const totalDue = basicPay + otPay - totalAdvances;
+    const { pay } = await payrollFor(u);
+    const meta = PAY_BASES[pay.basis];
+    const worked = pay.basis === 'monthly'
+      ? '1 month'
+      : `${pay.units.toFixed(pay.basis === 'daily' ? 0 : 2)} ${meta.unit}`;
 
     rows.push(`
       <tr>
-        <td class="fw-600">${u.display_name}</td>
-        <td>${u.last_paid_date || 'Never'}</td>
-        <td class="td-mono">${totalHours.toFixed(2)} hrs</td>
-        <td class="td-mono">${formatMoney(basicPay)}</td>
-        <td class="td-mono">${formatMoney(otPay)}</td>
-        <td class="td-mono text-danger">-${formatMoney(totalAdvances)}</td>
-        <td class="td-mono fw-600 text-success">${formatMoney(totalDue)}</td>
-        <td>
-          <button class="btn btn-primary btn-sm" onclick="openPayrollRunModal(${u.id})">Process</button>
-        </td>
-      </tr>
-    `);
+        <td class="fw-600">${escapeHtml(u.display_name)}</td>
+        <td><span class="badge badge-completed">${meta.label}</span></td>
+        <td>${escapeHtml(u.last_paid_date || 'Never')}</td>
+        <td class="td-mono">${worked}</td>
+        <td class="td-mono">${formatMoney(pay.basicPay)}</td>
+        <td class="td-mono">${formatMoney(pay.otPay)}</td>
+        <td class="td-mono text-danger">-${formatMoney(pay.advances)}</td>
+        <td class="td-mono fw-600 text-success">${formatMoney(pay.net)}</td>
+        <td><button class="btn btn-primary btn-sm" onclick="openPayrollRunModal(${u.id})">Process</button></td>
+      </tr>`);
   }
-  
-  tbody.innerHTML = rows.join('') || '<tr><td colspan="8" style="text-align:center">No employees pending payment</td></tr>';
+
+  tbody.innerHTML = rows.join('') ||
+    '<tr><td colspan="9" style="text-align:center;padding:26px 14px">' +
+    '<div style="font-weight:700;margin-bottom:4px">No staff pending payment</div>' +
+    '<div class="text-muted" style="font-size:12.5px">Add staff in <strong>Staff Management</strong> and set a pay basis.</div></td></tr>';
+
+  renderPayslipHistory();
 };
 
+// ─── PAYSLIP HISTORY ───
+window.renderPayslipHistory = async () => {
+  const tbody = document.getElementById('payslip-tbody');
+  if (!tbody) return;
+  let runs = [];
+  try { runs = await db.payroll.toArray(); } catch (e) { runs = []; }
+  runs.sort((a, b) => new Date(b.paid_at) - new Date(a.paid_at));
+
+  tbody.innerHTML = runs.slice(0, 50).map(r => `
+    <tr>
+      <td class="fw-600">${escapeHtml(r.employee_name || '—')}</td>
+      <td class="text-muted">${escapeHtml(r.period_start || '—')} → ${escapeHtml(r.period_end || '—')}</td>
+      <td><span class="badge badge-completed">${escapeHtml(PAY_BASES[r.pay_basis]?.label || 'Hourly')}</span></td>
+      <td class="td-mono">${formatMoney(r.basic_pay || 0)}</td>
+      <td class="td-mono">${formatMoney(r.ot_pay || 0)}</td>
+      <td class="td-mono text-danger">-${formatMoney(r.advances_deducted || 0)}</td>
+      <td class="td-mono fw-600 text-success">${formatMoney(r.total_salary || 0)}</td>
+      <td><button class="btn btn-ghost btn-sm btn-icon" onclick="printPayslip(${r.id})" title="Print payslip">🧾</button></td>
+    </tr>`).join('') ||
+    '<tr><td colspan="8" style="text-align:center;padding:22px 14px" class="text-muted">No payslips issued yet</td></tr>';
+};
+
+// ─── RUN MODAL ───
 window.openPayrollRunModal = async (userId = null) => {
   const users = await activeStaff();
   const workers = users.filter(u => u.role !== 'Admin');
-  
-  let u = userId ? await db.users.get(userId) : null;
-  
+
+  if (!workers.length) {
+    return openModal('Process Payroll Run', `
+      <div class="att-empty">
+        <div class="att-empty-icon" aria-hidden="true">👥</div>
+        <div class="att-empty-title">No staff to pay</div>
+        <div class="att-empty-sub">Add a staff member with a pay basis and rate, then run payroll.</div>
+      </div>`,
+      `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
+       <button class="btn btn-primary" onclick="closeModal(); nav('user-mgmt');">Open Staff Management</button>`);
+  }
+
+  const u = userId ? await db.users.get(userId) : null;
+
   const html = `
     <div class="form-group">
-      <label class="form-label">Employee</label>
-      <select class="form-input" id="p-run-user" onchange="updatePayrollCalc()">
+      <label class="form-label" for="p-run-user">Employee</label>
+      <select class="form-input" id="p-run-user" onchange="onPayrollUserChange()">
         <option value="">Select Employee</option>
-        ${workers.map(w => `<option value="${w.id}" ${u && u.id === w.id ? 'selected' : ''}>${w.display_name}</option>`).join('')}
+        ${workers.map(w => `<option value="${w.id}" ${u && u.id === w.id ? 'selected' : ''}>${escapeHtml(w.display_name)} — ${PAY_BASES[payBasisOf(w)].label}</option>`).join('')}
       </select>
     </div>
-    <div class="form-grid" style="margin-top:15px">
-      <div class="form-group"><label class="form-label">Basic Salary / Rate</label><input type="number" class="form-input" id="p-run-basic-rate" oninput="updatePayrollCalc()"></div>
-      <div class="form-group"><label class="form-label">Basic Hours</label><input type="number" class="form-input" id="p-run-basic-hours" oninput="updatePayrollCalc()"></div>
-      <div class="form-group"><label class="form-label">OT Rate (per hr)</label><input type="number" class="form-input" id="p-run-ot-rate" oninput="updatePayrollCalc()"></div>
-      <div class="form-group"><label class="form-label">OT Hours</label><input type="number" class="form-input" id="p-run-ot-hours" oninput="updatePayrollCalc()"></div>
-      <div class="form-group"><label class="form-label">Advances to Deduct</label><input type="number" class="form-input" id="p-run-advances" oninput="updatePayrollCalc()" readonly></div>
+    <div class="pay-basis-note" id="p-run-basis-note"></div>
+    <div class="form-grid" style="margin-top:14px">
+      <div class="form-group"><label class="form-label" id="p-run-rate-label" for="p-run-basic-rate">Rate</label><input type="number" step="0.01" class="form-input" id="p-run-basic-rate" oninput="updatePayrollCalc()"></div>
+      <div class="form-group"><label class="form-label" id="p-run-units-label" for="p-run-basic-hours">Units</label><input type="number" step="0.01" class="form-input" id="p-run-basic-hours" oninput="updatePayrollCalc()"></div>
+      <div class="form-group"><label class="form-label" for="p-run-ot-rate">OT Rate (per hr)</label><input type="number" step="0.01" class="form-input" id="p-run-ot-rate" oninput="updatePayrollCalc()"></div>
+      <div class="form-group"><label class="form-label" for="p-run-ot-hours">OT Hours</label><input type="number" step="0.01" class="form-input" id="p-run-ot-hours" oninput="updatePayrollCalc()"></div>
+      <div class="form-group"><label class="form-label" for="p-run-advances">Advances to Deduct</label><input type="number" class="form-input" id="p-run-advances" oninput="updatePayrollCalc()" readonly></div>
       <div class="form-group">
         <label class="form-label">Total Net Pay</label>
         <div id="p-run-total" style="font-size:24px; font-weight:700; color:var(--success); margin-top:5px">Rs. 0.00</div>
       </div>
     </div>
   `;
-  
+
   openModal('Process Payroll Run', html, `
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-    <button class="btn btn-primary" onclick="submitPayrollRun()">Confirm Payment</button>
+    <button class="btn btn-primary" id="p-run-confirm" onclick="submitPayrollRun()">Confirm Payment</button>
   `);
-  
-  if (u) updatePayrollCalc();
+
+  if (u) onPayrollUserChange();
+};
+
+// Switching employee re-seeds every field — the previous person's hours must
+// never be carried onto someone else's payslip.
+window.onPayrollUserChange = async () => {
+  ['p-run-basic-rate', 'p-run-basic-hours', 'p-run-ot-rate', 'p-run-ot-hours'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  await updatePayrollCalc();
 };
 
 window.updatePayrollCalc = async () => {
-  const userId = document.getElementById('p-run-user').value;
-  if (!userId) return;
-  
-  const u = await db.users.get(parseInt(userId));
-  
-  // Auto-fill from attendance if first time or user changed
-  const basicRateInput = document.getElementById('p-run-basic-rate');
-  const basicHoursInput = document.getElementById('p-run-basic-hours');
-  const otRateInput = document.getElementById('p-run-ot-rate');
-  const otHoursInput = document.getElementById('p-run-ot-hours');
-  const advancesInput = document.getElementById('p-run-advances');
+  const userId = document.getElementById('p-run-user')?.value;
+  const totalEl = document.getElementById('p-run-total');
+  if (!userId) { if (totalEl) totalEl.textContent = formatMoney(0); return; }
 
-  // If inputs are empty, auto-calculate from system
-  const attendance = await db.attendance.where('user_id').equals(u.id).toArray();
-  const lastPaid = u.last_paid_date ? new Date(u.last_paid_date) : new Date(0);
-  const pendingAttendance = attendance.filter(a => a.clock_out && new Date(a.clock_out) > lastPaid);
-  
-  let bHrs = 0;
-  let oHrs = 0;
-  pendingAttendance.forEach(a => {
-    const dayHours = (new Date(a.clock_out) - new Date(a.clock_in)) / (1000 * 60 * 60);
-    if (dayHours > 8) { bHrs += 8; oHrs += (dayHours - 8); }
-    else { bHrs += dayHours; }
-  });
+  const u = await db.users.get(parseInt(userId, 10));
+  if (!u) return;
 
-  // Get advances
-  const advances = await db.advances.where({user_id: u.id, status: 'PENDING'}).toArray();
-  const totalAdvances = advances.reduce((sum, a) => sum + a.amount, 0);
+  const basis = payBasisOf(u);
+  const meta = PAY_BASES[basis];
+  const { summary, advances, pay } = await payrollFor(u);
 
-  if (basicRateInput.value === "") basicRateInput.value = u.hourly_rate || 0;
-  if (basicHoursInput.value === "") basicHoursInput.value = bHrs.toFixed(2);
-  if (otRateInput.value === "") otRateInput.value = u.ot_rate || 0;
-  if (otHoursInput.value === "") otHoursInput.value = oHrs.toFixed(2);
-  advancesInput.value = totalAdvances;
+  const rateEl = document.getElementById('p-run-basic-rate');
+  const unitsEl = document.getElementById('p-run-basic-hours');
+  const otRateEl = document.getElementById('p-run-ot-rate');
+  const otHoursEl = document.getElementById('p-run-ot-hours');
+  const advEl = document.getElementById('p-run-advances');
 
-  const bRate = parseFloat(basicRateInput.value) || 0;
-  const bH = parseFloat(basicHoursInput.value) || 0;
-  const oRate = parseFloat(otRateInput.value) || 0;
-  const oH = parseFloat(otHoursInput.value) || 0;
-  const adv = parseFloat(advancesInput.value) || 0;
+  document.getElementById('p-run-rate-label').textContent = meta.rateLabel;
+  document.getElementById('p-run-units-label').textContent =
+    basis === 'monthly' ? 'Months' : basis === 'daily' ? 'Days Worked' : 'Basic Hours';
 
-  const total = (bRate * bH) + (oRate * oH) - adv;
-  document.getElementById('p-run-total').textContent = formatMoney(total);
+  const note = document.getElementById('p-run-basis-note');
+  if (note) {
+    note.textContent = basis === 'monthly'
+      ? `Paid monthly. ${summary.daysWorked} day(s) attended this period — salary is not pro-rated.`
+      : basis === 'daily'
+        ? `Paid daily. ${summary.daysWorked} day(s) attended, ${summary.totalHours.toFixed(2)} hrs total.`
+        : `Paid hourly. ${summary.totalHours.toFixed(2)} hrs worked, ${summary.otHours.toFixed(2)} hrs over ${OT_THRESHOLD_HOURS}/day.`;
+  }
+
+  if (rateEl.value === '') rateEl.value = pay.rate;
+  if (unitsEl.value === '') unitsEl.value = basis === 'hourly' ? summary.basicHours.toFixed(2) : pay.units;
+  if (otRateEl.value === '') otRateEl.value = u.ot_rate || 0;
+  if (otHoursEl.value === '') otHoursEl.value = summary.otHours.toFixed(2);
+  advEl.value = advances;
+
+  const total = ((parseFloat(rateEl.value) || 0) * (parseFloat(unitsEl.value) || 0))
+              + ((parseFloat(otRateEl.value) || 0) * (parseFloat(otHoursEl.value) || 0))
+              - (parseFloat(advEl.value) || 0);
+  if (totalEl) totalEl.textContent = formatMoney(total);
 };
 
 window.submitPayrollRun = async () => {
-  const userId = parseInt(document.getElementById('p-run-user').value);
-  const bRate = parseFloat(document.getElementById('p-run-basic-rate').value) || 0;
-  const bH = parseFloat(document.getElementById('p-run-basic-hours').value) || 0;
-  const oRate = parseFloat(document.getElementById('p-run-ot-rate').value) || 0;
-  const oH = parseFloat(document.getElementById('p-run-ot-hours').value) || 0;
-  const adv = parseFloat(document.getElementById('p-run-advances').value) || 0;
-  const total = (bRate * bH) + (oRate * oH) - adv;
-
-  if (!userId) return showToast('error', 'Please select an employee');
-  if (total < 0) return showToast('error', 'Total cannot be negative');
+  const userId = parseInt(document.getElementById('p-run-user')?.value, 10);
+  if (!Number.isFinite(userId)) return showToast('error', 'Please select an employee');
 
   const u = await db.users.get(userId);
-  const today = new Date().toISOString().split('T')[0];
+  if (!u) return showToast('error', 'That staff account no longer exists');
 
-  await db.payroll.add({
-    user_id: userId,
-    employee_name: u.display_name,
-    period_start: u.last_paid_date || 'Initial',
-    period_end: today,
-    total_hours: bH + oH,
-    ot_hours: oH,
-    basic_pay: bRate * bH,
-    ot_pay: oRate * oH,
-    advances_deducted: adv,
-    total_salary: total,
-    paid_at: new Date().toISOString()
-  });
+  const basis = payBasisOf(u);
+  const rate = parseFloat(document.getElementById('p-run-basic-rate').value) || 0;
+  const units = parseFloat(document.getElementById('p-run-basic-hours').value) || 0;
+  const otRate = parseFloat(document.getElementById('p-run-ot-rate').value) || 0;
+  const otHours = parseFloat(document.getElementById('p-run-ot-hours').value) || 0;
+  const adv = parseFloat(document.getElementById('p-run-advances').value) || 0;
 
-  // Mark advances as deducted
-  const pendingAdvances = await db.advances.where({user_id: userId, status: 'PENDING'}).toArray();
-  for (const a of pendingAdvances) {
-    await db.advances.update(a.id, { status: 'DEDUCTED' });
+  const basicPay = rate * units;
+  const otPay = otRate * otHours;
+  const total = basicPay + otPay - adv;
+  if (total < 0) return showToast('error', 'Net pay cannot be negative — reduce the advance deduction');
+
+  const btn = document.getElementById('p-run-confirm');
+  if (btn) { btn.disabled = true; btn.textContent = 'Processing…'; }
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const record = {
+      user_id: userId,
+      employee_name: u.display_name,
+      period_start: u.last_paid_date || 'Initial',
+      period_end: today,
+      pay_basis: basis,
+      basic_rate: rate,
+      basic_units: units,
+      total_hours: basis === 'hourly' ? units + otHours : otHours,
+      ot_hours: otHours,
+      ot_rate: otRate,
+      basic_pay: basicPay,
+      ot_pay: otPay,
+      advances_deducted: adv,
+      total_salary: total,
+      paid_at: new Date().toISOString(),
+    };
+    if (!(await db.payrollSupportsBasis())) {
+      delete record.pay_basis; delete record.basic_rate;
+      delete record.basic_units; delete record.ot_rate;
+    }
+
+    const payrollId = await db.payroll.add(record);
+
+    const pendingAdvances = await db.advances.where({ user_id: userId, status: 'PENDING' }).toArray();
+    for (const a of pendingAdvances) await db.advances.update(a.id, { status: 'DEDUCTED' });
+    await db.users.update(userId, { last_paid_date: today });
+
+    logSecurityEvent('PAYROLL_PAID', { user_id: userId, name: u.display_name, basis, net: total });
+
+    closeModal();
+    showToast('success', `${u.display_name} paid ${formatMoney(total)}`);
+    renderPayroll();
+    printPayslip(payrollId, record);
+  } catch (err) {
+    console.error('Payroll run error:', err);
+    showToast('error', 'Could not process payroll: ' + (err.message || err));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Payment'; }
   }
-
-  await db.users.update(userId, { last_paid_date: today });
-
-  closeModal();
-  showToast('success', `Salary processed for ${u.display_name}`);
-  renderPayroll();
 };
+
+// ─── PAYSLIP ───
+// Prints on the same 80mm roll as everything else, so no second device is
+// needed to hand someone their slip.
+window.printPayslip = async (payrollId, prefetched = null) => {
+  let r = prefetched;
+  if (!r) {
+    try { r = await db.payroll.get(payrollId); } catch (e) { r = null; }
+  }
+  if (!r) return showToast('error', 'Payslip not found');
+
+  const basis = r.pay_basis || 'hourly';
+  const meta = PAY_BASES[basis] || PAY_BASES.hourly;
+  const unitLabel = basis === 'monthly' ? 'month' : basis === 'daily' ? 'days' : 'hrs';
+  const gross = (Number(r.basic_pay) || 0) + (Number(r.ot_pay) || 0);
+
+  const html = `
+    <div style="text-align:center;margin-bottom:10px;border-bottom:1px dashed var(--rule);padding-bottom:8px">
+      <h2 style="margin:0;font-size:17px;color:var(--ink);letter-spacing:0.5px">${escapeHtml(currentSettings.biz_name || 'NexPOS')}</h2>
+      <div style="color:var(--ink-3);font-size:11px">${escapeHtml(currentSettings.address || '')}</div>
+    </div>
+
+    <div style="text-align:center;margin-bottom:10px">
+      <div class="thermal-invert" style="display:inline-block;background:#000;color:#fff;padding:3px 14px;font-weight:800;letter-spacing:1px">PAYSLIP</div>
+    </div>
+
+    <div style="margin-bottom:8px;color:var(--ink);font-size:11.5px">
+      <div>Employee: <span style="font-weight:800">${escapeHtml(r.employee_name || '—')}</span></div>
+      <div>Period: ${escapeHtml(r.period_start || '—')} → ${escapeHtml(r.period_end || '—')}</div>
+      <div>Pay Basis: <span style="font-weight:700">${escapeHtml(meta.label)}</span></div>
+      <div>Issued: ${new Date(r.paid_at || Date.now()).toLocaleString()}</div>
+    </div>
+
+    <table style="width:100%;text-align:left;border-top:1px dashed var(--rule);border-bottom:1px dashed var(--rule);margin-bottom:8px;color:var(--ink);font-size:11.5px">
+      <tr style="color:var(--ink-3);font-size:10.5px;text-transform:uppercase"><th>Earnings</th><th style="text-align:right">Amount</th></tr>
+      <tr>
+        <td style="padding:3px 0">Basic${r.basic_units != null ? ` (${Number(r.basic_units).toFixed(basis === 'hourly' ? 2 : 0)} ${unitLabel} @ ${formatMoney(r.basic_rate || 0)})` : ''}</td>
+        <td style="text-align:right" class="td-mono">${formatMoney(r.basic_pay || 0)}</td>
+      </tr>
+      ${Number(r.ot_pay) > 0 ? `<tr>
+        <td style="padding:3px 0">Overtime (${Number(r.ot_hours || 0).toFixed(2)} hrs @ ${formatMoney(r.ot_rate || 0)})</td>
+        <td style="text-align:right" class="td-mono">${formatMoney(r.ot_pay)}</td>
+      </tr>` : ''}
+      <tr><td style="padding:3px 0;font-weight:800">Gross Pay</td><td style="text-align:right;font-weight:800" class="td-mono">${formatMoney(gross)}</td></tr>
+      ${Number(r.advances_deducted) > 0 ? `<tr>
+        <td style="padding:3px 0">Less: Advances</td>
+        <td style="text-align:right" class="td-mono">- ${formatMoney(r.advances_deducted)}</td>
+      </tr>` : ''}
+    </table>
+
+    <div style="text-align:right;color:var(--ink)">
+      <h3 style="margin:4px 0;color:var(--ink);font-size:18px;font-weight:800">Net Pay: ${formatMoney(r.total_salary || 0)}</h3>
+    </div>
+
+    <div style="margin-top:22px;color:var(--ink-2);font-size:11px">
+      <div style="border-top:1px solid var(--rule);width:60%;padding-top:3px">Employee signature</div>
+    </div>
+
+    <div style="text-align:center;margin-top:12px;border-top:1px dashed var(--rule);padding-top:6px;color:var(--ink-3);font-size:10.5px">
+      Computer generated payslip
+    </div>
+  `;
+
+  const body = document.getElementById('receipt-body');
+  const overlay = document.getElementById('receipt-overlay');
+  if (!body || !overlay) return showToast('error', 'Print view unavailable');
+
+  const banner = document.getElementById('receipt-status-banner');
+  if (banner) banner.style.display = 'none';
+  body.innerHTML = html;
+
+  overlay.classList.add('open', 'autoprint-mode');
+  setTimeout(async () => {
+    await printReceipt({ quiet: true });
+    setTimeout(() => overlay.classList.remove('open', 'autoprint-mode'), 400);
+  }, 120);
+};
+
 
 // --- ADVANCES LOGIC ---
 window.renderAdvances = async () => {
