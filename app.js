@@ -2870,7 +2870,15 @@ window.renderSalesHistory = async () => {
       <td class="td-mono fw-600">${formatMoney(s.total_amount)}</td>
       <td>${s.payment_type.toUpperCase()}</td>
       <td><span class="badge ${s.status==='completed'?'badge-completed':'badge-voided'}">${s.status}</span></td>
-      <td><button class="btn btn-ghost btn-sm btn-icon" onclick="viewSaleDetails(${s.id})">👁️</button></td>
+      <td>
+        <div class="row-actions">
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="viewSaleDetails(${s.id})" title="View bill">👁️</button>
+          ${canAmendBills() && s.status !== 'voided' ? `
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="openSaleEditor(${s.id})" title="Edit bill">✏️</button>
+            <button class="btn btn-ghost btn-sm btn-icon danger-action" onclick="deleteSale(${s.id})" title="Delete bill">🗑️</button>
+          ` : ''}
+        </div>
+      </td>
     </tr>
   `).join('') || '<tr><td colspan="8" style="text-align:center">No sales found</td></tr>';
 };
@@ -2879,6 +2887,298 @@ window.viewSaleDetails = async (id) => {
   const sale = await db.sales.get(id);
   const items = await db.sale_items.where('sale_id').equals(id).toArray();
   showReceipt(sale, items, 0, sale.total_amount);
+};
+
+// ═══════════════════════════════════════════════════════════════
+// BILL EDIT & DELETE
+// A completed sale writes five things: the sales row, its sale_items,
+// a stock deduction per product, a credit balance bump when the bill was
+// on account, and a RAMIS queue entry. Amending a bill has to unwind or
+// adjust every one of them, or the till drifts out of step with the shelf.
+// ═══════════════════════════════════════════════════════════════
+
+function canAmendBills() {
+  return !!(currentUser && currentUser.role === 'Admin');
+}
+
+// Original tax rate is derived from the stored figures rather than the current
+// setting, so a later tax change never rewrites an old bill's rate.
+function saleTaxRate(sale) {
+  const taxable = (Number(sale.subtotal) || 0) - (Number(sale.discount) || 0);
+  if (taxable <= 0) return 0;
+  return (Number(sale.tax) || 0) / taxable;
+}
+
+// Puts stock back on the shelf. Positive qty returns units, negative takes more.
+async function returnStock(lines) {
+  for (const l of lines) {
+    if (!l.product_id || !l.qty) continue;
+    const p = await db.products.get(l.product_id);
+    if (!p) continue; // product deleted since the sale — nothing to adjust
+    await db.products.update(p.id, { stock_qty: (Number(p.stock_qty) || 0) + l.qty });
+  }
+}
+
+// Credit sales sit on the customer's balance; any change to the total has to
+// move with it.
+async function adjustCustomerCredit(sale, deltaAmount) {
+  if (sale.payment_type !== 'credit' || !sale.customer_id || !deltaAmount) return;
+  const c = await db.customers.get(sale.customer_id);
+  if (!c) return;
+  const next = (Number(c.outstanding_balance) || 0) + deltaAmount;
+  await db.customers.update(c.id, { outstanding_balance: Math.max(0, Number(next.toFixed(2))) });
+}
+
+// ─── EDITOR ───
+let editingSale = null;
+
+window.openSaleEditor = async (id) => {
+  if (!canAmendBills()) return showToast('error', 'Only an Administrator can edit a bill');
+
+  const sale = await db.sales.get(id);
+  if (!sale) return showToast('error', 'That bill no longer exists');
+  if (sale.status === 'voided') return showToast('error', 'This bill is voided and can no longer be edited');
+
+  const items = await db.sale_items.where('sale_id').equals(id).toArray();
+  if (!items.length) return showToast('error', 'No line items found for this bill');
+
+  editingSale = {
+    id,
+    sale,
+    taxRate: saleTaxRate(sale),
+    lines: items.map(i => ({
+      row_id: i.id,
+      product_id: i.product_id,
+      name: i.product_name,
+      unit_price: Number(i.unit_price) || 0,
+      originalQty: Number(i.quantity) || 0,
+      qty: Number(i.quantity) || 0,
+    })),
+  };
+
+  const html = `
+    <div class="sale-edit-meta">
+      <div><span>Bill</span><strong>#${sale.id}</strong></div>
+      <div><span>Date</span><strong>${new Date(sale.date).toLocaleString()}</strong></div>
+      <div><span>Cashier</span><strong>${escapeHtml(sale.cashier || '—')}</strong></div>
+      <div><span>Payment</span><strong>${escapeHtml(String(sale.payment_type || '').toUpperCase())}</strong></div>
+    </div>
+
+    <div class="sale-edit-lines" id="sale-edit-lines">
+      ${editingSale.lines.map((l, i) => `
+        <div class="sale-edit-row" data-i="${i}">
+          <div class="sale-edit-name">
+            <div class="fw-600">${escapeHtml(l.name)}</div>
+            <div class="sale-edit-unit td-mono">${formatMoney(l.unit_price)} each</div>
+          </div>
+          <div class="sale-edit-qty">
+            <button type="button" onclick="stepSaleEditQty(${i}, -1)" aria-label="Decrease">−</button>
+            <input type="number" min="0" step="1" id="sale-edit-qty-${i}" value="${l.qty}"
+                   oninput="setSaleEditQty(${i}, this.value)" aria-label="Quantity for ${escapeHtml(l.name)}">
+            <button type="button" onclick="stepSaleEditQty(${i}, 1)" aria-label="Increase">+</button>
+          </div>
+          <div class="sale-edit-total td-mono" id="sale-edit-line-${i}">${formatMoney(l.unit_price * l.qty)}</div>
+          <button type="button" class="sale-edit-remove" onclick="stepSaleEditQty(${i}, -9999)" title="Remove this line">✕</button>
+        </div>`).join('')}
+    </div>
+
+    <div class="form-group" style="margin-top:14px">
+      <label class="form-label">Discount</label>
+      <input class="form-input" type="number" min="0" step="0.01" id="sale-edit-discount"
+             value="${Number(sale.discount) || 0}" oninput="recalcSaleEdit()">
+    </div>
+
+    <dl class="sale-edit-sums">
+      <div><dt>Subtotal</dt><dd class="td-mono" id="sale-edit-subtotal">—</dd></div>
+      <div><dt>Discount</dt><dd class="td-mono" id="sale-edit-disc">—</dd></div>
+      <div><dt>Tax</dt><dd class="td-mono" id="sale-edit-tax">—</dd></div>
+      <div class="sale-edit-grand"><dt>New total</dt><dd class="td-mono" id="sale-edit-total">—</dd></div>
+      <div class="sale-edit-delta"><dt>Change from original</dt><dd class="td-mono" id="sale-edit-delta">—</dd></div>
+    </dl>
+    <div class="sale-edit-note" id="sale-edit-note"></div>
+  `;
+
+  openModal(`Edit Bill #${sale.id}`, html, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" id="sale-edit-save" onclick="saveSaleEdit()">Save changes</button>
+  `);
+  recalcSaleEdit();
+};
+
+window.setSaleEditQty = (i, val) => {
+  if (!editingSale) return;
+  const n = Math.max(0, Math.floor(Number(val) || 0));
+  editingSale.lines[i].qty = n;
+  recalcSaleEdit();
+};
+
+window.stepSaleEditQty = (i, delta) => {
+  if (!editingSale) return;
+  const l = editingSale.lines[i];
+  l.qty = Math.max(0, delta === -9999 ? 0 : l.qty + delta);
+  const field = document.getElementById(`sale-edit-qty-${i}`);
+  if (field) field.value = l.qty;
+  recalcSaleEdit();
+};
+
+window.recalcSaleEdit = () => {
+  if (!editingSale) return;
+  const { lines, sale, taxRate } = editingSale;
+
+  let subtotal = 0;
+  lines.forEach((l, i) => {
+    const lineTotal = l.unit_price * l.qty;
+    subtotal += lineTotal;
+    const cell = document.getElementById(`sale-edit-line-${i}`);
+    if (cell) cell.textContent = formatMoney(lineTotal);
+    const row = document.querySelector(`.sale-edit-row[data-i="${i}"]`);
+    if (row) row.classList.toggle('is-removed', l.qty === 0);
+  });
+
+  let discount = Math.max(0, Number(document.getElementById('sale-edit-discount')?.value) || 0);
+  if (discount > subtotal) discount = subtotal;
+
+  const tax = (subtotal - discount) * taxRate;
+  const total = subtotal - discount + tax;
+  const delta = total - (Number(sale.total_amount) || 0);
+
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('sale-edit-subtotal', formatMoney(subtotal));
+  set('sale-edit-disc', discount > 0 ? '− ' + formatMoney(discount) : formatMoney(0));
+  set('sale-edit-tax', formatMoney(tax));
+  set('sale-edit-total', formatMoney(total));
+  set('sale-edit-delta', (delta > 0 ? '+ ' : delta < 0 ? '− ' : '') + formatMoney(Math.abs(delta)));
+
+  const deltaRow = document.querySelector('.sale-edit-delta');
+  if (deltaRow) deltaRow.classList.toggle('is-flat', Math.abs(delta) < 0.005);
+
+  // Spell out the side effects before they commit, not after
+  const returned = lines.filter(l => l.originalQty > l.qty);
+  const added = lines.filter(l => l.qty > l.originalQty);
+  const bits = [];
+  if (returned.length) bits.push(`${returned.reduce((a, l) => a + (l.originalQty - l.qty), 0)} unit(s) return to stock`);
+  if (added.length) bits.push(`${added.reduce((a, l) => a + (l.qty - l.originalQty), 0)} unit(s) come off stock`);
+  if (sale.payment_type === 'credit' && Math.abs(delta) >= 0.005) {
+    bits.push(`customer credit ${delta > 0 ? 'increases' : 'decreases'} by ${formatMoney(Math.abs(delta))}`);
+  }
+  const note = document.getElementById('sale-edit-note');
+  if (note) note.textContent = bits.length ? 'On save: ' + bits.join(' · ') + '.' : 'No stock or credit change.';
+
+  const saveBtn = document.getElementById('sale-edit-save');
+  if (saveBtn) saveBtn.disabled = lines.every(l => l.qty === 0);
+};
+
+window.saveSaleEdit = async () => {
+  if (!editingSale) return;
+  if (!canAmendBills()) return showToast('error', 'Only an Administrator can edit a bill');
+
+  const { id, sale, lines, taxRate } = editingSale;
+  const kept = lines.filter(l => l.qty > 0);
+  if (!kept.length) {
+    return showToast('error', 'A bill must keep at least one item — delete the bill instead');
+  }
+
+  const subtotal = kept.reduce((a, l) => a + l.unit_price * l.qty, 0);
+  let discount = Math.max(0, Number(document.getElementById('sale-edit-discount')?.value) || 0);
+  if (discount > subtotal) discount = subtotal;
+  const tax = Number(((subtotal - discount) * taxRate).toFixed(2));
+  const total = Number((subtotal - discount + tax).toFixed(2));
+  const delta = total - (Number(sale.total_amount) || 0);
+
+  const ok = await showConfirmation(
+    `Bill #${id} becomes ${formatMoney(total)} (was ${formatMoney(sale.total_amount)}). Stock and customer credit are adjusted to match.`,
+    { title: 'Save bill changes?', confirmLabel: 'Save changes' });
+  if (!ok) return;
+
+  const btn = document.getElementById('sale-edit-save');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  try {
+    // Stock first: a positive figure is stock coming back from a reduced line
+    await returnStock(lines.map(l => ({ product_id: l.product_id, qty: l.originalQty - l.qty })));
+
+    for (const l of lines) {
+      if (l.qty > 0) {
+        await db.sale_items.update(l.row_id, {
+          quantity: l.qty,
+          line_total: Number((l.unit_price * l.qty).toFixed(2)),
+        });
+      } else {
+        await db.sale_items.delete(l.row_id);
+      }
+    }
+
+    await db.sales.update(id, {
+      subtotal: Number(subtotal.toFixed(2)),
+      discount: Number(discount.toFixed(2)),
+      tax, total_amount: total,
+      items_count: kept.reduce((a, l) => a + l.qty, 0),
+    });
+
+    await adjustCustomerCredit(sale, delta);
+
+    await logSecurityEvent('SALE_EDITED', {
+      sale_id: id,
+      before: { total: sale.total_amount, items: lines.map(l => ({ p: l.product_id, q: l.originalQty })) },
+      after:  { total, items: kept.map(l => ({ p: l.product_id, q: l.qty })) },
+      credit_delta: sale.payment_type === 'credit' ? delta : 0,
+    });
+
+    closeModal();
+    editingSale = null;
+    showToast('success', `Bill #${id} updated to ${formatMoney(total)}`);
+    renderSalesHistory();
+    if (typeof renderPosGrid === 'function') renderPosGrid();
+    if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
+  } catch (err) {
+    console.error('Save bill edit error:', err);
+    showToast('error', 'Could not save the bill: ' + (err.message || err));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save changes'; }
+  }
+};
+
+// ─── DELETE ───
+window.deleteSale = async (id) => {
+  if (!canAmendBills()) return showToast('error', 'Only an Administrator can delete a bill');
+
+  const sale = await db.sales.get(id);
+  if (!sale) return showToast('error', 'That bill no longer exists');
+  const items = await db.sale_items.where('sale_id').equals(id).toArray();
+
+  const units = items.reduce((a, i) => a + (Number(i.quantity) || 0), 0);
+  const creditLine = sale.payment_type === 'credit'
+    ? ` ${formatMoney(sale.total_amount)} comes off the customer's credit balance.` : '';
+
+  const ok = await showConfirmation(
+    `Bill #${id} for ${formatMoney(sale.total_amount)} will be removed permanently and ${units} unit(s) returned to stock.${creditLine} ` +
+    `If this bill was already submitted to RAMIS it stays filed with the IRD — reverse it there separately. This cannot be undone.`,
+    { title: `Delete bill #${id}?`, confirmLabel: 'Delete bill', danger: true });
+  if (!ok) return;
+
+  try {
+    await returnStock(items.map(i => ({ product_id: i.product_id, qty: Number(i.quantity) || 0 })));
+    await adjustCustomerCredit(sale, -(Number(sale.total_amount) || 0));
+
+    for (const i of items) await db.sale_items.delete(i.id);
+    await db.sales.delete(id);
+
+    await logSecurityEvent('SALE_DELETED', {
+      sale_id: id,
+      total: sale.total_amount,
+      payment_type: sale.payment_type,
+      date: sale.date,
+      items: items.map(i => ({ p: i.product_id, n: i.product_name, q: i.quantity })),
+    });
+
+    showToast('success', `Bill #${id} deleted · ${units} unit(s) returned to stock`);
+    renderSalesHistory();
+    if (typeof renderPosGrid === 'function') renderPosGrid();
+    if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
+  } catch (err) {
+    console.error('Delete bill error:', err);
+    showToast('error', 'Could not delete the bill: ' + (err.message || err));
+  }
 };
 
 // --- CUSTOMERS ---

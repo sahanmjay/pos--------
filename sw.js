@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexpos-v16-silentprint-v8';
+const CACHE_NAME = 'nexpos-v17-billedit-v9';
 const ASSETS = [
   '/',
   '/index.html',
