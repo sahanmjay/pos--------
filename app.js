@@ -962,6 +962,7 @@ const SCREENS = {
   'customers': 'Sales / Customers',
   'attendance': 'HR / Attendance',
   'advances': 'HR / Advances',
+  'expenses': 'Finance / Expenses',
   'payroll': 'HR / Payroll',
   'user-mgmt': 'HR / Staff Management',
   'ai-reports': 'System / Reports',
@@ -1030,6 +1031,7 @@ function nav(screenId) {
   if(screenId === 'user-mgmt') renderUsersTable();
   if(screenId === 'attendance') renderAttendance();
   if(screenId === 'advances') renderAdvances();
+  if(screenId === 'expenses') renderExpenses();
   if(screenId === 'payroll') renderPayroll();
   if(screenId === 'ai-reports') renderAIReports();
   if(screenId === 'settings') loadSettingsForm();
@@ -4386,6 +4388,231 @@ window.submitClockIn = async (isClockIn) => {
   renderAttendance();
 };
 
+// ═══════════════════════════════════════════════════════════════
+// EXPENSES
+// Two kinds, because a restaurant has two kinds:
+//   daily   — a one-off cost on the day it happened (gas, ice, repairs)
+//   monthly — a fixed recurring cost for a whole calendar month (rent,
+//             internet, insurance)
+// A monthly cost is apportioned across whatever period a report covers, so
+// a 7-day P&L carries 7 days of rent rather than a whole month or nothing.
+// ═══════════════════════════════════════════════════════════════
+
+const EXPENSE_CATEGORIES = [
+  'Rent', 'Utilities', 'Gas & Fuel', 'Ingredients & Supplies', 'Repairs & Maintenance',
+  'Transport', 'Marketing', 'Licences & Fees', 'Cleaning', 'Other',
+];
+
+const MS_PER_DAY = 86400000;
+
+// Calendar-day index, so overlap maths never trips over hours or timezones
+function dayIndex(value) {
+  const d = (value instanceof Date) ? value : new Date(value);
+  return Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / MS_PER_DAY);
+}
+
+// Splits a set of expenses into what a reporting period actually bears.
+function expensesForPeriod(expenses, startISO, endISO) {
+  const pStart = dayIndex(startISO);
+  const pEnd = dayIndex(endISO);
+  let daily = 0, monthly = 0;
+  const byCategory = {};
+
+  for (const x of expenses || []) {
+    const amount = Number(x.amount) || 0;
+    if (!amount || !x.date) continue;
+    const type = (x.expense_type || 'daily').toLowerCase();
+    let share = 0;
+
+    if (type === 'monthly') {
+      // Spread across the calendar month the cost belongs to
+      const d = new Date(x.date);
+      if (isNaN(d)) continue;
+      const mStart = dayIndex(new Date(d.getFullYear(), d.getMonth(), 1));
+      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      const mEnd = dayIndex(lastDay);
+      const daysInMonth = mEnd - mStart + 1;
+      const overlap = Math.min(pEnd, mEnd) - Math.max(pStart, mStart) + 1;
+      if (overlap <= 0) continue;
+      share = amount * (overlap / daysInMonth);
+      monthly += share;
+    } else {
+      const d = dayIndex(x.date);
+      if (isNaN(d) || d < pStart || d > pEnd) continue;
+      share = amount;
+      daily += share;
+    }
+
+    const cat = x.category || 'Other';
+    byCategory[cat] = (byCategory[cat] || 0) + share;
+  }
+
+  return { daily, monthly, total: daily + monthly, byCategory };
+}
+
+// ─── SCREEN ───
+window.renderExpenses = async () => {
+  const tbody = document.getElementById('expenses-tbody');
+  if (!tbody) return;
+
+  const monthInput = document.getElementById('exp-month');
+  if (monthInput && !monthInput.value) {
+    monthInput.value = new Date().toISOString().slice(0, 7);
+  }
+  const month = monthInput ? monthInput.value : new Date().toISOString().slice(0, 7);
+
+  let all = [];
+  try { all = await db.expenses.toArray(); } catch (e) { all = []; }
+
+  const rows = all
+    .filter(x => String(x.date || '').startsWith(month))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  const dailyTotal = rows.filter(x => (x.expense_type || 'daily') !== 'monthly')
+    .reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  const monthlyTotal = rows.filter(x => (x.expense_type || 'daily') === 'monthly')
+    .reduce((s, x) => s + (Number(x.amount) || 0), 0);
+
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('exp-sum-daily', formatMoney(dailyTotal));
+  set('exp-sum-monthly', formatMoney(monthlyTotal));
+  set('exp-sum-total', formatMoney(dailyTotal + monthlyTotal));
+
+  tbody.innerHTML = rows.map(x => {
+    const monthly = (x.expense_type || 'daily') === 'monthly';
+    return `
+      <tr>
+        <td class="text-muted">${escapeHtml(x.date || '')}</td>
+        <td class="fw-600">${escapeHtml(x.category || 'Other')}</td>
+        <td>${escapeHtml(x.description || '')}</td>
+        <td><span class="badge ${monthly ? 'badge-pending' : 'badge-completed'}">${monthly ? 'Monthly' : 'Daily'}</span></td>
+        <td class="td-mono fw-600">${formatMoney(x.amount || 0)}</td>
+        <td>
+          <div class="row-actions">
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="openExpenseForm(${x.id})" title="Edit expense">✏️</button>
+            <button class="btn btn-ghost btn-sm btn-icon danger-action" onclick="deleteExpense(${x.id})" title="Delete expense">🗑️</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('') ||
+    '<tr><td colspan="6" style="text-align:center;padding:26px 14px">' +
+    '<div style="font-weight:700;margin-bottom:4px">No expenses recorded for this month</div>' +
+    '<div class="text-muted" style="font-size:12.5px">Add rent, gas, utilities and other costs so your profit figures are real.</div></td></tr>';
+};
+
+window.openExpenseForm = async (id = null) => {
+  let x = {
+    id: null, category: 'Other', description: '', amount: '',
+    expense_type: 'daily', date: new Date().toISOString().split('T')[0],
+  };
+  if (id != null) {
+    const found = await db.expenses.get(id);
+    if (!found) return showToast('error', 'That expense no longer exists');
+    x = found;
+  }
+
+  const isMonthly = (x.expense_type || 'daily') === 'monthly';
+  const html = `
+    <input type="hidden" id="f-exp-id" value="${x.id != null ? x.id : ''}">
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="f-exp-type">Type</label>
+        <select class="form-input" id="f-exp-type" onchange="onExpenseTypeChange()">
+          <option value="daily" ${!isMonthly ? 'selected' : ''}>Daily — a one-off cost</option>
+          <option value="monthly" ${isMonthly ? 'selected' : ''}>Monthly — a fixed recurring cost</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="f-exp-cat">Category</label>
+        <select class="form-input" id="f-exp-cat">
+          ${EXPENSE_CATEGORIES.map(c => `<option value="${escapeHtml(c)}" ${x.category === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="f-exp-date" id="f-exp-date-label">${isMonthly ? 'Month' : 'Date'}</label>
+        <input class="form-input" type="date" id="f-exp-date" value="${escapeHtml(x.date || '')}">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="f-exp-amount">Amount</label>
+        <input class="form-input" type="number" step="0.01" min="0" id="f-exp-amount" value="${x.amount}" placeholder="0.00">
+      </div>
+      <div class="form-group" style="grid-column:span 2">
+        <label class="form-label" for="f-exp-desc">Description</label>
+        <input class="form-input" id="f-exp-desc" value="${escapeHtml(x.description || '')}" placeholder="e.g. LP gas cylinder x2">
+      </div>
+    </div>
+    <div class="exp-note" id="f-exp-note"></div>
+  `;
+
+  openModal(id != null ? 'Edit Expense' : 'New Expense', html, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" id="exp-save-btn" onclick="saveExpense()">${id != null ? 'Save changes' : 'Add expense'}</button>
+  `);
+  onExpenseTypeChange();
+};
+
+window.onExpenseTypeChange = () => {
+  const monthly = document.getElementById('f-exp-type')?.value === 'monthly';
+  const label = document.getElementById('f-exp-date-label');
+  if (label) label.textContent = monthly ? 'Month (any date within it)' : 'Date';
+  const note = document.getElementById('f-exp-note');
+  if (note) {
+    note.textContent = monthly
+      ? 'Charged across the whole calendar month. A report covering part of the month carries a matching share of the cost.'
+      : 'Charged in full on the date above.';
+  }
+};
+
+window.saveExpense = async () => {
+  const idRaw = document.getElementById('f-exp-id')?.value;
+  const id = idRaw ? parseInt(idRaw, 10) : null;
+  const amount = parseFloat(document.getElementById('f-exp-amount')?.value);
+  const date = document.getElementById('f-exp-date')?.value;
+  const category = document.getElementById('f-exp-cat')?.value || 'Other';
+  const description = (document.getElementById('f-exp-desc')?.value || '').trim();
+  const expense_type = document.getElementById('f-exp-type')?.value || 'daily';
+
+  if (!date) return showToast('error', 'Pick a date');
+  if (!Number.isFinite(amount) || amount <= 0) return showToast('error', 'Enter an amount greater than zero');
+
+  const btn = document.getElementById('exp-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  try {
+    const record = { category, description, amount, expense_type, date };
+    if (id == null) {
+      record.recorded_by = (currentUser && (currentUser.display_name || currentUser.username)) || '';
+      await db.expenses.add(record);
+      showToast('success', `${category} expense of ${formatMoney(amount)} added`);
+      logSecurityEvent('EXPENSE_ADDED', { category, amount, expense_type, date });
+    } else {
+      await db.expenses.update(id, record);
+      showToast('success', 'Expense updated');
+      logSecurityEvent('EXPENSE_EDITED', { id, category, amount, expense_type, date });
+    }
+    closeModal();
+    renderExpenses();
+  } catch (err) {
+    console.error('Save expense error:', err);
+    showToast('error', 'Could not save the expense: ' + (err.message || err));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = id != null ? 'Save changes' : 'Add expense'; }
+  }
+};
+
+window.deleteExpense = async (id) => {
+  const x = await db.expenses.get(id);
+  if (!x) { renderExpenses(); return; }
+  const ok = await showConfirmation(
+    `Delete the ${formatMoney(x.amount)} ${escapeHtml(x.category)} expense from ${escapeHtml(x.date)}? Your profit figures will rise by that amount.`,
+    { title: 'Delete expense?', confirmLabel: 'Delete', danger: true });
+  if (!ok) return;
+  await db.expenses.delete(id);
+  logSecurityEvent('EXPENSE_DELETED', { id, category: x.category, amount: x.amount });
+  showToast('success', 'Expense deleted');
+  renderExpenses();
+};
+
 // --- AI REPORTS LOGIC ---
 let reportCharts = {};
 let currentReportData = null;
@@ -4517,11 +4744,34 @@ window.renderAIReports = async () => {
         <div class="summary-label">Gross Profit</div>
         <div class="summary-value" style="color:var(--success)">${formatMoney(data.grossProfit)}</div>
       </div>
+      <div class="summary-card">
+        <div class="summary-label">Net Profit</div>
+        <div class="summary-value" style="color:${data.netProfit >= 0 ? 'var(--success)' : 'var(--danger)'}">${formatMoney(data.netProfit)}</div>
+      </div>
     `;
   }
   
   // 2. Add/Update Secondary Metrics
-  const secondaryHtml = `
+  const pnl = [
+    ['Revenue', data.revenue, ''],
+    ['Cost of goods sold', -(data.revenue - data.grossProfit), 'neg'],
+    ['Gross profit', data.grossProfit, 'sub'],
+    ['Daily expenses', -data.expenses.daily, 'neg'],
+    ['Monthly expenses (apportioned)', -data.expenses.monthly, 'neg'],
+    ['Wages paid', -data.payrollTotal, 'neg'],
+    ['Net profit', data.netProfit, 'total'],
+  ];
+  const pnlHtml = `
+    <div class="card pnl-card">
+      <div class="pnl-title">Profit &amp; Loss</div>
+      ${pnl.map(([label, value, kind]) => `
+        <div class="pnl-row ${kind}">
+          <span>${label}</span>
+          <span class="td-mono">${value < 0 ? '- ' + formatMoney(Math.abs(value)) : formatMoney(value)}</span>
+        </div>`).join('')}
+    </div>`;
+
+  const secondaryHtml = pnlHtml + `
     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:15px">
       <div class="card" style="padding:15px">
         <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Items Per Sale (IPT)</div>
@@ -4532,8 +4782,16 @@ window.renderAIReports = async () => {
         <div style="font-size:20px; font-weight:700">${data.repeatCount} (${data.repeatRate.toFixed(1)}%)</div>
       </div>
       <div class="card" style="padding:15px">
-        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Profit Margin</div>
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Gross Margin</div>
         <div style="font-size:20px; font-weight:700; color:var(--success)">${data.profitMargin.toFixed(1)}%</div>
+      </div>
+      <div class="card" style="padding:15px">
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Net Margin</div>
+        <div style="font-size:20px; font-weight:700; color:${data.netMargin >= 0 ? 'var(--success)' : 'var(--danger)'}">${data.netMargin.toFixed(1)}%</div>
+      </div>
+      <div class="card" style="padding:15px">
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Operating Expenses</div>
+        <div style="font-size:20px; font-weight:700; color:var(--danger)">${formatMoney(data.expensesTotal)}</div>
       </div>
       <div class="card" style="padding:15px">
         <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase">Peak Hour</div>
@@ -4712,6 +4970,13 @@ async function fetchReportData(start, end) {
   });
   const grossProfit = revenue - totalCost;
   const profitMargin = (grossProfit / (revenue || 1)) * 100;
+
+  // 6b. Operating expenses. Daily costs land on their own date; monthly costs
+  // are apportioned across however much of their month this period covers.
+  let allExpenses = [];
+  try { allExpenses = await db.expenses.toArray(); } catch (e) { allExpenses = []; }
+  const expenses = expensesForPeriod(allExpenses, start, end);
+  const expensesTotal = expenses.total;
   
   // 7. HR Costs & Attendance
   const payrolls = await db.payroll.toArray();
@@ -4741,6 +5006,11 @@ async function fetchReportData(start, end) {
     if ((p.stock_qty || 0) <= (p.low_stock_threshold || 0)) lowStockCount++;
   });
 
+  // Gross profit is what the kitchen earns; net profit is what the business
+  // keeps once rent, utilities and wages are paid.
+  const netProfit = grossProfit - expensesTotal - payrollTotal;
+  const netMargin = (netProfit / (revenue || 1)) * 100;
+
   const turnoverRate = totalCost > 0 ? (totalCost / (totalInventoryValue || 1)) : 0;
   const sellThroughRate = totalItemsSold / (totalStockQty + totalItemsSold || 1);
 
@@ -4749,6 +5019,7 @@ async function fetchReportData(start, end) {
     ipt, uniqueCustomers, repeatCount, repeatRate, peakHour,
     payments, dailyRev, hourlySales, salesByCashier: {}, // Simplified for now
     categoryStats, topProducts, grossProfit, profitMargin,
+    expenses, expensesTotal, netProfit, netMargin,
     payrollTotal, advancesTotal, totalHours, totalInventoryValue, lowStockCount,
     turnoverRate, sellThroughRate, start, end
   };

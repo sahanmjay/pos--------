@@ -17,7 +17,7 @@
 <link rel="shortcut icon" href="favicon.ico">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=20260912_payroll_v16">
+<link rel="stylesheet" href="style.css?v=20260912_expenses_v17">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -161,6 +161,7 @@
         <div class="nav-item" onclick="nav('user-mgmt')"><span class="nav-icon"><i class="fa-solid fa-user-group"></i></span> Staff Management</div>
         <div class="nav-item" onclick="nav('attendance')"><span class="nav-icon"><i class="fa-solid fa-calendar-check"></i></span> Attendance</div>
         <div class="nav-item" onclick="nav('advances')"><span class="nav-icon"><i class="fa-solid fa-hand-holding-dollar"></i></span> Advances</div>
+        <div class="nav-item" onclick="nav('expenses')"><span class="nav-icon"><i class="fa-solid fa-receipt"></i></span> Expenses</div>
         <div class="nav-item" onclick="nav('payroll')" id="nav-payroll-item"><span class="nav-icon"><i class="fa-solid fa-wallet"></i></span> Payroll</div>
 
       </div>
@@ -987,6 +988,45 @@
         </div>
       </div>
 
+      <!-- EXPENSES SCREEN -->
+      <div class="screen" id="screen-expenses">
+        <div class="page">
+          <div class="page-header">
+            <div>
+              <div class="page-title">Expenses</div>
+              <div class="page-subtitle">Daily and monthly running costs, carried into your profit figures</div>
+            </div>
+            <div class="page-actions"><button class="btn btn-primary btn-sm" onclick="openExpenseForm()">+ New Expense</button></div>
+          </div>
+          <div class="exp-summary">
+            <div class="exp-stat">
+              <div class="exp-stat-label">Daily costs</div>
+              <div class="exp-stat-value" id="exp-sum-daily">Rs. 0.00</div>
+            </div>
+            <div class="exp-stat">
+              <div class="exp-stat-label">Monthly costs</div>
+              <div class="exp-stat-value" id="exp-sum-monthly">Rs. 0.00</div>
+            </div>
+            <div class="exp-stat is-total">
+              <div class="exp-stat-label">Total this month</div>
+              <div class="exp-stat-value" id="exp-sum-total">Rs. 0.00</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="filter-bar">
+              <input type="month" class="filter-select" id="exp-month" onchange="renderExpenses()">
+              <div class="filter-spacer"></div>
+            </div>
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Type</th><th>Amount</th><th>Actions</th></tr></thead>
+                <tbody id="expenses-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- PAYROLL SCREEN -->
       <div class="screen" id="screen-payroll">
         <div class="page">
@@ -1508,8 +1548,8 @@
 </div>
 
 <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js';document.head.appendChild(s);"></script>
-<script src="db.js?v=20260912_payroll_v16"></script>
-<script src="app.js?v=20260912_payroll_v16"></script>
+<script src="db.js?v=20260912_expenses_v17"></script>
+<script src="app.js?v=20260912_expenses_v17"></script>
 <script>
 window.addEventListener('keydown', (e) => {
   if ((e.key === '/' || ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K'))) && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {

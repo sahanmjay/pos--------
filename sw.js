@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexpos-v24-payroll-v16';
+const CACHE_NAME = 'nexpos-v25-expenses-v17';
 const ASSETS = [
   '/',
   '/index.html',

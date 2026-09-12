@@ -171,6 +171,21 @@ CREATE TABLE IF NOT EXISTS public.audit_log (
   organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE
 );
 
+-- Operating costs. expense_type is 'daily' (charged on its date) or
+-- 'monthly' (a fixed cost apportioned across its calendar month).
+CREATE TABLE IF NOT EXISTS public.expenses (
+  id SERIAL PRIMARY KEY,
+  category TEXT NOT NULL DEFAULT 'Other',
+  description TEXT DEFAULT '',
+  amount NUMERIC NOT NULL,
+  expense_type TEXT NOT NULL DEFAULT 'daily',
+  date DATE NOT NULL,
+  recorded_by TEXT DEFAULT '',
+  created_at TIMESTAMPTZ DEFAULT now(),
+  organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS expenses_org_date_idx ON public.expenses (organization_id, date);
+
 -- Staff can be paid hourly, daily or on a fixed monthly salary
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS pay_basis TEXT DEFAULT 'hourly';
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS daily_rate NUMERIC DEFAULT 0;

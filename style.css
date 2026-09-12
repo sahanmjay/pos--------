@@ -2008,6 +2008,44 @@ body {
   border-color: var(--info) !important;
 }
 
+/* Profit & loss — the walk from revenue down to what the business keeps */
+.pnl-card { padding: 16px 18px; margin-bottom: 15px; }
+.pnl-title { font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+.pnl-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 5px 0; font-size: 13.5px; }
+.pnl-row span:first-child { color: var(--text-secondary); }
+.pnl-row span:last-child { font-weight: 700; }
+.pnl-row.neg span:last-child { color: var(--danger); }
+.pnl-row.sub { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 9px; }
+.pnl-row.sub span { font-weight: 800; color: var(--text-primary); }
+.pnl-row.total { border-top: 2px solid var(--text-primary); margin-top: 6px; padding-top: 10px; font-size: 16px; }
+.pnl-row.total span { font-weight: 800; color: var(--text-primary); }
+
+/* Expenses — the running costs that turn gross profit into real profit */
+.exp-summary {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px; margin-bottom: 16px;
+}
+.exp-stat {
+  padding: 14px 16px; border-radius: var(--radius-lg);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-xs);
+}
+.exp-stat.is-total { background: var(--brand); border-color: var(--brand); }
+.exp-stat-label {
+  font-size: 10.5px; font-weight: 800; letter-spacing: .9px;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.exp-stat.is-total .exp-stat-label { color: rgba(255,255,255,0.6); }
+.exp-stat-value {
+  margin-top: 4px; font-family: var(--mono); font-size: 21px;
+  font-weight: 800; letter-spacing: -0.5px;
+}
+.exp-stat.is-total .exp-stat-value { color: #fff; }
+.exp-note {
+  margin-top: 12px; padding: 9px 12px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; color: var(--text-secondary); line-height: 1.45;
+}
+
 /* Payroll — explains which basis is driving the figures on screen */
 .pay-basis-note {
   margin-top: 10px; padding: 9px 12px; border-radius: var(--radius);

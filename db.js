@@ -508,6 +508,7 @@ const db = {
   held_carts:    new SupaTable('held_carts'),
   payroll:       new SupaTable('payroll'),
   advances:      new SupaTable('advances'),
+  expenses:      new SupaTable('expenses'),
   pos_shifts:    new SupaTable('pos_shifts'),
   shift_closures: new SupaTable('shift_closures'),
   audit_log:     new SupaTable('audit_log'),
