@@ -99,7 +99,47 @@ const REALTIME_CLIENT_ID = 'term_' + Math.random().toString(36).substr(2, 9);
 let realtimeBroadcastBus = null;
 let realtimeEventSource = null;
 let realtimeReconnectTimer = null;
-let isRealtimeConnected = false;
+let realtimeSeq = 0;
+// The same event can arrive on several transports (a second tab hears it on
+// BroadcastChannel, storage, SSE and the cloud); each is handled once.
+const seenRealtimeIds = new Set();
+// Either link counts as live: SSE reaches terminals on this server, the cloud
+// channel reaches every device of the business.
+const realtimeLinks = { sse: false, cloud: false };
+
+function setRealtimeLink(kind, live) {
+  realtimeLinks[kind] = live;
+  updateRealtimeStatusBadge(realtimeLinks.sse || realtimeLinks.cloud, 'Live Sync');
+}
+
+// D. Cross-device sync through Supabase Realtime. Each desktop install runs its
+// own local server, so SSE never leaves the machine; the cloud project is the
+// one thing every terminal of a business shares.
+let realtimeCloudChannel = null;
+let realtimeCloudOrg = null;
+
+function joinCloudRealtime() {
+  const orgId = db.currentOrgId || null;
+  if (orgId === realtimeCloudOrg) return;
+  if (realtimeCloudChannel) supa.removeChannel(realtimeCloudChannel);
+  realtimeCloudChannel = null;
+  realtimeCloudOrg = orgId;
+  if (!orgId || !supa) return;
+
+  let joinedBefore = false;
+  realtimeCloudChannel = supa.channel(`nexpos-live-${orgId}`, { config: { broadcast: { self: false } } })
+    .on('broadcast', { event: 'pos' }, ({ payload }) => handleIncomingRealtimeEvent(payload))
+    .subscribe(status => {
+      if (status === 'SUBSCRIBED') {
+        setRealtimeLink('cloud', true);
+        // Broadcasts are not replayed, so catch up on anything missed while disconnected
+        if (joinedBefore) refreshPosGrid();
+        joinedBefore = true;
+      } else {
+        setRealtimeLink('cloud', false);
+      }
+    });
+}
 
 function initRealtimeEngine() {
   // A. Instant same-machine tab-to-tab communication (0ms latency)
@@ -145,8 +185,7 @@ function connectRealtimeSSE() {
     realtimeEventSource = new EventSource('/api/realtime/events');
 
     realtimeEventSource.onopen = () => {
-      isRealtimeConnected = true;
-      updateRealtimeStatusBadge(true, 'Live Sync');
+      setRealtimeLink('sse', true);
       clearTimeout(realtimeReconnectTimer);
     };
 
@@ -162,8 +201,7 @@ function connectRealtimeSSE() {
     };
 
     realtimeEventSource.onerror = () => {
-      isRealtimeConnected = false;
-      updateRealtimeStatusBadge(false, 'Sync Paused');
+      setRealtimeLink('sse', false);
       if (realtimeEventSource) realtimeEventSource.close();
 
       // Exponential auto-reconnect
@@ -179,11 +217,17 @@ function connectRealtimeSSE() {
 
 window.broadcastRealtimeEvent = async (type, payload = {}) => {
   const eventMsg = {
+    id: `${REALTIME_CLIENT_ID}_${++realtimeSeq}`,
     type,
     payload,
     senderId: REALTIME_CLIENT_ID,
     timestamp: Date.now()
   };
+
+  // 0. Every other device of this business, through the cloud
+  if (realtimeCloudChannel) {
+    realtimeCloudChannel.send({ type: 'broadcast', event: 'pos', payload: eventMsg }).catch(() => {});
+  }
 
   // 1. Instant local tab dispatch
   if (realtimeBroadcastBus) {
@@ -246,7 +290,12 @@ window.testRealtimePing = () => {
 };
 
 async function handleIncomingRealtimeEvent(event) {
-  if (!event || !event.type) return;
+  if (!event || !event.type || event.senderId === REALTIME_CLIENT_ID) return;
+  if (event.id) {
+    if (seenRealtimeIds.has(event.id)) return;
+    seenRealtimeIds.add(event.id);
+    if (seenRealtimeIds.size > 500) seenRealtimeIds.delete(seenRealtimeIds.values().next().value);
+  }
 
   const type = event.type;
   const payload = event.payload || {};
@@ -324,7 +373,7 @@ async function handleIncomingRealtimeEvent(event) {
 
     case 'SALE_COMPLETED': {
       // Refresh POS products stock
-      if (typeof renderPosGrid === 'function') await renderPosGrid();
+      refreshPosGrid();
 
       // Update Dashboard if on dashboard
       const dashScreen = document.getElementById('screen-dashboard');
@@ -347,11 +396,12 @@ async function handleIncomingRealtimeEvent(event) {
     }
 
     case 'STOCK_UPDATED': {
-      if (typeof renderPosGrid === 'function') await renderPosGrid();
+      refreshPosGrid();
       const prodScreen = document.getElementById('screen-products');
       if (prodScreen && prodScreen.classList.contains('active')) {
         renderProductsTable();
       }
+      if (document.getElementById('screen-stock')?.classList.contains('active')) renderStockScreen();
       break;
     }
 
@@ -378,6 +428,8 @@ async function loadSettings() {
   const bType = document.getElementById('topbar-biz-type');
   const sBizName = document.getElementById('sidebar-biz-name');
   const sBizSub = document.getElementById('sidebar-biz-sub');
+
+  joinCloudRealtime();
 
   // If not logged in into a specific business, ALWAYS show clean NexPOS branding
   if (!db.currentOrgId) {
@@ -444,6 +496,7 @@ async function loadSettings() {
   } catch (e) {
     console.warn('loadSettings error:', e);
   }
+  joinCloudRealtime(); // self-healing above may have re-linked the org
 
   const bizTitle = currentSettings.biz_name || 'My Business';
   const bizType = currentSettings.biz_type || 'Point of Sale';
@@ -958,6 +1011,7 @@ const SCREENS = {
   'tables': 'Dining / Table Management',
   'products': 'Inventory / Products',
   'categories': 'Inventory / Categories',
+  'stock': 'Inventory / Stock',
   'sales-history': 'Sales / History',
   'customers': 'Sales / Customers',
   'attendance': 'HR / Attendance',
@@ -988,7 +1042,7 @@ function nav(screenId) {
     if (screenId === 'ai-reports' && role !== 'Admin') {
       showToast('error', 'Only Admins can access AI Reports'); return;
     }
-    if (role === 'Inventory' && !['products', 'categories'].includes(screenId)) {
+    if (role === 'Inventory' && !['products', 'categories', 'stock'].includes(screenId)) {
       showToast('error', 'Access denied'); return;
     }
     if (role === 'Worker' && !['pos', 'kot', 'tables'].includes(screenId)) {
@@ -1020,12 +1074,13 @@ function nav(screenId) {
   document.getElementById('breadcrumb').innerHTML = bc;
   
   // Call init function for screen
-  if(screenId === 'pos') { renderPosCategories(); renderPosGrid(); refreshHeldBillsCount(); }
+  if(screenId === 'pos') { renderPosCategories(); refreshPosGrid(); refreshHeldBillsCount(); }
   if(screenId === 'dashboard') initDashboard();
   if(screenId === 'kot') renderKOTScreen();
   if(screenId === 'tables') renderTablesScreen();
   if(screenId === 'products') renderProductsTable();
   if(screenId === 'categories') renderCategoriesTable();
+  if(screenId === 'stock') renderStockScreen();
   if(screenId === 'sales-history') renderSalesHistory();
   if(screenId === 'customers') renderCustomersTable();
   if(screenId === 'user-mgmt') renderUsersTable();
@@ -1258,9 +1313,16 @@ document.addEventListener('keydown', event => {
 });
 
 // --- POS SYSTEM ---
+let posCats = [];
+
 async function renderPosCategories() {
-  const cats = await db.categories.toArray();
-  
+  posCats = await db.categories.toArray();
+  drawPosCategories();
+}
+
+// Redraws the pills from the last download, so a category tap highlights instantly
+function drawPosCategories() {
+  const cats = posCats;
   if (posCategory !== '' && !cats.find(c => c.name === posCategory)) {
     posCategory = '';
   }
@@ -1272,19 +1334,18 @@ async function renderPosCategories() {
   document.getElementById('pos-cat-filters').innerHTML = html;
 }
 
-window.setPosCategory = (cat) => { posCategory = cat; renderPosCategories(); renderPosGrid(); };
+window.setPosCategory = (cat) => { posCategory = cat; drawPosCategories(); renderPosGrid(); };
 
 document.getElementById('pos-search').addEventListener('input', renderPosGrid);
 document.getElementById('pos-search').addEventListener('keydown', async (e) => {
   if (e.key === 'Enter') {
     const term = e.target.value.trim();
     if (!term) return;
-    
-    const products = await db.products.toArray();
-    const match = products.find(p => p.barcode === term || p.sku === term);
-    
+
+    const match = await findPosProduct(p => !isIngredient(p) && (p.barcode === term || p.sku === term));
+
     if (match) {
-      if (match.stock_qty > 0) {
+      if (canSell(match)) {
         addToCart(match.id);
         e.target.value = '';
         renderPosGrid();
@@ -1347,10 +1408,36 @@ function getIcon(cat) {
   return PRODUCT_ICONS[cat] || PRODUCT_ICONS['default'];
 }
 
+// The POS catalogue, kept in memory so typing, category taps and cart changes
+// render instantly instead of downloading every product each time. Cleared by
+// refreshPosGrid() whenever stock may have changed here or on another terminal.
+let posProducts = null;
+let posLoadSeq = 0;
+
+async function loadPosProducts() {
+  const seq = ++posLoadSeq;
+  const list = await db.products.toArray();
+  if (seq === posLoadSeq) posProducts = list; // an older, slower response never overwrites a newer one
+  return posProducts || list;
+}
+
+function refreshPosGrid() {
+  posProducts = null;
+  if (document.getElementById('screen-pos')?.classList.contains('active')) return renderPosGrid();
+}
+
+// Looks a product up in memory; a miss (e.g. just added on another terminal)
+// re-downloads once before giving up.
+async function findPosProduct(match) {
+  let p = (posProducts || await loadPosProducts()).find(match);
+  if (!p) p = (await loadPosProducts()).find(match);
+  return p || null;
+}
+
 async function renderPosGrid() {
+  const all = posProducts || await loadPosProducts();
   const term = (document.getElementById('pos-search')?.value || '').toLowerCase();
-  let products = await db.products.toArray();
-  products = products.filter(p => p.is_active !== false).reverse();
+  let products = all.filter(p => p.is_active !== false && !isIngredient(p)).reverse();
   
   if(posCategory) products = products.filter(p => p.category === posCategory);
   if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term) || (p.barcode||'').toLowerCase().includes(term));
@@ -1388,8 +1475,9 @@ async function renderPosGrid() {
   }
 
   grid.innerHTML = products.map(p => {
-    const isOutOfStock = p.stock_qty <= 0;
-    const isLowStock = p.stock_qty > 0 && p.stock_qty <= (p.low_stock_threshold || 5);
+    const tracked = tracksStock(p);
+    const isOutOfStock = tracked && p.stock_qty <= 0;
+    const isLowStock = tracked && p.stock_qty > 0 && p.stock_qty <= (p.low_stock_threshold || 5);
     const stockLabel = isOutOfStock ? 'Out of stock' : `${p.stock_qty} ${p.unit || ''}`.trim();
     const stockState = isOutOfStock ? 'out' : (isLowStock ? 'low' : 'normal');
     
@@ -1412,7 +1500,7 @@ async function renderPosGrid() {
           <div class="pos-prod-meta">#${p.sku || p.barcode || 'ITEM'}</div>
           <div class="pos-prod-footer">
             <div class="pos-prod-price"><span class="price-curr">Rs.</span><span class="price-val">${priceNum.toLocaleString()}</span><span class="price-dec">.00</span></div>
-            <div class="pos-prod-stock ${stockState}"><span class="stock-dot"></span>${isLowStock ? 'Low stock' : stockLabel}</div>
+            ${tracked ? `<div class="pos-prod-stock ${stockState}"><span class="stock-dot"></span>${isLowStock ? 'Low stock' : stockLabel}</div>` : ''}
           </div>
         </div>
       </div>
@@ -1426,7 +1514,7 @@ window.quickSeedTemplateCatalogue = async () => {
   try {
     await loadBusinessTemplate(bizType);
     await renderPosCategories();
-    await renderPosGrid();
+    await refreshPosGrid();
     showToast('success', `✨ Starter ${bizType} catalogue loaded successfully!`);
   } catch (err) {
     showToast('error', 'Error loading catalogue: ' + err.message);
@@ -1434,12 +1522,14 @@ window.quickSeedTemplateCatalogue = async () => {
 };
 
 async function addToCart(id) {
-  const p = await db.products.get(id);
-  if(!p || p.stock_qty <= 0) return;
-  
+  const p = await findPosProduct(x => x.id == id);
+  if(!p || !canSell(p)) return;
+  // null = no limit (a dish); kept JSON-safe because carts are saved as held bills
+  const limit = tracksStock(p) ? p.stock_qty : null;
+
   const existing = cart.find(i => i.product_id === id);
   if(existing) {
-    if(existing.quantity < p.stock_qty) existing.quantity++;
+    if(limit == null || existing.quantity < limit) existing.quantity++;
     else showToast('error', 'Not enough stock!');
   } else {
     cart.push({
@@ -1450,7 +1540,7 @@ async function addToCart(id) {
       // product's cost tomorrow never rewrites yesterday's profit.
       cost_price: Number(p.cost_price) || 0,
       quantity: 1,
-      stock: p.stock_qty
+      stock: limit
     });
   }
   renderCart();
@@ -1461,7 +1551,7 @@ window.updateCartQty = (idx, delta) => {
   const item = cart[idx];
   item.quantity += delta;
   if(item.quantity <= 0) cart.splice(idx, 1);
-  else if(item.quantity > item.stock) {
+  else if(item.stock != null && item.quantity > item.stock) {
     item.quantity = item.stock;
     showToast('error', 'Max stock reached');
   }
@@ -2271,7 +2361,12 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     await db.sale_items.bulkAdd(saleItems.map(si => ({...si, sale_id: saleId})));
 
     cart = []; manualDiscount = 0; cartCustomerId = 1;
-    renderCart(); updateCartCustomer();
+    // Show the new stock at once; the refresh after the stock write confirms it
+    checkoutCart.forEach(item => {
+      const p = (posProducts || []).find(x => x.id == item.product_id);
+      if (p) p.stock_qty = (Number(p.stock_qty) || 0) - item.quantity;
+    });
+    renderCart(); updateCartCustomer(); renderPosGrid();
 
     // If a restaurant order was checked out, free table and mark its KOTs served
     if (typeof activeTableOrders !== 'undefined' && currentTableId) {
@@ -2308,10 +2403,11 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
 
     // ─── BACKGROUND LOCAL UPDATES (Zero UI Lag) ───
     runInBackground('Post-sale database update', async () => {
-      await Promise.all(checkoutCart.map(async item => {
-        const p = await db.products.get(item.product_id);
-        if(p) await db.products.update(p.id, { stock_qty: p.stock_qty - item.quantity });
-      }));
+      const saleRef = `Bill #${sale.bill_no || saleId}`;
+      await Promise.all(checkoutCart.map(item =>
+        moveStock(item.product_id, -item.quantity, { type: 'sale', reference: saleRef })));
+      // Sent once the stock is written; SALE_COMPLETED goes out before it
+      broadcastRealtimeEvent('STOCK_UPDATED', {});
 
       if(paymentType === 'credit') {
         const c = await db.customers.get(sale.customer_id);
@@ -2319,7 +2415,7 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
       }
 
       await Promise.all([
-        renderPosGrid(),
+        refreshPosGrid(),
         logSecurityEvent('SALE_COMPLETED', { sale_id: saleId, total: total, type: paymentType })
       ]);
     });
@@ -2852,7 +2948,7 @@ async function initDashboard() {
   
   let products = await db.products.toArray();
   products = products.filter(p => p.is_active === true);
-  const lowStock = products.filter(p => p.stock_qty <= p.low_stock_threshold);
+  const lowStock = products.filter(p => tracksStock(p) && p.stock_qty <= p.low_stock_threshold);
   
   const customers = await db.customers.toArray();
   const outCredit = customers.reduce((s, c)=>s+(c.outstanding_balance||0), 0);
@@ -2860,7 +2956,7 @@ async function initDashboard() {
   document.getElementById('dash-summary').innerHTML = `
     <div class="summary-card"><div class="summary-card-top"><div class="summary-icon green">💰</div></div><div class="summary-value">${formatMoney(revenue)}</div><div class="summary-label">Today's Revenue</div></div>
     <div class="summary-card"><div class="summary-card-top"><div class="summary-icon blue">🛒</div></div><div class="summary-value">${transCount}</div><div class="summary-label">Today's Transactions</div></div>
-    <div class="summary-card" onclick="nav('products')"><div class="summary-card-top"><div class="summary-icon amber">⚠️</div></div><div class="summary-value">${lowStock.length}</div><div class="summary-label">Low Stock Items</div></div>
+    <div class="summary-card" onclick="nav('stock')"><div class="summary-card-top"><div class="summary-icon amber">⚠️</div></div><div class="summary-value">${lowStock.length}</div><div class="summary-label">Running Low</div></div>
     <div class="summary-card" onclick="nav('customers')"><div class="summary-card-top"><div class="summary-icon purple">📝</div></div><div class="summary-value">${formatMoney(outCredit)}</div><div class="summary-label">Outstanding Credit</div></div>
   `;
   
@@ -2881,9 +2977,9 @@ window.renderProductsTable = async () => {
   catSel.innerHTML = '<option value="">All Categories</option>' + cats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
   catSel.value = currVal;
   
-  let products = await db.products.toArray();
+  let products = (await db.products.toArray()).filter(p => !isIngredient(p));
   const term = document.getElementById('product-search').value.toLowerCase();
-  
+
   if(currVal) products = products.filter(p => p.category === currVal);
   if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term) || (p.barcode||'').toLowerCase().includes(term));
   
@@ -2893,9 +2989,14 @@ window.renderProductsTable = async () => {
       <td class="td-mono">${p.sku}</td>
       <td>${p.category}</td>
       <td class="td-mono">${formatMoney(p.retail_price)}</td>
-      <td class="td-mono" style="${p.stock_qty<=p.low_stock_threshold?'color:var(--danger);font-weight:bold':''}">${p.stock_qty} ${p.unit}</td>
+      ${tracksStock(p)
+        ? `<td class="td-mono" style="${p.stock_qty<=p.low_stock_threshold?'color:var(--danger);font-weight:bold':''}">${p.stock_qty} ${p.unit}</td>`
+        : '<td class="text-muted">—</td>'}
       <td><span class="badge ${p.is_active?'badge-active':'badge-inactive'}">${p.is_active?'Active':'Inactive'}</span></td>
-      <td><button class="btn btn-ghost btn-sm btn-icon" onclick="openProductForm(${p.id})">✏️</button></td>
+      <td><div class="row-actions">
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="openProductForm(${p.id})" title="Edit product">✏️</button>
+        ${tracksStock(p) ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="viewStockHistory(${p.id})" title="Stock history">📜</button>` : ''}
+      </div></td>
     </tr>
   `).join('') || '<tr><td colspan="7" style="text-align:center">No products found</td></tr>';
 };
@@ -2923,15 +3024,17 @@ window.openProductForm = async (id = null) => {
       </div>
       <div class="form-group"><label class="form-label">Retail Price</label><input class="form-input" type="number" step="0.01" id="f-prod-retail" value="${p.retail_price}"></div>
       <div class="form-group"><label class="form-label">Cost Price</label><input class="form-input" type="number" step="0.01" id="f-prod-cost" value="${p.cost_price}"></div>
+      ${tracksStock(p) ? `
       <div class="form-group"><label class="form-label">Stock Qty</label><input class="form-input" type="number" step="0.01" id="f-prod-stock" value="${p.stock_qty}"></div>
       <div class="form-group"><label class="form-label">Unit</label><input class="form-input" id="f-prod-unit" value="${p.unit}"></div>
-      <div class="form-group"><label class="form-label">Low Stock Alert</label><input class="form-input" type="number" id="f-prod-low" value="${p.low_stock_threshold}"></div>
+      <div class="form-group"><label class="form-label">Low Stock Alert</label><input class="form-input" type="number" id="f-prod-low" value="${p.low_stock_threshold}"></div>` : ''}
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-input" id="f-prod-active"><option value="true" ${p.is_active?'selected':''}>Active</option><option value="false" ${!p.is_active?'selected':''}>Inactive</option></select>
       </div>
     </div>
   `;
   openModal(id?'Edit Product':'New Product', html, `
+    ${id ? `<button class="btn btn-ghost danger-action" onclick="deleteProduct(${id})" style="margin-right:auto">Delete</button>` : ''}
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
     <button class="btn btn-primary" onclick="saveProduct()">Save</button>
   `);
@@ -2953,18 +3056,422 @@ window.saveProduct = async () => {
     retail_price: parseFloat(document.getElementById('f-prod-retail').value)||0,
     cost_price: parseFloat(document.getElementById('f-prod-cost').value)||0,
     wholesale_price: parseFloat(document.getElementById('f-prod-retail').value)||0, // auto fallback
-    stock_qty: parseFloat(document.getElementById('f-prod-stock').value)||0,
-    unit: document.getElementById('f-prod-unit').value || 'pcs',
-    low_stock_threshold: parseFloat(document.getElementById('f-prod-low').value)||5,
     is_active: document.getElementById('f-prod-active').value === 'true'
   };
-  
+  // Stock fields are only on the form for items that keep stock (not restaurant dishes)
+  const stockInput = document.getElementById('f-prod-stock');
+  if (stockInput) {
+    p.unit = document.getElementById('f-prod-unit').value || 'pcs';
+    p.low_stock_threshold = parseFloat(document.getElementById('f-prod-low').value)||5;
+  }
+
   if(!p.name) return showToast('error', 'Name is required');
-  
-  if(id) await db.products.update(parseInt(id), p);
-  else await db.products.add(p);
-  
-  closeModal(); showToast('success', 'Product saved'); renderProductsTable();
+
+  // Stock is never written directly here, so the change shows up in the stock history
+  const stockTarget = stockInput ? (parseFloat(stockInput.value) || 0) : null;
+  let productId = id ? parseInt(id) : null;
+  let before = 0;
+  if(productId) {
+    before = Number((await db.products.get(productId))?.stock_qty) || 0;
+    await db.products.update(productId, p);
+  } else {
+    productId = await db.products.add({ ...p, stock_qty: 0 });
+  }
+  if (stockTarget != null && stockTarget !== before) {
+    await moveStock(productId, stockTarget - before,
+      { type: 'adjust', reason: id ? 'Edited on product form' : 'Opening stock' });
+  }
+
+  closeModal(); showToast('success', 'Product saved'); renderProductsTable(); refreshPosGrid();
+  if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
+};
+
+window.deleteProduct = async (id) => {
+  const p = await db.products.get(id);
+  if (!p) { closeModal(); return renderProductsTable(); }
+  const ok = await showConfirmation(`Delete ${escapeHtml(p.name)} from the menu? Past bills keep their record of it.`,
+    { title: 'Delete product?', confirmLabel: 'Delete', danger: true });
+  if (!ok) return;
+  await db.products.delete(id);
+  logSecurityEvent('PRODUCT_DELETED', { id, name: p.name });
+  closeModal(); showToast('success', `${p.name} deleted`); renderProductsTable(); refreshPosGrid();
+  if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
+};
+
+// ─── STOCK CONTROL ───
+function isRestaurantBiz() {
+  return currentSettings.restaurant_mode === 'true' || currentSettings.biz_type === 'Restaurant';
+}
+// Ingredients are stock the kitchen buys and uses; they are never sold on the POS
+function isIngredient(p) {
+  return !!p && p.item_type === 'ingredient';
+}
+// Dishes are cooked to order, so a restaurant counts its ingredients, not its plates
+function tracksStock(p) {
+  return isIngredient(p) || !isRestaurantBiz();
+}
+function canSell(p) {
+  return !tracksStock(p) || (Number(p.stock_qty) || 0) > 0;
+}
+
+// The single path for any change to stock_qty: it updates the product and logs
+// the movement, so every unit on the shelf can be traced. delta is signed.
+async function moveStock(productId, delta, { type, reason = '', reference = '', unitCost = null } = {}) {
+  delta = Number(delta);
+  if (!productId || !delta) return null;
+  const p = await db.products.get(productId);
+  if (!p || !tracksStock(p)) return null; // deleted since, or a dish with no stock
+  const before = Number(p.stock_qty) || 0;
+  const after = Number((before + delta).toFixed(3));
+  const changes = { stock_qty: after };
+  if (type === 'receive' && unitCost != null) {
+    changes.cost_price = weightedCost(before, Number(p.cost_price) || 0, delta, unitCost);
+  }
+  await db.products.update(p.id, changes);
+  await db.stock_movements.add({
+    product_id: p.id,
+    product_name: p.name,
+    movement_type: type,
+    qty_change: delta,
+    balance_after: after,
+    unit_cost: unitCost != null ? unitCost : (Number(p.cost_price) || 0),
+    reason,
+    reference,
+    recorded_by: (currentUser && (currentUser.display_name || currentUser.username)) || '',
+    date: new Date().toISOString(),
+  });
+  return after;
+}
+
+// A delivery at a new price moves cost to the average of old and new stock,
+// weighted by quantity. Stock at or below zero has no cost worth keeping.
+function weightedCost(qtyBefore, costBefore, qtyIn, costIn) {
+  if (qtyBefore <= 0) return costIn;
+  return Number(((qtyBefore * costBefore + qtyIn * costIn) / (qtyBefore + qtyIn)).toFixed(2));
+}
+
+const STOCK_UNITS = ['kg', 'g', 'L', 'ml', 'pcs', 'packets', 'bottles', 'bags', 'boxes'];
+const STOCK_USE_REASONS = ['Used in cooking', 'Spoiled / expired', 'Wasted / dropped', 'Other'];
+let stockFilter = 'all';
+let stockItems = new Map();
+
+const qtyText = (n, unit) => `${Number((Number(n) || 0).toFixed(3))} ${unit || ''}`.trim();
+const stockState = p => {
+  const q = Number(p.stock_qty) || 0;
+  if (q <= 0) return 'out';
+  return q <= (Number(p.low_stock_threshold) || 0) ? 'low' : 'ok';
+};
+
+window.setStockFilter = (f) => { stockFilter = f; renderStockScreen(); };
+
+window.renderStockScreen = async () => {
+  const tbody = document.getElementById('stock-tbody');
+  if (!tbody) return;
+  const restaurant = isRestaurantBiz();
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('stk-title', restaurant ? 'Kitchen Stock' : 'Stock');
+  set('stk-add-btn', restaurant ? '+ Add ingredient' : '+ Add item');
+
+  const setup = document.getElementById('stk-setup');
+  if (setup) setup.style.display = (await db.productsSupportItemType()) ? 'none' : 'block';
+
+  const items = (await db.products.toArray())
+    .filter(p => p.is_active !== false && tracksStock(p))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  stockItems = new Map(items.map(p => [Number(p.id), p]));
+
+  const low = items.filter(p => stockState(p) === 'low').length;
+  const out = items.filter(p => stockState(p) === 'out').length;
+  const chips = document.getElementById('stk-chips');
+  if (chips) {
+    const chip = (key, label) => `<div class="cat-pill ${stockFilter === key ? 'active' : ''}" onclick="setStockFilter('${key}')">${label}</div>`;
+    chips.innerHTML = chip('all', `All (${items.length})`) + chip('low', `Running low (${low})`) + chip('out', `Finished (${out})`);
+  }
+
+  const term = (document.getElementById('stk-search')?.value || '').toLowerCase().trim();
+  const rows = items
+    .filter(p => stockFilter === 'all' || stockState(p) === stockFilter)
+    .filter(p => !term || String(p.name).toLowerCase().includes(term));
+
+  tbody.innerHTML = rows.map(p => {
+    const state = stockState(p);
+    const pill = state === 'out' ? '<span class="badge badge-voided">Finished</span>'
+      : state === 'low' ? '<span class="badge badge-pending">Running low</span>' : '';
+    return `
+      <tr>
+        <td><button class="stk-name" onclick="openStockItem(${p.id})" title="Edit, correct the count, see history">${escapeHtml(p.name)}</button></td>
+        <td><span class="stk-left">${escapeHtml(qtyText(p.stock_qty, p.unit))}</span> ${pill}</td>
+        <td><div class="stk-actions">
+          <button class="btn btn-secondary btn-sm" onclick="openStockForm('receive', ${p.id})">+ Bought</button>
+          <button class="btn btn-secondary btn-sm" onclick="openStockForm('use', ${p.id})">− Used</button>
+        </div></td>
+      </tr>`;
+  }).join('') || `<tr><td colspan="3" style="text-align:center;padding:30px 14px">
+      <div style="font-weight:700;margin-bottom:4px">${items.length ? 'Nothing here' : (restaurant ? 'No ingredients yet' : 'No stock items yet')}</div>
+      <div class="text-muted" style="font-size:12.5px">${items.length ? 'Try another filter or search.' : (restaurant
+        ? 'Add the things you buy for the kitchen: chicken, rice, oil, vegetables…'
+        : 'Add the things you keep in stock.')}</div></td></tr>`;
+};
+
+// Opened from the Products screen for shops that stock their products
+window.viewStockHistory = async (id) => { nav('stock'); openStockItem(id); };
+
+window.openIngredientForm = () => {
+  const restaurant = isRestaurantBiz();
+  openModal(restaurant ? 'Add ingredient' : 'Add stock item', `
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:span 2">
+        <label class="form-label" for="f-ing-name">Name</label>
+        <input class="form-input" id="f-ing-name" placeholder="${restaurant ? 'e.g. Chicken, Basmati rice, Coconut oil' : 'e.g. A4 paper'}">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="f-ing-unit">Measured in</label>
+        <input class="form-input" id="f-ing-unit" list="stk-units" value="kg" oninput="document.querySelectorAll('.stk-unit').forEach(el => el.textContent = this.value)">
+        <datalist id="stk-units">${STOCK_UNITS.map(u => `<option value="${u}">`).join('')}</datalist>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="f-ing-low">Warn me when below (<span class="stk-unit">kg</span>)</label>
+        <input class="form-input" type="number" step="any" min="0" id="f-ing-low" placeholder="e.g. 2">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="f-ing-qty">How much do you have now? (<span class="stk-unit">kg</span>)</label>
+        <input class="form-input" type="number" step="any" min="0" id="f-ing-qty" placeholder="0">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="f-ing-price">Price paid for that (Rs.)</label>
+        <input class="form-input" type="number" step="0.01" min="0" id="f-ing-price" placeholder="Optional">
+      </div>
+    </div>
+  `, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" id="ing-save-btn" onclick="saveIngredient()">Add</button>
+  `);
+  setTimeout(() => document.getElementById('f-ing-name')?.focus(), 100);
+};
+
+window.saveIngredient = async () => {
+  const name = (document.getElementById('f-ing-name')?.value || '').trim();
+  const unit = (document.getElementById('f-ing-unit')?.value || '').trim() || 'pcs';
+  const low = parseFloat(document.getElementById('f-ing-low')?.value) || 0;
+  const qty = parseFloat(document.getElementById('f-ing-qty')?.value) || 0;
+  const price = parseFloat(document.getElementById('f-ing-price')?.value);
+
+  if (!name) return showToast('error', 'Type a name');
+  if (qty < 0) return showToast('error', 'Amount cannot be below zero');
+  if (!(await db.productsSupportItemType())) return showToast('error', 'One-time setup needed first — see the note on this screen');
+  const all = await db.products.toArray();
+  if (all.some(p => isIngredient(p) && String(p.name).toLowerCase() === name.toLowerCase())) {
+    return showToast('error', `${name} is already on the list`);
+  }
+
+  const btn = document.getElementById('ing-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+  try {
+    const record = {
+      name, unit, item_type: 'ingredient', category: '', sku: '', barcode: '',
+      retail_price: 0, wholesale_price: 0, cost_price: 0,
+      stock_qty: 0, low_stock_threshold: low, is_active: true,
+    };
+    const id = await db.products.add(record);
+    // add() quietly keeps a row on this device when the cloud refuses it; say so
+    if (record._is_offline && !isOffline()) {
+      showToast('error', `${name} was saved on this device only — the cloud did not accept it`);
+    }
+    if (qty > 0) {
+      const unitCost = Number.isFinite(price) && price >= 0 ? price / qty : null;
+      await moveStock(id, qty, { type: 'receive', reason: 'Starting amount', unitCost });
+    }
+    logSecurityEvent('STOCK_ITEM_ADDED', { name, unit, qty });
+    showToast('success', `${name} added`);
+    closeModal();
+    renderStockScreen();
+    if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
+  } catch (err) {
+    console.error('Add stock item error:', err);
+    showToast('error', 'Could not add it: ' + (err.message || err));
+    if (btn) { btn.disabled = false; btn.textContent = 'Add'; }
+  }
+};
+
+// mode: 'receive' (bought more) or 'use' (used, spoiled or wasted)
+window.openStockForm = (mode, id) => {
+  const p = stockItems.get(Number(id));
+  if (!p) return showToast('error', 'That item is no longer on the list');
+  const bought = mode === 'receive';
+  const unit = escapeHtml(p.unit || '');
+  openModal(`${bought ? 'Bought' : 'Used'} — ${escapeHtml(p.name)}`, `
+    <input type="hidden" id="f-stk-mode" value="${bought ? 'receive' : 'use'}">
+    <input type="hidden" id="f-stk-id" value="${p.id}">
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="f-stk-qty">How much? (${unit})</label>
+        <input class="form-input stk-big-input" type="number" step="any" min="0" id="f-stk-qty" placeholder="0" oninput="onStockFormChange()">
+      </div>
+      ${bought ? `
+      <div class="form-group">
+        <label class="form-label" for="f-stk-price">Total price paid (Rs.)</label>
+        <input class="form-input stk-big-input" type="number" step="0.01" min="0" id="f-stk-price" placeholder="Optional">
+      </div>
+      <div class="form-group" style="grid-column:span 2">
+        <label class="form-label" for="f-stk-ref">Bought from</label>
+        <input class="form-input" id="f-stk-ref" placeholder="Optional — shop or supplier">
+      </div>` : `
+      <div class="form-group">
+        <label class="form-label" for="f-stk-reason">Why?</label>
+        <select class="form-input" id="f-stk-reason">
+          ${STOCK_USE_REASONS.map(r => `<option>${escapeHtml(r)}</option>`).join('')}
+        </select>
+      </div>`}
+    </div>
+    <div class="exp-note" id="f-stk-note"></div>
+  `, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" id="stk-save-btn" onclick="saveStockForm()">Save</button>
+  `);
+  onStockFormChange();
+  setTimeout(() => document.getElementById('f-stk-qty')?.focus(), 100);
+};
+
+function stockFormDelta() {
+  const p = stockItems.get(Number(document.getElementById('f-stk-id')?.value));
+  if (!p) return { error: 'That item is no longer on the list' };
+  const bought = document.getElementById('f-stk-mode')?.value === 'receive';
+  const qty = parseFloat(document.getElementById('f-stk-qty')?.value);
+  const current = Number(p.stock_qty) || 0;
+  if (!Number.isFinite(qty) || qty <= 0) return { p, current, error: 'Type how much' };
+  if (!bought && qty > current) return { p, current, error: `Only ${qtyText(current, p.unit)} left` };
+  return { p, current, delta: bought ? qty : -qty };
+}
+
+window.onStockFormChange = () => {
+  const r = stockFormDelta();
+  const note = document.getElementById('f-stk-note');
+  if (!note || !r.p) return;
+  note.textContent = r.delta != null
+    ? `You will have ${qtyText(r.current + r.delta, r.p.unit)}`
+    : `You have ${qtyText(r.current, r.p.unit)} now`;
+};
+
+window.saveStockForm = async () => {
+  const r = stockFormDelta();
+  if (r.error) return showToast('error', r.error);
+  const bought = r.delta > 0;
+  const price = parseFloat(document.getElementById('f-stk-price')?.value);
+  const unitCost = bought && Number.isFinite(price) && price >= 0 ? price / r.delta : null;
+  const reason = bought ? '' : (document.getElementById('f-stk-reason')?.value || '');
+  const reference = (document.getElementById('f-stk-ref')?.value || '').trim();
+  await applyStockChange(r.p, r.delta, { type: bought ? 'receive' : 'adjust', reason, reference, unitCost },
+    `${r.p.name}: ${bought ? '+' : '−'}${qtyText(Math.abs(r.delta), r.p.unit)}`);
+};
+
+async function applyStockChange(p, delta, opts, message) {
+  const btn = document.getElementById('stk-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    await moveStock(p.id, delta, opts);
+    logSecurityEvent(opts.type === 'receive' ? 'STOCK_RECEIVED' : 'STOCK_ADJUSTED', { product: p.name, qty: delta, reason: opts.reason, reference: opts.reference });
+    showToast('success', message);
+    closeModal();
+    renderStockScreen();
+    refreshPosGrid();
+    if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
+  } catch (err) {
+    console.error('Stock update error:', err);
+    showToast('error', 'Could not save: ' + (err.message || err));
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  }
+}
+
+// Plain words for one history line, e.g. "Bought 5 kg · Keells"
+function describeMovement(m, unit) {
+  const n = Number(m.qty_change) || 0;
+  const amount = qtyText(Math.abs(n), unit);
+  let text;
+  if (m.reason === 'Stock count') text = `Counted — ${amount} ${n > 0 ? 'more' : 'less'} than expected`;
+  else if (m.reason === 'Starting amount') text = `Starting amount ${amount}`;
+  else if (m.movement_type === 'receive') text = `Bought ${amount}`;
+  else if (m.movement_type === 'sale') text = `Sold ${amount}`;
+  else if (m.movement_type === 'return') text = `Returned ${amount}`;
+  else text = `${n > 0 ? 'Added' : 'Used'} ${amount}${m.reason && m.reason !== 'Used in cooking' ? ' — ' + m.reason.toLowerCase() : ''}`;
+  return [text, m.reference].filter(Boolean).join(' · ');
+}
+
+window.openStockItem = async (id) => {
+  const p = stockItems.get(Number(id)) || await db.products.get(id);
+  if (!p) return showToast('error', 'That item is no longer on the list');
+  const moves = (await db.stock_movements.toArray())
+    .filter(m => m.product_id == p.id)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    .slice(0, 15);
+  const unit = p.unit || '';
+  const history = moves.map(m => `
+    <div class="stk-hist-row">
+      <span class="stk-hist-change ${Number(m.qty_change) > 0 ? 'up' : 'down'}">${Number(m.qty_change) > 0 ? '+' : '−'}</span>
+      <div style="flex:1">
+        <div class="fw-600">${escapeHtml(describeMovement(m, unit))}</div>
+        <div class="text-muted" style="font-size:11.5px">${escapeHtml(new Date(m.date).toLocaleString())}${m.recorded_by ? ' · ' + escapeHtml(m.recorded_by) : ''}</div>
+      </div>
+      <span class="text-muted td-mono">${escapeHtml(qtyText(m.balance_after, unit))}</span>
+    </div>`).join('') || '<div class="text-muted" style="padding:8px 0">Nothing recorded yet.</div>';
+
+  openModal(escapeHtml(p.name), `
+    <input type="hidden" id="f-stk-id" value="${p.id}">
+    <div class="stk-section-title">Count it</div>
+    <div class="stk-count-row">
+      <input class="form-input stk-big-input" type="number" step="any" min="0" id="f-stk-count" placeholder="${escapeHtml(String(Number(p.stock_qty) || 0))}">
+      <span class="text-muted">${escapeHtml(unit)} actually there now</span>
+      <button class="btn btn-secondary btn-sm" id="stk-save-btn" onclick="saveStockCount()">Save count</button>
+    </div>
+    <div class="stk-section-title">Details</div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label" for="f-item-name">Name</label><input class="form-input" id="f-item-name" value="${escapeHtml(p.name)}"></div>
+      <div class="form-group"><label class="form-label" for="f-item-unit">Measured in</label><input class="form-input" id="f-item-unit" list="stk-units" value="${escapeHtml(unit)}"><datalist id="stk-units">${STOCK_UNITS.map(u => `<option value="${u}">`).join('')}</datalist></div>
+      <div class="form-group"><label class="form-label" for="f-item-low">Warn me when below</label><input class="form-input" type="number" step="any" min="0" id="f-item-low" value="${Number(p.low_stock_threshold) || 0}"></div>
+    </div>
+    <div class="stk-section-title">Recent changes</div>
+    <div class="stk-history">${history}</div>
+  `, `
+    ${isIngredient(p) ? `<button class="btn btn-ghost danger-action" onclick="deleteStockItem(${p.id})" style="margin-right:auto">Delete</button>` : ''}
+    <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+    <button class="btn btn-primary" onclick="saveStockItemDetails(${p.id})">Save details</button>
+  `);
+};
+
+window.saveStockCount = async () => {
+  const p = stockItems.get(Number(document.getElementById('f-stk-id')?.value));
+  const counted = parseFloat(document.getElementById('f-stk-count')?.value);
+  if (!p) return showToast('error', 'That item is no longer on the list');
+  if (!Number.isFinite(counted) || counted < 0) return showToast('error', 'Type the amount you counted');
+  const delta = Number((counted - (Number(p.stock_qty) || 0)).toFixed(3));
+  if (!delta) { closeModal(); return showToast('info', 'Count matches — nothing changed'); }
+  await applyStockChange(p, delta, { type: 'adjust', reason: 'Stock count' }, `${p.name}: now ${qtyText(counted, p.unit)}`);
+};
+
+window.saveStockItemDetails = async (id) => {
+  const name = (document.getElementById('f-item-name')?.value || '').trim();
+  if (!name) return showToast('error', 'Type a name');
+  await db.products.update(Number(id), {
+    name,
+    unit: (document.getElementById('f-item-unit')?.value || '').trim() || 'pcs',
+    low_stock_threshold: parseFloat(document.getElementById('f-item-low')?.value) || 0,
+  });
+  showToast('success', 'Saved');
+  closeModal();
+  renderStockScreen();
+  if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
+};
+
+window.deleteStockItem = async (id) => {
+  const p = stockItems.get(Number(id));
+  if (!p) return;
+  const ok = await showConfirmation(`Remove ${escapeHtml(p.name)} from the stock list? Its past records stay in the history.`,
+    { title: 'Delete item?', confirmLabel: 'Delete', danger: true });
+  if (!ok) return;
+  await db.products.delete(Number(id));
+  closeModal();
+  logSecurityEvent('STOCK_ITEM_DELETED', { name: p.name });
+  showToast('success', `${p.name} removed`);
+  renderStockScreen();
   if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
 };
 
@@ -3095,12 +3602,9 @@ function saleTaxRate(sale) {
 }
 
 // Puts stock back on the shelf. Positive qty returns units, negative takes more.
-async function returnStock(lines) {
+async function returnStock(lines, reference = '') {
   for (const l of lines) {
-    if (!l.product_id || !l.qty) continue;
-    const p = await db.products.get(l.product_id);
-    if (!p) continue; // product deleted since the sale — nothing to adjust
-    await db.products.update(p.id, { stock_qty: (Number(p.stock_qty) || 0) + l.qty });
+    await moveStock(l.product_id, l.qty, { type: l.qty > 0 ? 'return' : 'sale', reference });
   }
 }
 
@@ -3280,7 +3784,8 @@ window.saveSaleEdit = async () => {
 
   try {
     // Stock first: a positive figure is stock coming back from a reduced line
-    await returnStock(lines.map(l => ({ product_id: l.product_id, qty: l.originalQty - l.qty })));
+    await returnStock(lines.map(l => ({ product_id: l.product_id, qty: l.originalQty - l.qty })),
+      `Bill #${billNumber(sale)} edited`);
 
     for (const l of lines) {
       if (l.qty > 0) {
@@ -3313,7 +3818,7 @@ window.saveSaleEdit = async () => {
     editingSale = null;
     showToast('success', `Bill #${billNumber(sale)} updated to ${formatMoney(total)}`);
     renderSalesHistory();
-    if (typeof renderPosGrid === 'function') renderPosGrid();
+    refreshPosGrid();
     if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
   } catch (err) {
     console.error('Save bill edit error:', err);
@@ -3342,7 +3847,8 @@ window.deleteSale = async (id) => {
   if (!ok) return;
 
   try {
-    await returnStock(items.map(i => ({ product_id: i.product_id, qty: Number(i.quantity) || 0 })));
+    await returnStock(items.map(i => ({ product_id: i.product_id, qty: Number(i.quantity) || 0 })),
+      `Bill #${billNumber(sale)} deleted`);
     await adjustCustomerCredit(sale, -(Number(sale.total_amount) || 0));
 
     for (const i of items) await db.sale_items.delete(i.id);
@@ -3358,7 +3864,7 @@ window.deleteSale = async (id) => {
 
     showToast('success', `Bill #${billNumber(sale)} deleted · ${units} unit(s) returned to stock`);
     renderSalesHistory();
-    if (typeof renderPosGrid === 'function') renderPosGrid();
+    refreshPosGrid();
     if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
   } catch (err) {
     console.error('Delete bill error:', err);
@@ -3456,6 +3962,7 @@ async function categoryUsage() {
   const counts = {};
   let orphans = 0;
   for (const p of products) {
+    if (isIngredient(p)) continue; // kitchen stock has no menu category
     const key = (p.category || '').trim();
     if (!key) { orphans++; continue; }
     counts[key] = (counts[key] || 0) + 1;
@@ -3568,7 +4075,7 @@ window.saveCategory = async () => {
         : `Renamed to "${name}"`);
       logSecurityEvent('CATEGORY_RENAMED', { from: original, to: name, products: affected.length });
       if (typeof renderPosCategories === 'function') renderPosCategories();
-      if (typeof renderPosGrid === 'function') renderPosGrid();
+      refreshPosGrid();
     }
     renderCategoriesTable();
   } catch (err) {
@@ -3613,7 +4120,7 @@ window.deleteCategory = async (id) => {
 
     renderCategoriesTable();
     if (typeof renderPosCategories === 'function') renderPosCategories();
-    if (typeof renderPosGrid === 'function') renderPosGrid();
+    refreshPosGrid();
   } catch (err) {
     console.error('Delete category error:', err);
     showToast('error', 'Could not delete the category: ' + (err.message || err));
@@ -5000,8 +5507,8 @@ async function fetchReportData(start, end) {
   let totalInventoryValue = 0;
   let totalStockQty = 0;
   let lowStockCount = 0;
-  allProducts.forEach(p => {
-    totalInventoryValue += (p.stock_qty || 0) * (p.retail_price || 0);
+  allProducts.filter(tracksStock).forEach(p => {
+    totalInventoryValue += (p.stock_qty || 0) * (p.cost_price || p.retail_price || 0);
     totalStockQty += (p.stock_qty || 0);
     if ((p.stock_qty || 0) <= (p.low_stock_threshold || 0)) lowStockCount++;
   });
@@ -5524,10 +6031,10 @@ async function fetchInventoryIntelligence() {
     const orgId = db.currentOrgId;
     
     // We use the already initialized db wrappers for consistency and safety
-    const allProducts = await db.products.toArray();
+    const allProducts = (await db.products.toArray()).filter(tracksStock);
     const allSales = await db.sales.toArray();
     const allItems = await db.sale_items.toArray();
-    
+
     // 1. Low Stock Logic
     const lowStockData = allProducts.filter(p => p.is_active && p.stock_qty <= (p.low_stock_threshold || 5));
     lowStockData.sort((a, b) => a.stock_qty - b.stock_qty);
@@ -6323,11 +6830,10 @@ async function onBarcodeScanned(barcode) {
     return;
   }
   
-  const products = await db.products.toArray();
-  const product = products.find(p => p.barcode === barcode);
-  
+  const product = await findPosProduct(p => !isIngredient(p) && p.barcode === barcode);
+
   if (product) {
-    if(product.stock_qty > 0) {
+    if(canSell(product)) {
       addToCart(product.id);
       showToast('success', `Added: ${product.name}`);
     } else {

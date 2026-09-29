@@ -186,6 +186,28 @@ CREATE TABLE IF NOT EXISTS public.expenses (
 );
 CREATE INDEX IF NOT EXISTS expenses_org_date_idx ON public.expenses (organization_id, date);
 
+-- Every change to products.stock_qty and why it happened. qty_change is
+-- signed; balance_after is the stock level once the change was applied.
+-- movement_type: 'sale', 'receive', 'adjust', 'return'.
+CREATE TABLE IF NOT EXISTS public.stock_movements (
+  id SERIAL PRIMARY KEY,
+  product_id INTEGER,
+  product_name TEXT NOT NULL,
+  movement_type TEXT NOT NULL,
+  qty_change NUMERIC NOT NULL,
+  balance_after NUMERIC,
+  unit_cost NUMERIC,
+  reason TEXT DEFAULT '',
+  reference TEXT DEFAULT '',
+  recorded_by TEXT DEFAULT '',
+  date TIMESTAMPTZ DEFAULT now(),
+  organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS stock_movements_org_date_idx ON public.stock_movements (organization_id, date);
+
+-- 'menu' is sold on the POS; 'ingredient' is kitchen stock that is bought and used
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS item_type TEXT DEFAULT 'menu';
+
 -- Staff can be paid hourly, daily or on a fixed monthly salary
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS pay_basis TEXT DEFAULT 'hourly';
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS daily_rate NUMERIC DEFAULT 0;
@@ -326,7 +348,8 @@ DECLARE
   tbls TEXT[] := ARRAY[
     'organizations', 'users', 'categories', 'products', 'customers',
     'sales', 'sale_items', 'settings', 'attendance', 'held_carts', 
-    'shift_closures', 'payroll', 'advances', 'pos_shifts', 'audit_log'
+    'shift_closures', 'payroll', 'advances', 'pos_shifts', 'audit_log',
+    'stock_movements'
   ];
 BEGIN
   FOREACH tbl IN ARRAY tbls LOOP

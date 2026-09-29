@@ -50,11 +50,11 @@ function toggleForceOffline() {
 
 // ─── INDEXEDDB LOCAL STORAGE & STORE-AND-FORWARD ENGINE ───
 const IDB_NAME = 'nexpos_local_offline_db';
-const IDB_VERSION = 1;
+const IDB_VERSION = 2; // 2: added stock_movements
 const ALL_IDB_STORES = [
   'organizations','products','categories','customers','sales','sale_items',
   'users','settings','attendance','held_carts','payroll','advances',
-  'pos_shifts','shift_closures','audit_log','offline_sales_queue'
+  'pos_shifts','shift_closures','audit_log','offline_sales_queue','stock_movements'
 ];
 
 let _idbPromise = null;
@@ -274,13 +274,8 @@ class SupaTable {
         if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
           local = local.filter(x => x.organization_id == currentOrgId);
         }
-        // If cloud returns 0 rows but local cache has items, don't wipe out the user's data!
-        if (data.length === 0 && local.length > 0) {
-          console.warn(`[db.toArray] Cloud '${this._name}' has 0 items, preserving ${local.length} local items.`);
-          return local;
-        }
-
-        // Merge any locally-created offline items
+        // Merge any locally-created offline items. Anything else only in the
+        // cache was deleted in the cloud, even when the cloud list is now empty.
         const cloudIds = new Set(data.map(d => d.id));
         const pendingLocal = local.filter(l => !cloudIds.has(l.id) && l._is_offline);
 
@@ -492,6 +487,8 @@ const db = {
   set isSuperAdmin(val) { isSuperAdmin = val; },
   // Whether public.sales carries the per-business bill_no column
   salesSupportsBillNo,
+  // Whether public.products can mark kitchen ingredients
+  productsSupportItemType,
   // Whether public.sale_items can store the cost at the moment of sale
   saleItemsSupportCost,
   // Whether public.payroll can record which basis a payslip was paid on
@@ -509,6 +506,7 @@ const db = {
   payroll:       new SupaTable('payroll'),
   advances:      new SupaTable('advances'),
   expenses:      new SupaTable('expenses'),
+  stock_movements: new SupaTable('stock_movements'),
   pos_shifts:    new SupaTable('pos_shifts'),
   shift_closures: new SupaTable('shift_closures'),
   audit_log:     new SupaTable('audit_log'),
@@ -818,6 +816,22 @@ async function saleItemsSupportCost() {
     _costSnapSupported = false;
   }
   return _costSnapSupported;
+}
+
+// Kitchen ingredients live in products with item_type = 'ingredient'. Without
+// the column the cloud rejects them and add() would keep them on one device only.
+let _itemTypeSupported = null;
+async function productsSupportItemType() {
+  if (_itemTypeSupported !== null) return _itemTypeSupported;
+  if (isOffline()) return true; // can't check; assume set up, recheck once online
+  try {
+    const { error } = await supa.from('products').select('item_type').limit(1);
+    _itemTypeSupported = !error;
+    if (error) console.warn('[item_type] Column not present on products — run saas-migration.sql.');
+  } catch (e) {
+    return true; // network hiccup, not a missing column
+  }
+  return _itemTypeSupported;
 }
 
 let _billNoSupported = null;

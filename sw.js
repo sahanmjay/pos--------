@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexpos-v25-expenses-v17';
+const CACHE_NAME = 'nexpos-v28-kitchen-v20';
 const ASSETS = [
   '/',
   '/index.html',

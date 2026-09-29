@@ -17,7 +17,7 @@
 <link rel="shortcut icon" href="favicon.ico">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=20260912_expenses_v17">
+<link rel="stylesheet" href="style.css?v=20260929_kitchen_v20">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -148,6 +148,7 @@
         <div class="sidebar-label">Inventory</div>
         <div class="nav-item" onclick="nav('products')"><span class="nav-icon"><i class="fa-solid fa-box"></i></span> Products</div>
         <div class="nav-item" onclick="nav('categories')"><span class="nav-icon"><i class="fa-solid fa-tags"></i></span> Categories</div>
+        <div class="nav-item" onclick="nav('stock')"><span class="nav-icon"><i class="fa-solid fa-warehouse"></i></span> Stock</div>
       </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section" id="nav-sales">
@@ -809,6 +810,35 @@
               <span class="clear-link" onclick="document.getElementById('product-search').value='';document.getElementById('product-cat-filter').value='';renderProductsTable()">Clear filters</span>
             </div>
             <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Name</th><th>SKU</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead><tbody id="products-tbody"></tbody></table></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STOCK SCREEN -->
+      <div class="screen" id="screen-stock">
+        <div class="page">
+          <div class="page-header">
+            <div>
+              <div class="page-title" id="stk-title">Stock</div>
+              <div class="page-subtitle">What you have, what you bought, and what you used</div>
+            </div>
+            <div class="page-actions"><button class="btn btn-primary" id="stk-add-btn" onclick="openIngredientForm()">+ Add ingredient</button></div>
+          </div>
+          <div class="exp-note" id="stk-setup" style="display:none; margin:0 0 14px">
+            One-time setup needed before you can add ingredients. In Supabase, open <b>SQL Editor</b>, run this line, then refresh:<br>
+            <code>ALTER TABLE public.products ADD COLUMN IF NOT EXISTS item_type TEXT DEFAULT &#39;menu&#39;;</code>
+          </div>
+          <div class="card">
+            <div class="filter-bar">
+              <div class="search-input-wrap"><span class="search-icon">🔍</span><input class="search-input" id="stk-search" placeholder="Find an item…" oninput="renderStockScreen()"></div>
+              <div class="stk-chips" id="stk-chips"></div>
+            </div>
+            <div class="data-table-wrap">
+              <table class="data-table stk-table">
+                <thead><tr><th>Item</th><th>Left</th><th></th></tr></thead>
+                <tbody id="stock-tbody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -1548,8 +1578,8 @@
 </div>
 
 <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js';document.head.appendChild(s);"></script>
-<script src="db.js?v=20260912_expenses_v17"></script>
-<script src="app.js?v=20260912_expenses_v17"></script>
+<script src="db.js?v=20260929_kitchen_v20"></script>
+<script src="app.js?v=20260929_kitchen_v20"></script>
 <script>
 window.addEventListener('keydown', (e) => {
   if ((e.key === '/' || ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K'))) && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {

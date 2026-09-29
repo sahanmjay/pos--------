@@ -2046,6 +2046,37 @@ body {
   font-size: 12px; font-weight: 600; color: var(--text-secondary); line-height: 1.45;
 }
 
+/* Stock — one plain row per item, big buttons for the two things staff do */
+.stk-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.stk-table td { vertical-align: middle; padding-top: 12px; padding-bottom: 12px; }
+.stk-name {
+  background: none; border: 0; padding: 0; font: inherit; font-size: 14.5px; font-weight: 700;
+  color: var(--text-primary); cursor: pointer; text-align: left;
+}
+.stk-name:hover { color: var(--brand); text-decoration: underline; }
+.stk-left { font-family: var(--mono); font-size: 16px; font-weight: 800; margin-right: 8px; }
+.stk-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.stk-actions .btn { min-width: 92px; min-height: 36px; font-weight: 700; }
+.stk-big-input { font-size: 18px; font-weight: 700; }
+.stk-section-title {
+  margin: 16px 0 8px; font-size: 10.5px; font-weight: 800; letter-spacing: .9px;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.stk-section-title:first-of-type { margin-top: 0; }
+.stk-count-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.stk-count-row .form-input { max-width: 140px; }
+.stk-history { max-height: 260px; overflow-y: auto; }
+.stk-hist-row { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.stk-hist-change {
+  width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 800; flex-shrink: 0;
+}
+.stk-hist-change.up { background: var(--success-bg); color: var(--success); }
+.stk-hist-change.down { background: var(--danger-bg); color: var(--danger); }
+@media (max-width: 640px) {
+  .stk-actions .btn { min-width: 0; flex: 1; }
+}
+
 /* Payroll — explains which basis is driving the figures on screen */
 .pay-basis-note {
   margin-top: 10px; padding: 9px 12px; border-radius: var(--radius);
