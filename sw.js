@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexpos-v28-kitchen-v20';
+const CACHE_NAME = 'nexpos-v31-premium';
 const ASSETS = [
   '/',
   '/index.html',
@@ -11,12 +11,13 @@ const ASSETS = [
   '/favicon-96x96.png',
   '/apple-touch-icon.png',
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css',
-  'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap',
+  '/fonts/inter-latin-wght.woff2',
+  'https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
   'https://cdn.jsdelivr.net/npm/chart.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
-  'https://unpkg.com/@zxing/browser@latest/umd/index.min.js'
+  'https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js'
 ];
 
 self.addEventListener('install', (event) => {

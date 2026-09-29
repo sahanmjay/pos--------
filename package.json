@@ -46,6 +46,7 @@
       "style.css",
       "sw.js",
       "manifest.json",
+      "fonts/**",
       "ramis-queue.js",
       "ramis-service.js",
       "favicon.*",

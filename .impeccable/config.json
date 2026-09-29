@@ -1,0 +1,15 @@
+{
+  "buildPath": "code",
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-09-29T16:46:03.651Z",
+        "reason": "claude: user rejected a distinctive direction and asked for premium-but-simple; Inter chosen deliberately as the workhorse UI face for this Operate app"
+      }
+    ]
+  }
+}

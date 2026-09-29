@@ -277,7 +277,17 @@ class SupaTable {
         // Merge any locally-created offline items. Anything else only in the
         // cache was deleted in the cloud, even when the cloud list is now empty.
         const cloudIds = new Set(data.map(d => d.id));
-        const pendingLocal = local.filter(l => !cloudIds.has(l.id) && l._is_offline);
+        // A synced offline sale is no longer pending once it has left the queue;
+        // purge leftovers so they stop showing next to their cloud copy.
+        const queued = this._name === 'sales'
+          ? new Set((await idbGetAll('offline_sales_queue')).map(q => q.id))
+          : null;
+        const pendingLocal = [];
+        for (const l of local) {
+          if (cloudIds.has(l.id) || !l._is_offline) continue;
+          if (!queued || queued.has(l.id)) pendingLocal.push(l);
+          else idbDelete(this._name, l.id).catch(() => {});
+        }
 
         idbPutMany(this._name, data).catch(() => {});
         return [...data, ...pendingLocal];
@@ -552,8 +562,11 @@ async function syncOfflineQueue() {
             delete uploadItem._is_offline;
             await supa.from('sale_items').insert(uploadItem);
           }
-          // Remove from sync queue
+          // Remove from sync queue and drop the local copies, or the history
+          // shows this sale twice (cloud row + offline row)
           await idbDelete('offline_sales_queue', localSaleId);
+          await idbDelete('sales', localSaleId);
+          for (const it of relatedItems) await idbDelete('sale_items', it.id);
           syncedCount++;
         }
       } catch (itemErr) {

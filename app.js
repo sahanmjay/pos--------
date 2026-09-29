@@ -533,15 +533,16 @@ async function loadSettings() {
 }
 
 function formatMoney(num) {
-  return (currentSettings.currency || 'Rs.') + ' ' + Number(num).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  return (currentSettings.currency || 'Rs.') + ' ' + (Number(num) || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
 
 function showToast(type, msg) {
   const c = document.getElementById('toast-container');
   const t = document.createElement('div');
-  const icons = {success:'✓', error:'✕', info:'ℹ'};
+  const icons = {success:'fa-circle-check', error:'fa-circle-exclamation', info:'fa-circle-info'};
   t.className = 'toast toast-'+type;
-  t.innerHTML = `<span style="font-size:16px">${icons[type]}</span><span>${msg}</span>`;
+  t.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  t.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}" aria-hidden="true"></i><span>${escapeHtml(msg)}</span>`;
   c.appendChild(t);
   setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateX(20px)'; t.style.transition='all 300ms'; setTimeout(()=>t.remove(),300); }, 3000);
 }
@@ -738,7 +739,7 @@ async function doLogin() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = 'Sign In to Dashboard →';
+      btn.innerHTML = 'Sign in';
     }
   }
 }
@@ -760,7 +761,7 @@ async function completeSuperLogin(sa) {
   document.getElementById('sa-sidebar').style.display = 'flex';
 
   // Update topbar
-  document.getElementById('user-avatar').textContent = '⚡';
+  document.getElementById('user-avatar').textContent = 'SA';
   document.getElementById('user-name').textContent = sa.display_name;
   document.getElementById('role-badge').textContent = 'Super Admin';
 
@@ -778,7 +779,7 @@ async function completeSuperLogin(sa) {
     saPwItem.style.opacity = '1';
     saPwItem.style.cursor = 'pointer';
     saPwItem.onclick = openChangePasswordModal;
-    saPwItem.innerHTML = '🔑 Change Password';
+    saPwItem.innerHTML = '<i class="fa-solid fa-key fa-fw"></i> Change Password';
     saPwItem.title = 'Change Platform Super Admin password';
   }
 
@@ -851,13 +852,13 @@ async function completeLogin(user, options = {}) {
     document.getElementById('nav-sales').style.display = 'block';
     document.getElementById('nav-hr').style.display = 'block';
     document.getElementById('nav-system').style.display = 'block';
-    document.getElementById('nav-payroll-item').style.display = 'block';
+    document.getElementById('nav-payroll-item').style.display = '';
   } else if (user.role === 'Counter' || user.role === 'Cashier') {
     document.getElementById('nav-pos').style.display = 'block';
     document.getElementById('nav-sales').style.display = 'block';
   } else if (user.role === 'HR') {
     document.getElementById('nav-hr').style.display = 'block';
-    document.getElementById('nav-payroll-item').style.display = 'block';
+    document.getElementById('nav-payroll-item').style.display = '';
   } else if (user.role === 'Inventory') {
     document.getElementById('nav-inventory').style.display = 'block';
   } else if (user.role === 'Worker') {
@@ -1311,6 +1312,14 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') { event.preventDefault(); closeAppDialog(false); }
   if (event.key === 'Enter' && (activeAppDialog.input || event.target.id === 'app-dialog-confirm')) { event.preventDefault(); closeAppDialog(true); }
 });
+// Keyboard activation for div-based controls marked role="button"
+document.addEventListener('keydown', event => {
+  const el = event.target;
+  if ((event.key === 'Enter' || event.key === ' ') && el.getAttribute?.('role') === 'button' && el.tagName !== 'BUTTON') {
+    event.preventDefault();
+    el.click();
+  }
+});
 
 // --- POS SYSTEM ---
 let posCats = [];
@@ -1329,7 +1338,7 @@ function drawPosCategories() {
   
   let html = `<div class="cat-pill ${posCategory===''?'active':''}" onclick="setPosCategory('')">All</div>`;
   cats.forEach(c => {
-    html += `<div class="cat-pill ${posCategory===c.name?'active':''}" onclick="setPosCategory('${c.name}')">${c.name}</div>`;
+    html += `<div class="cat-pill ${posCategory===c.name?'active':''}" onclick="setPosCategory(${jsArg(c.name)})">${escapeHtml(c.name)}</div>`;
   });
   document.getElementById('pos-cat-filters').innerHTML = html;
 }
@@ -1373,26 +1382,26 @@ window.setPosViewMode = (mode) => {
 
 function getProductCardVisual(p) {
   if (p.image || p.image_url) {
-    return `<div class="pos-card-media"><img src="${p.image || p.image_url}" alt="${p.name}" class="pos-prod-img" onerror="this.parentElement.innerHTML='<i class=\\\'fa-solid fa-utensils pos-media-icon\\\'></i>'"></div>`;
+    return `<div class="pos-card-media"><img src="${p.image || p.image_url}" alt="${escapeHtml(p.name)}" class="pos-prod-img" onerror="this.parentElement.innerHTML='<i class=\\\'fa-solid fa-utensils pos-media-icon\\\'></i>'"></div>`;
   }
   
   const cat = p.category || 'General';
   const catMap = {
-    'Rice & Curry': { bg: 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)', text: '#92400E', icon: 'fa-bowl-rice', label: 'Rice & Curry' },
-    'Noodles': { bg: 'linear-gradient(135deg, #FFE4E6 0%, #FECDD3 100%)', text: '#9F1239', icon: 'fa-bowl-food', label: 'Noodles' },
-    'Snacks': { bg: 'linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%)', text: '#065F46', icon: 'fa-cookie-bite', label: 'Snacks' },
-    'Beverages': { bg: 'linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%)', text: '#1E40AF', icon: 'fa-mug-hot', label: 'Beverage' },
-    'Desserts': { bg: 'linear-gradient(135deg, #F5D0FE 0%, #E879F9 100%)', text: '#701A75', icon: 'fa-ice-cream', label: 'Dessert' },
-    'Specials': { bg: 'linear-gradient(135deg, #E0E7FF 0%, #C7D2FE 100%)', text: '#312E81', icon: 'fa-star', label: 'Special' },
-    'Clothing': { bg: 'linear-gradient(135deg, #F1F5F9 0%, #E2E8F0 100%)', text: '#0F172A', icon: 'fa-shirt', label: 'Clothing' },
-    'Footwear': { bg: 'linear-gradient(135deg, #F1F5F9 0%, #E2E8F0 100%)', text: '#0F172A', icon: 'fa-shoe-prints', label: 'Footwear' },
-    'Bags': { bg: 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)', text: '#78350F', icon: 'fa-bag-shopping', label: 'Bags' },
-    'Chicken': { bg: 'linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%)', text: '#7F1D1D', icon: 'fa-drumstick-bite', label: 'Chicken' },
-    'Beef': { bg: 'linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%)', text: '#7F1D1D', icon: 'fa-bacon', label: 'Beef' },
-    'Bread': { bg: 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)', text: '#78350F', icon: 'fa-bread-slice', label: 'Bakery' },
-    'Cakes': { bg: 'linear-gradient(135deg, #FDF4FF 0%, #F5D0FE 100%)', text: '#701A75', icon: 'fa-cake-candles', label: 'Cake' },
-    'Tools': { bg: 'linear-gradient(135deg, #F1F5F9 0%, #E2E8F0 100%)', text: '#334155', icon: 'fa-wrench', label: 'Tools' },
-    'default': { bg: 'linear-gradient(135deg, #F1F5F9 0%, #E2E8F0 100%)', text: '#475569', icon: 'fa-box', label: 'Product' }
+    'Rice & Curry': { bg: '#FFFBEB', text: '#D97706', icon: 'fa-bowl-rice', label: 'Rice & Curry' },
+    'Noodles': { bg: '#FFF7ED', text: '#EA580C', icon: 'fa-bowl-food', label: 'Noodles' },
+    'Snacks': { bg: '#ECFDF5', text: '#059669', icon: 'fa-cookie-bite', label: 'Snacks' },
+    'Beverages': { bg: '#EFF6FF', text: '#2563EB', icon: 'fa-mug-hot', label: 'Beverage' },
+    'Desserts': { bg: '#FDF2F8', text: '#DB2777', icon: 'fa-ice-cream', label: 'Dessert' },
+    'Specials': { bg: '#FFF7ED', text: '#EA580C', icon: 'fa-star', label: 'Special' },
+    'Clothing': { bg: '#F0F9FF', text: '#0284C7', icon: 'fa-shirt', label: 'Clothing' },
+    'Footwear': { bg: '#F8FAFC', text: '#475569', icon: 'fa-shoe-prints', label: 'Footwear' },
+    'Bags': { bg: '#FFFBEB', text: '#B45309', icon: 'fa-bag-shopping', label: 'Bags' },
+    'Chicken': { bg: '#FEF2F2', text: '#DC2626', icon: 'fa-drumstick-bite', label: 'Chicken' },
+    'Beef': { bg: '#FEF2F2', text: '#B91C1C', icon: 'fa-bacon', label: 'Beef' },
+    'Bread': { bg: '#FFFBEB', text: '#B45309', icon: 'fa-bread-slice', label: 'Bakery' },
+    'Cakes': { bg: '#FDF2F8', text: '#DB2777', icon: 'fa-cake-candles', label: 'Cake' },
+    'Tools': { bg: '#F8FAFC', text: '#475569', icon: 'fa-wrench', label: 'Tools' },
+    'default': { bg: '#F0FDFA', text: '#0D9488', icon: 'fa-box', label: 'Product' }
   };
   
   const m = catMap[cat] || catMap['default'];
@@ -1489,17 +1498,17 @@ async function renderPosGrid() {
     return `
       <div class="pos-product-card ${isOutOfStock?'out-of-stock':''} ${isLowStock?'low-stock':''} ${inCartQty > 0 ? 'in-cart' : ''}" 
            onclick="addToCart(${p.id})" 
-           title="${p.name} — ${formatMoney(priceNum)}">
+           title="${escapeHtml(p.name)} — ${escapeHtml(formatMoney(priceNum))}">
         ${getProductCardVisual(p)}
         <div class="pos-card-top-badges">
-          <span class="pos-category-label">${p.category || 'General'}</span>
+          <span class="pos-category-label">${escapeHtml(p.category || 'General')}</span>
           ${inCartQty > 0 ? `<span class="in-cart-pill"><i class="fa-solid fa-check"></i> ${inCartQty}</span>` : ''}
         </div>
         <div class="pos-prod-body">
-          <div class="pos-prod-name">${p.name}</div>
-          <div class="pos-prod-meta">#${p.sku || p.barcode || 'ITEM'}</div>
+          <div class="pos-prod-name">${escapeHtml(p.name)}</div>
+          <div class="pos-prod-meta">${escapeHtml(p.unit ? p.unit : '')}${p.unit && (p.sku || p.barcode) ? ' · ' : ''}${escapeHtml(p.sku || p.barcode || '')}</div>
           <div class="pos-prod-footer">
-            <div class="pos-prod-price"><span class="price-curr">Rs.</span><span class="price-val">${priceNum.toLocaleString()}</span><span class="price-dec">.00</span></div>
+            <div class="pos-prod-price"><span class="price-curr">${escapeHtml(currentSettings.currency || 'Rs.')}</span><span class="price-val">${Math.trunc(priceNum).toLocaleString('en-US')}</span><span class="price-dec">.${priceNum.toFixed(2).slice(-2)}</span></div>
             ${tracked ? `<div class="pos-prod-stock ${stockState}"><span class="stock-dot"></span>${isLowStock ? 'Low stock' : stockLabel}</div>` : ''}
           </div>
         </div>
@@ -1586,13 +1595,13 @@ function renderCart() {
     <div class="cart-item">
       <div class="cart-item-avatar"><i class="fa-solid fa-box-open"></i></div>
       <div class="cart-item-info">
-        <div class="cart-item-name" title="${item.name}">${item.name}</div>
+        <div class="cart-item-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
         <div class="cart-item-price">@ ${formatMoney(item.unit_price)}</div>
         ${isRestaurant ? `
           <div class="cart-item-note-row">
             ${item.notes ? `
               <span class="cart-item-note-tag" onclick="openItemNoteModal(${i})" title="Click to edit cooking note">
-                <i class="fa-solid fa-pen" style="font-size:9px"></i> ${item.notes}
+                <i class="fa-solid fa-pen" style="font-size:9px"></i> ${escapeHtml(item.notes)}
               </span>
             ` : `
               <button type="button" class="cart-item-note-btn" onclick="openItemNoteModal(${i})">
@@ -1615,15 +1624,17 @@ function renderCart() {
 }
 
 function updateTotals() {
-  const subtotal = cart.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
+  // Round to cents like the sale-edit path, so stored totals match the printed receipt
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const subtotal = r2(cart.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0));
   const taxRate = parseFloat(currentSettings.tax_rate || 0) / 100;
-  
-  let discount = manualDiscount;
+
+  let discount = Math.max(0, Number(manualDiscount) || 0);
   if(discount > subtotal) discount = subtotal; // cap discount
-  
+
   const taxable = Math.max(0, subtotal - discount);
-  const tax = taxable * taxRate;
-  const total = taxable + tax;
+  const tax = r2(taxable * taxRate);
+  const total = r2(taxable + tax);
   
   document.getElementById('cart-subtotal').textContent = formatMoney(subtotal);
   document.getElementById('cart-discount').textContent = (discount > 0 ? '- ' : '') + formatMoney(discount);
@@ -1690,7 +1701,7 @@ window.openCustomerSelect = async () => {
     <div style="max-height:300px;overflow-y:auto;margin-top:10px" id="cust-list-modal">
       ${customers.map(c => `
         <div style="padding:10px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between" onclick="selectCartCustomer(${c.id})">
-          <div class="fw-600">${c.name}</div><div class="text-muted">${c.phone}</div>
+          <div class="fw-600">${escapeHtml(c.name)}</div><div class="text-muted">${escapeHtml(c.phone)}</div>
         </div>
       `).join('')}
     </div>
@@ -1725,6 +1736,8 @@ window.applyDiscount = async () => {
    ═══════════════════════════════════════════════════════════════ */
 
 window.escapeHtml = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+// Safe string argument for inline on*="..." handlers (survives quotes and apostrophes)
+window.jsArg = (v) => escapeHtml(JSON.stringify(v ?? ""));
 
 function isRestaurantMode() {
   return currentSettings.restaurant_mode === 'true' || currentSettings.biz_type === 'Restaurant';
@@ -2506,7 +2519,7 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
     <div style="text-align:center;margin-bottom:12px;border-bottom:1px dashed var(--rule);padding-bottom:8px">
       ${logo ? `
         <div style="margin-bottom:8px; display:flex; justify-content:center; align-items:center;">
-          <img src="${logo}" alt="${shopName}" style="max-height:55px; max-width:150px; object-fit:contain; display:block; margin:0 auto;" />
+          <img src="${logo}" alt="${escapeHtml(shopName)}" style="max-height:55px; max-width:150px; object-fit:contain; display:block; margin:0 auto;" />
         </div>
       ` : ''}
       <h2 style="margin:0;font-size:17px;color:var(--ink);letter-spacing:0.5px">${shopName}</h2>
@@ -2622,7 +2635,7 @@ window.populatePrinterSetting = async () => {
     sel.innerHTML = '<option value="">Auto-detect thermal printer</option>' +
       list.map(p => {
         const name = escapeHtml(p.name || '');
-        return `<option value="${name}"${p.name === saved ? ' selected' : ''}>${name}${p.isDefault ? ' (system default)' : ''}</option>`;
+        return `<option value="${escapeHtml(name)}"${p.name === saved ? ' selected' : ''}>${name}${p.isDefault ? ' (system default)' : ''}</option>`;
       }).join('');
     sel.value = saved;
     if (hint) hint.textContent = list.length
@@ -2954,10 +2967,10 @@ async function initDashboard() {
   const outCredit = customers.reduce((s, c)=>s+(c.outstanding_balance||0), 0);
   
   document.getElementById('dash-summary').innerHTML = `
-    <div class="summary-card"><div class="summary-card-top"><div class="summary-icon green">💰</div></div><div class="summary-value">${formatMoney(revenue)}</div><div class="summary-label">Today's Revenue</div></div>
-    <div class="summary-card"><div class="summary-card-top"><div class="summary-icon blue">🛒</div></div><div class="summary-value">${transCount}</div><div class="summary-label">Today's Transactions</div></div>
-    <div class="summary-card" onclick="nav('stock')"><div class="summary-card-top"><div class="summary-icon amber">⚠️</div></div><div class="summary-value">${lowStock.length}</div><div class="summary-label">Running Low</div></div>
-    <div class="summary-card" onclick="nav('customers')"><div class="summary-card-top"><div class="summary-icon purple">📝</div></div><div class="summary-value">${formatMoney(outCredit)}</div><div class="summary-label">Outstanding Credit</div></div>
+    <div class="summary-card"><div class="summary-card-top"><div class="summary-icon green"><i class="fa-solid fa-sack-dollar"></i></div></div><div class="summary-value">${formatMoney(revenue)}</div><div class="summary-label">Today's Revenue</div></div>
+    <div class="summary-card"><div class="summary-card-top"><div class="summary-icon blue"><i class="fa-solid fa-cart-shopping"></i></div></div><div class="summary-value">${transCount}</div><div class="summary-label">Today's Transactions</div></div>
+    <div class="summary-card" onclick="nav('stock')"><div class="summary-card-top"><div class="summary-icon amber"><i class="fa-solid fa-triangle-exclamation"></i></div></div><div class="summary-value">${lowStock.length}</div><div class="summary-label">Running Low</div></div>
+    <div class="summary-card" onclick="nav('customers')"><div class="summary-card-top"><div class="summary-icon purple"><i class="fa-solid fa-file-invoice"></i></div></div><div class="summary-value">${formatMoney(outCredit)}</div><div class="summary-label">Outstanding Credit</div></div>
   `;
   
   document.getElementById('dash-recent-sales').innerHTML = sales.sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5).map(s => `
@@ -2965,7 +2978,7 @@ async function initDashboard() {
   `).join('') || '<div class="text-muted">No sales yet</div>';
   
   document.getElementById('dash-low-stock').innerHTML = lowStock.slice(0,5).map(p => `
-    <div class="activity-item"><div class="activity-dot" style="background:var(--danger)"></div><div style="flex:1"><div class="activity-text fw-600">${p.name}</div><div class="activity-time" style="color:var(--danger)">Stock: ${p.stock_qty} ${p.unit} (Alert: ${p.low_stock_threshold})</div></div></div>
+    <div class="activity-item"><div class="activity-dot" style="background:var(--danger)"></div><div style="flex:1"><div class="activity-text fw-600">${escapeHtml(p.name)}</div><div class="activity-time" style="color:var(--danger)">Stock: ${p.stock_qty} ${p.unit} (Alert: ${p.low_stock_threshold})</div></div></div>
   `).join('') || '<div class="text-muted">No low stock alerts</div>';
 }
 
@@ -2974,7 +2987,7 @@ window.renderProductsTable = async () => {
   const cats = await db.categories.toArray();
   const catSel = document.getElementById('product-cat-filter');
   const currVal = catSel.value;
-  catSel.innerHTML = '<option value="">All Categories</option>' + cats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+  catSel.innerHTML = '<option value="">All Categories</option>' + cats.map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('');
   catSel.value = currVal;
   
   let products = (await db.products.toArray()).filter(p => !isIngredient(p));
@@ -2985,9 +2998,9 @@ window.renderProductsTable = async () => {
   
   document.getElementById('products-tbody').innerHTML = products.map(p => `
     <tr>
-      <td class="fw-600">${p.name}</td>
-      <td class="td-mono">${p.sku}</td>
-      <td>${p.category}</td>
+      <td class="fw-600">${escapeHtml(p.name)}</td>
+      <td class="td-mono">${escapeHtml(p.sku)}</td>
+      <td>${escapeHtml(p.category)}</td>
       <td class="td-mono">${formatMoney(p.retail_price)}</td>
       ${tracksStock(p)
         ? `<td class="td-mono" style="${p.stock_qty<=p.low_stock_threshold?'color:var(--danger);font-weight:bold':''}">${p.stock_qty} ${p.unit}</td>`
@@ -3010,15 +3023,15 @@ window.openProductForm = async (id = null) => {
   const html = `
     <input type="hidden" id="f-prod-id" value="${id||''}">
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="f-prod-name" value="${p.name}"></div>
+      <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="f-prod-name" value="${escapeHtml(p.name)}"></div>
       <div class="form-group"><label class="form-label">Category</label>
-        <select class="form-input" id="f-prod-cat">${cats.map(c=>`<option value="${c.name}" ${p.category===c.name?'selected':''}>${c.name}</option>`).join('')}</select>
+        <select class="form-input" id="f-prod-cat">${cats.map(c=>`<option value="${escapeHtml(c.name)}" ${p.category===c.name?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select>
       </div>
-      <div class="form-group"><label class="form-label">SKU</label><input class="form-input" id="f-prod-sku" value="${p.sku}"></div>
+      <div class="form-group"><label class="form-label">SKU</label><input class="form-input" id="f-prod-sku" value="${escapeHtml(p.sku)}"></div>
       <div class="form-group">
         <label class="form-label">Barcode</label>
         <div style="position:relative;">
-          <input class="form-input" id="f-prod-barcode" value="${p.barcode}" style="padding-right: 40px;">
+          <input class="form-input" id="f-prod-barcode" value="${escapeHtml(p.barcode)}" style="padding-right: 40px;">
           <button class="btn btn-ghost btn-icon" onclick="openBarcodeScannerForInput('f-prod-barcode')" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); color:var(--text-muted);" title="Scan Barcode"><i class="fa-solid fa-camera"></i></button>
         </div>
       </div>
@@ -3026,7 +3039,7 @@ window.openProductForm = async (id = null) => {
       <div class="form-group"><label class="form-label">Cost Price</label><input class="form-input" type="number" step="0.01" id="f-prod-cost" value="${p.cost_price}"></div>
       ${tracksStock(p) ? `
       <div class="form-group"><label class="form-label">Stock Qty</label><input class="form-input" type="number" step="0.01" id="f-prod-stock" value="${p.stock_qty}"></div>
-      <div class="form-group"><label class="form-label">Unit</label><input class="form-input" id="f-prod-unit" value="${p.unit}"></div>
+      <div class="form-group"><label class="form-label">Unit</label><input class="form-input" id="f-prod-unit" value="${escapeHtml(p.unit)}"></div>
       <div class="form-group"><label class="form-label">Low Stock Alert</label><input class="form-input" type="number" id="f-prod-low" value="${p.low_stock_threshold}"></div>` : ''}
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-input" id="f-prod-active"><option value="true" ${p.is_active?'selected':''}>Active</option><option value="false" ${!p.is_active?'selected':''}>Inactive</option></select>
@@ -3227,7 +3240,7 @@ window.openIngredientForm = () => {
       <div class="form-group">
         <label class="form-label" for="f-ing-unit">Measured in</label>
         <input class="form-input" id="f-ing-unit" list="stk-units" value="kg" oninput="document.querySelectorAll('.stk-unit').forEach(el => el.textContent = this.value)">
-        <datalist id="stk-units">${STOCK_UNITS.map(u => `<option value="${u}">`).join('')}</datalist>
+        <datalist id="stk-units">${STOCK_UNITS.map(u => `<option value="${escapeHtml(u)}">`).join('')}</datalist>
       </div>
       <div class="form-group">
         <label class="form-label" for="f-ing-low">Warn me when below (<span class="stk-unit">kg</span>)</label>
@@ -3425,7 +3438,7 @@ window.openStockItem = async (id) => {
     <div class="stk-section-title">Details</div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label" for="f-item-name">Name</label><input class="form-input" id="f-item-name" value="${escapeHtml(p.name)}"></div>
-      <div class="form-group"><label class="form-label" for="f-item-unit">Measured in</label><input class="form-input" id="f-item-unit" list="stk-units" value="${escapeHtml(unit)}"><datalist id="stk-units">${STOCK_UNITS.map(u => `<option value="${u}">`).join('')}</datalist></div>
+      <div class="form-group"><label class="form-label" for="f-item-unit">Measured in</label><input class="form-input" id="f-item-unit" list="stk-units" value="${escapeHtml(unit)}"><datalist id="stk-units">${STOCK_UNITS.map(u => `<option value="${escapeHtml(u)}">`).join('')}</datalist></div>
       <div class="form-group"><label class="form-label" for="f-item-low">Warn me when below</label><input class="form-input" type="number" step="any" min="0" id="f-item-low" value="${Number(p.low_stock_threshold) || 0}"></div>
     </div>
     <div class="stk-section-title">Recent changes</div>
@@ -3667,7 +3680,7 @@ window.openSaleEditor = async (id) => {
             <button type="button" onclick="stepSaleEditQty(${i}, 1)" aria-label="Increase">+</button>
           </div>
           <div class="sale-edit-total td-mono" id="sale-edit-line-${i}">${formatMoney(l.unit_price * l.qty)}</div>
-          <button type="button" class="sale-edit-remove" onclick="stepSaleEditQty(${i}, -9999)" title="Remove this line">✕</button>
+          <button type="button" class="sale-edit-remove" onclick="stepSaleEditQty(${i}, -9999)" title="Remove this line" aria-label="Remove this line"><i class="fa-solid fa-xmark"></i></button>
         </div>`).join('')}
     </div>
 
@@ -3898,9 +3911,9 @@ window.renderCustomersTable = async () => {
   
   tbody.innerHTML = custs.map(c => `
     <tr>
-      <td class="fw-600">${c.name}</td>
-      <td>${c.phone||'-'}</td>
-      <td>${c.email||'-'}</td>
+      <td class="fw-600">${escapeHtml(c.name)}</td>
+      <td>${escapeHtml(c.phone||'-')}</td>
+      <td>${escapeHtml(c.email||'-')}</td>
       <td class="td-mono">${formatMoney(c.total_purchases)}</td>
       <td class="td-mono" style="${c.outstanding_balance>0?'color:var(--danger);font-weight:bold':''}">${formatMoney(c.outstanding_balance)}</td>
       <td><button class="btn btn-ghost btn-sm btn-icon" onclick="openCustomerForm(${c.id})">✏️</button></td>
@@ -3915,9 +3928,9 @@ window.openCustomerForm = async (id = null) => {
   const html = `
     <input type="hidden" id="f-cust-id" value="${id||''}">
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="f-cust-name" value="${c.name}"></div>
-      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="f-cust-phone" value="${c.phone}"></div>
-      <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="f-cust-email" value="${c.email}"></div>
+      <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="f-cust-name" value="${escapeHtml(c.name)}"></div>
+      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="f-cust-phone" value="${escapeHtml(c.phone)}"></div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="f-cust-email" value="${escapeHtml(c.email)}"></div>
       <div class="form-group"><label class="form-label">Outstanding Balance</label><input class="form-input" type="number" step="0.01" id="f-cust-bal" value="${c.outstanding_balance}" ${id===1?'disabled':''}></div>
     </div>
   `;
@@ -4140,8 +4153,8 @@ window.renderUsersTable = async () => {
     
     return `
     <tr>
-      <td class="fw-600">${u.username}</td>
-      <td>${u.display_name}</td>
+      <td class="fw-600">${escapeHtml(u.username)}</td>
+      <td>${escapeHtml(u.display_name)}</td>
       <td>${u.role}</td>
       <td>
         <span class="badge ${u.is_active?'badge-active':'badge-inactive'}" style="margin-right:5px">${u.is_active?'Active':'Inactive'}</span>
@@ -4149,8 +4162,8 @@ window.renderUsersTable = async () => {
       </td>
       <td>
         <button class="btn btn-ghost btn-sm btn-icon" onclick="openUserForm(${u.id})" title="Edit User">✏️</button>
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="openResetStaffPasswordModal(${u.id}, '${u.display_name}')" title="Change / Set Password" style="color:var(--brand)">🔑</button>
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="deleteUser(${u.id}, '${u.display_name}')" title="Delete User" style="color:var(--danger)">🗑️</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="openResetStaffPasswordModal(${u.id}, ${jsArg(u.display_name)})" title="Change / Set Password" style="color:var(--brand)">🔑</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="deleteUser(${u.id}, ${jsArg(u.display_name)})" title="Delete User" style="color:var(--danger)">🗑️</button>
       </td>
     </tr>`;
   }).join('') || '<tr><td colspan="5" style="text-align:center">No users found</td></tr>';
@@ -4175,7 +4188,7 @@ window.openResetStaffPasswordModal = (userId, displayName) => {
   `;
   openModal(`Set Password — ${displayName}`, html, `
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-    <button class="btn btn-primary" onclick="saveStaffPassword(${userId}, '${displayName}')">Update Password</button>
+    <button class="btn btn-primary" onclick="saveStaffPassword(${userId}, ${jsArg(displayName)})">Update Password</button>
   `);
 };
 
@@ -4207,9 +4220,9 @@ window.openUserForm = async (id = null) => {
   const html = `
     <input type="hidden" id="f-usr-id" value="${id||''}">
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Username *</label><input class="form-input" id="f-usr-name" value="${u.username}" placeholder="e.g. cashier1"></div>
-      <div class="form-group"><label class="form-label">Password *</label><input class="form-input" type="password" id="f-usr-pass" value="${u.password}" placeholder="Assign password"></div>
-      <div class="form-group"><label class="form-label">Display Name *</label><input class="form-input" id="f-usr-disp" value="${u.display_name}" placeholder="e.g. Kasun Silva"></div>
+      <div class="form-group"><label class="form-label">Username *</label><input class="form-input" id="f-usr-name" value="${escapeHtml(u.username)}" placeholder="e.g. cashier1"></div>
+      <div class="form-group"><label class="form-label">Password *</label><input class="form-input" type="password" id="f-usr-pass" value="${escapeHtml(u.password)}" placeholder="Assign password"></div>
+      <div class="form-group"><label class="form-label">Display Name *</label><input class="form-input" id="f-usr-disp" value="${escapeHtml(u.display_name)}" placeholder="e.g. Kasun Silva"></div>
       <div class="form-group"><label class="form-label">Role</label><select class="form-input" id="f-usr-role" onchange="togglePayFields(this.value)"><option ${u.role==='Admin'?'selected':''}>Admin</option><option ${u.role==='Counter'?'selected':''}>Counter</option><option ${u.role==='Cashier'?'selected':''}>Cashier</option><option ${u.role==='HR'?'selected':''}>HR</option><option ${u.role==='Inventory'?'selected':''}>Inventory</option><option ${u.role==='Worker'?'selected':''}>Worker</option></select></div>
       <div id="pay-fields" style="grid-column: span 2; display: ${u.role==='Admin'?'none':'grid'}; grid-template-columns: 1fr 1fr; gap: 14px;">
         <div class="form-group">
@@ -4674,7 +4687,7 @@ window.renderAdvances = async () => {
     <tr>
       <td class="fw-600">${a.employee_name}</td>
       <td class="td-mono">${formatMoney(a.amount)}</td>
-      <td>${a.reason || '-'}</td>
+      <td>${escapeHtml(a.reason || '-')}</td>
       <td><span class="badge ${a.status==='PENDING'?'badge-pending':'badge-completed'}">${a.status}</span></td>
       <td>${a.date}</td>
       <td>
@@ -4701,7 +4714,7 @@ window.openAdvanceForm = async () => {
     <div class="form-group">
       <label class="form-label">Worker</label>
       <select class="form-input" id="adv-user-id">
-        ${users.map(u => `<option value="${u.id}">${u.display_name}</option>`).join('')}
+        ${users.map(u => `<option value="${u.id}">${escapeHtml(u.display_name)}</option>`).join('')}
       </select>
     </div>
     <div class="form-group" style="margin-top:15px">
@@ -4778,7 +4791,7 @@ window.renderAttendance = async () => {
     }
     return `
     <tr>
-      <td class="fw-600">${r.display_name}</td>
+      <td class="fw-600">${escapeHtml(r.display_name)}</td>
       <td>${r.date}</td>
       <td class="td-mono text-success">${r.clock_in ? new Date(r.clock_in).toLocaleTimeString() : '-'}</td>
       <td class="td-mono text-danger">${r.clock_out ? new Date(r.clock_out).toLocaleTimeString() : '-'}</td>
@@ -5375,7 +5388,7 @@ window.renderAIReports = async () => {
     topProductsTbody.innerHTML = data.topProducts.map((p, i) => `
       <tr>
         <td>#${i+1}</td>
-        <td class="fw-600">${p.name}</td>
+        <td class="fw-600">${escapeHtml(p.name)}</td>
         <td>${p.qty}</td>
         <td class="td-mono">${formatMoney(p.revenue)}</td>
       </tr>
@@ -5541,7 +5554,7 @@ function renderReportCharts(data) {
     type: 'line',
     data: {
       labels: trendLabels,
-      datasets: [{ label: 'Revenue', data: trendLabels.map(l => data.dailyRev[l]), borderColor: '#6366f1', tension: 0.3, fill: true, backgroundColor: 'rgba(99, 102, 241, 0.1)' }]
+      datasets: [{ label: 'Revenue', data: trendLabels.map(l => data.dailyRev[l]), borderColor: '#059669', tension: 0.3, fill: true, backgroundColor: 'rgba(5,150,105, 0.1)' }]
     },
     options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
   });
@@ -5552,7 +5565,7 @@ function renderReportCharts(data) {
     type: 'bar',
     data: {
       labels: Array.from({length: 24}, (_, i) => `${i}:00`),
-      datasets: [{ label: 'Transactions', data: data.hourlySales, backgroundColor: 'rgba(245, 158, 11, 0.8)' }]
+      datasets: [{ label: 'Transactions', data: data.hourlySales, backgroundColor: 'rgba(37, 99, 235, 0.8)' }]
     },
     options: { maintainAspectRatio: false, plugins: { legend: { display: false } } }
   });
@@ -5563,7 +5576,7 @@ function renderReportCharts(data) {
     type: 'doughnut',
     data: {
       labels: ['Cash', 'Card', 'Credit'],
-      datasets: [{ data: [data.payments.cash, data.payments.card, data.payments.credit], backgroundColor: ['#10b981', '#3b82f6', '#f59e0b'] }]
+      datasets: [{ data: [data.payments.cash, data.payments.card, data.payments.credit], backgroundColor: ['#059669', '#2563EB', '#F59E0B'] }]
     },
     options: { maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'bottom' } } }
   });
@@ -5574,7 +5587,7 @@ function renderReportCharts(data) {
     type: 'pie',
     data: {
       labels: ['New Customers', 'Repeat Customers'],
-      datasets: [{ data: [data.uniqueCustomers - data.repeatCount, data.repeatCount], backgroundColor: ['#6366f1', '#10b981'] }]
+      datasets: [{ data: [data.uniqueCustomers - data.repeatCount, data.repeatCount], backgroundColor: ['#059669', '#A7F3D0'] }]
     },
     options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
   });
@@ -6519,7 +6532,7 @@ function renderBizTemplates() {
     <div class="quick-action" onclick="applyTemplate('${t.name}')">
       <div class="qa-icon">${t.icon}</div>
       <div>
-        <div class="qa-text">${t.name} Template</div>
+        <div class="qa-text">${escapeHtml(t.name)} Template</div>
         <div class="qa-sub">Load sample products</div>
       </div>
     </div>
@@ -6743,8 +6756,8 @@ async function ensureZXingLibrary() {
   if (getZXingLibrary()) return getZXingLibrary();
 
   const scannerScripts = [
-    'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js',
-    'https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js'
+    'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js',
+    'https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js'
   ];
 
   setScannerStatus('Loading scanner library…');
@@ -7107,7 +7120,7 @@ window.printShiftReport = async (data) => {
         </div>
       `).join('')}
       <div style="height:1px; background:#000; margin:10px 0"></div>
-      ${data.notes ? `<div style="margin-top:5px"><b>Notes:</b><br>${data.notes}</div><div style="height:1px; background:#000; margin:10px 0"></div>` : ''}
+      ${data.notes ? `<div style="margin-top:5px"><b>Notes:</b><br>${escapeHtml(data.notes)}</div><div style="height:1px; background:#000; margin:10px 0"></div>` : ''}
       <div style="text-align:center; font-size:10px; margin-top:20px">Printed at ${new Date().toLocaleString()}</div>
     </div>
   `;
@@ -7239,7 +7252,7 @@ window.saRenderDashboard = async () => {
     <div class="sa-recent-item" style="cursor:pointer" onclick="saViewBusinessDetail('${o.id}')">
       <div class="sa-recent-icon">${(BUSINESS_TEMPLATES[o.business_type] || {icon:'🏪'}).icon || '🏪'}</div>
       <div class="sa-recent-text">
-        <div class="sa-recent-name">${o.name}</div>
+        <div class="sa-recent-name">${escapeHtml(o.name)}</div>
         <div class="sa-recent-meta">${o.business_type} · ${o.slug}</div>
       </div>
       <span class="sa-recent-badge ${o.is_active ? 'action-create' : 'action-delete'}">${o.is_active ? 'Active' : 'Inactive'}</span>
@@ -7299,16 +7312,16 @@ window.saRenderBusinesses = async () => {
     const d = o.created_at ? new Date(o.created_at) : new Date();
     rows.push(`
     <tr>
-      <td class="fw-600">${o.name}</td>
+      <td class="fw-600">${escapeHtml(o.name)}</td>
       <td>${o.business_type || 'General'}</td>
-      <td><code style="font-size:12px;background:var(--surface-3);padding:2px 6px;border-radius:4px">${o.slug}</code></td>
+      <td><code style="font-size:12px;background:var(--surface-3);padding:2px 6px;border-radius:4px">${escapeHtml(o.slug)}</code></td>
       <td><span class="badge badge-active">${(o.plan_id || 'free').toUpperCase()}</span></td>
       <td>${stats.users || 0}</td>
       <td><span class="badge ${o.is_active ? 'badge-active' : 'badge-inactive'}">${o.is_active ? 'Active' : 'Inactive'}</span></td>
       <td style="font-size:12px">${d.toLocaleDateString()}</td>
       <td>
         <button class="btn btn-ghost btn-sm btn-icon" onclick="saViewBusinessDetail('${o.id}')" title="View">👁️</button>
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="saQuickImpersonate('${o.id}','${(o.name||'').replace(/'/g, "\\'")}')" title="Enter POS">🔑</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="saQuickImpersonate('${o.id}',${jsArg(o.name||'')})" title="Enter POS">🔑</button>
       </td>
     </tr>`);
   }
@@ -7415,13 +7428,13 @@ window.saViewBusinessDetail = async (orgId) => {
   // Info
   document.getElementById('sa-detail-info').innerHTML = `
     <div class="sa-info-grid">
-      <div class="sa-info-label">Name</div><div class="sa-info-value">${org.name}</div>
-      <div class="sa-info-label">Code</div><div class="sa-info-value"><code>${org.slug}</code></div>
+      <div class="sa-info-label">Name</div><div class="sa-info-value">${escapeHtml(org.name)}</div>
+      <div class="sa-info-label">Code</div><div class="sa-info-value"><code>${escapeHtml(org.slug)}</code></div>
       <div class="sa-info-label">Type</div><div class="sa-info-value">${org.business_type}</div>
       <div class="sa-info-label">Currency</div><div class="sa-info-value">${org.currency}</div>
       <div class="sa-info-label">Tax Rate</div><div class="sa-info-value">${org.tax_rate || 0}%</div>
-      <div class="sa-info-label">Phone</div><div class="sa-info-value">${org.phone || '—'}</div>
-      <div class="sa-info-label">Address</div><div class="sa-info-value">${org.address || '—'}</div>
+      <div class="sa-info-label">Phone</div><div class="sa-info-value">${escapeHtml(org.phone || '—')}</div>
+      <div class="sa-info-label">Address</div><div class="sa-info-value">${escapeHtml(org.address || '—')}</div>
       <div class="sa-info-label">Plan</div><div class="sa-info-value"><span class="badge badge-active">${(org.plan_id || 'free').toUpperCase()}</span></div>
       <div class="sa-info-label">Status</div><div class="sa-info-value"><span class="badge ${org.is_active ? 'badge-active' : 'badge-inactive'}">${org.is_active ? 'Active' : 'Inactive'}</span></div>
       <div class="sa-info-label">Created</div><div class="sa-info-value">${new Date(org.created_at).toLocaleDateString()}</div>
@@ -7436,10 +7449,10 @@ window.saViewBusinessDetail = async (orgId) => {
     <div class="sa-user-item">
       <div class="sa-user-avatar">${u.display_name.charAt(0).toUpperCase()}</div>
       <div style="flex:1">
-        <div class="fw-600">${u.display_name}</div>
-        <div style="font-size:11px;color:var(--text-muted)">${u.username} · ${u.role}</div>
+        <div class="fw-600">${escapeHtml(u.display_name)}</div>
+        <div style="font-size:11px;color:var(--text-muted)">${escapeHtml(u.username)} · ${u.role}</div>
       </div>
-      <button class="btn btn-ghost btn-sm btn-icon" onclick="saResetUserPassword(${u.id}, '${u.display_name}')" title="Reset User Password" style="color:var(--brand); margin-right:8px">🔑</button>
+      <button class="btn btn-ghost btn-sm btn-icon" onclick="saResetUserPassword(${u.id}, ${jsArg(u.display_name)})" title="Reset User Password" style="color:var(--brand); margin-right:8px">🔑</button>
       <span class="badge ${u.is_active ? 'badge-active' : 'badge-inactive'}">${u.is_active ? 'Active' : 'Inactive'}</span>
     </div>
   `).join('') : '<div style="color:var(--text-muted); padding:12px">No users</div>';
@@ -7464,16 +7477,16 @@ window.saEditBusiness = async () => {
 
   const html = `
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Business Name</label><input class="form-input" id="sa-edit-name" value="${org.name}"></div>
+      <div class="form-group"><label class="form-label">Business Name</label><input class="form-input" id="sa-edit-name" value="${escapeHtml(org.name)}"></div>
       <div class="form-group"><label class="form-label">Business Type</label>
         <select class="form-input" id="sa-edit-type">
           ${['Retail Shop','Grocery Store','Bookshop','Meat Shop','Bakery','Pharmacy','Hardware Store','Restaurant','Electronics Store','Clothing Store','Other'].map(t => `<option ${org.business_type === t ? 'selected' : ''}>${t}</option>`).join('')}
         </select>
       </div>
-      <div class="form-group"><label class="form-label">Currency</label><input class="form-input" id="sa-edit-currency" value="${org.currency}"></div>
+      <div class="form-group"><label class="form-label">Currency</label><input class="form-input" id="sa-edit-currency" value="${escapeHtml(org.currency)}"></div>
       <div class="form-group"><label class="form-label">Tax Rate (%)</label><input class="form-input" type="number" id="sa-edit-tax" value="${org.tax_rate || 0}" step="0.1"></div>
-      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="sa-edit-phone" value="${org.phone || ''}"></div>
-      <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="sa-edit-address" value="${org.address || ''}"></div>
+      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="sa-edit-phone" value="${escapeHtml(org.phone || '')}"></div>
+      <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="sa-edit-address" value="${escapeHtml(org.address || '')}"></div>
       <div class="form-group"><label class="form-label">Plan</label>
         <select class="form-input" id="sa-edit-plan">
           <option value="free" ${org.plan_id==='free'?'selected':''}>Free</option>
@@ -7561,7 +7574,7 @@ window.saResetUserPassword = (userId, displayName) => {
   `;
   openModal(`Reset Password — ${displayName}`, html, `
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-    <button class="btn btn-primary" onclick="saDoResetUserPassword(${userId}, '${displayName}')">Update Password</button>
+    <button class="btn btn-primary" onclick="saDoResetUserPassword(${userId}, ${jsArg(displayName)})">Update Password</button>
   `);
 };
 
@@ -7629,7 +7642,7 @@ async function saDoImpersonate(org) {
   document.getElementById('nav-sales').style.display = 'block';
   document.getElementById('nav-hr').style.display = 'block';
   document.getElementById('nav-system').style.display = 'block';
-  document.getElementById('nav-payroll-item').style.display = 'block';
+  document.getElementById('nav-payroll-item').style.display = '';
 
   // Hide SA screens
   document.querySelectorAll('.sa-screen').forEach(s => s.classList.remove('active'));
@@ -7656,7 +7669,7 @@ window.exitImpersonation = () => {
   document.getElementById('impersonation-banner').style.display = 'none';
 
   // Restore SA topbar
-  document.getElementById('user-avatar').textContent = '⚡';
+  document.getElementById('user-avatar').textContent = 'SA';
   document.getElementById('user-name').textContent = superAdminUser.display_name;
   document.getElementById('role-badge').textContent = 'Super Admin';
 
@@ -7702,7 +7715,7 @@ window.saRenderPlans = async () => {
     const features = typeof p.features === 'string' ? JSON.parse(p.features) : p.features;
     return `
     <div class="sa-plan-card ${i === 2 ? 'plan-featured' : ''}">
-      <div class="sa-plan-name">${p.name}</div>
+      <div class="sa-plan-name">${escapeHtml(p.name)}</div>
       <div class="sa-plan-price">Rs. ${Number(p.price_monthly).toLocaleString()}<span>/month</span></div>
       <ul class="sa-plan-features">
         <li>Up to ${p.max_users} users</li>
@@ -7809,7 +7822,7 @@ window.saRenderAiHub = async () => {
   if (bizSelect) {
     let opts = '<option value="all">🌐 All Businesses (Platform Macro View)</option>';
     orgs.forEach(o => {
-      opts += `<option value="${o.id}">${o.name} (${o.slug})</option>`;
+      opts += `<option value="${o.id}">${escapeHtml(o.name)} (${o.slug})</option>`;
     });
     bizSelect.innerHTML = opts;
   }
@@ -8169,9 +8182,9 @@ window.saCopyAiReport = () => {
           showToast('info', `🚀 New NexPOS v${update.version} update found! Downloading in background...`);
         } else if (update.status === 'downloading') {
           // Update badge if available
-          if (badge) badge.textContent = `⚡ Updating ${update.percent}%`;
+          if (badge) badge.textContent = `Updating ${update.percent}%`;
         } else if (update.status === 'downloaded') {
-          if (badge) badge.textContent = `⚡ Restart to update (v${update.version})`;
+          if (badge) badge.textContent = `Restart to update (v${update.version})`;
           showToast('success', `✅ NexPOS v${update.version} is ready! Restart to apply update.`);
         }
       });
@@ -8370,9 +8383,9 @@ window.openTablePickerModal = () => {
         const subtotal = hasOrder ? activeTableOrders[t.id].items.reduce((s, i) => s + (i.unit_price * i.quantity), 0) : 0;
         const isSelected = t.id === currentTableId;
         return `
-          <div class="card" onclick="selectTable('${t.id}')" style="cursor:pointer; padding:12px; border:2px solid ${isSelected ? 'var(--brand)' : (hasOrder ? 'rgba(245,158,11,0.6)' : 'var(--border)')}; background:${isSelected ? 'rgba(99,102,241,0.06)' : (hasOrder ? 'rgba(245,158,11,0.04)' : 'var(--surface)')}; border-radius:10px; text-align:center; transition:all 0.15s">
+          <div class="card" onclick="selectTable('${t.id}')" style="cursor:pointer; padding:12px; border:2px solid ${isSelected ? 'var(--brand)' : (hasOrder ? 'rgba(245,158,11,0.6)' : 'var(--border)')}; background:${isSelected ? 'rgba(24,24,27,0.06)' : (hasOrder ? 'rgba(245,158,11,0.04)' : 'var(--surface)')}; border-radius:10px; text-align:center; transition:all 0.15s">
             <div style="font-size:20px; margin-bottom:4px">${hasOrder ? '🍽️' : '🪑'}</div>
-            <div style="font-weight:700; font-size:14px; color:var(--text-primary)">${t.name}</div>
+            <div style="font-weight:700; font-size:14px; color:var(--text-primary)">${escapeHtml(t.name)}</div>
             <div style="font-size:11px; color:var(--text-muted)">${t.seats} Seats</div>
             <div style="margin-top:6px">
               <span class="badge ${hasOrder ? 'badge-warning' : 'badge-completed'}" style="font-size:9.5px">
@@ -8427,7 +8440,7 @@ window.openItemNoteModal = (idx) => {
 
   const html = `
     <div style="margin-bottom:12px">
-      <div style="font-weight:700; font-size:15px; color:var(--text-primary)">${item.name}</div>
+      <div style="font-weight:700; font-size:15px; color:var(--text-primary)">${escapeHtml(item.name)}</div>
       <div style="font-size:12px; color:var(--text-muted)">Add specific kitchen preparation notes for the chef:</div>
     </div>
     <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px">
@@ -8439,7 +8452,7 @@ window.openItemNoteModal = (idx) => {
     </div>
     <div class="form-group">
       <label class="form-label">Special Cooking Instruction</label>
-      <input class="form-input" id="item-note-input" value="${item.notes || ''}" placeholder="e.g. No spicy, extra gravy, pack separately" autocomplete="off">
+      <input class="form-input" id="item-note-input" value="${escapeHtml(item.notes || '')}" placeholder="e.g. No spicy, extra gravy, pack separately" autocomplete="off">
     </div>
   `;
 
@@ -8601,7 +8614,7 @@ window.showKotReceipt = (kot) => {
           <tr>
             <td style="padding:6px 0; vertical-align:top; font-size:15px; font-weight:900">[ ${i.quantity}x ]</td>
             <td style="padding:6px 0; vertical-align:top">
-              <div style="font-size:14px; font-weight:700">${i.name}</div>
+              <div style="font-size:14px; font-weight:700">${escapeHtml(i.name)}</div>
               ${i.notes ? `
                 <div class="thermal-invert" style="margin-top:2px; font-size:12px; font-weight:800; background:#000; color:#fff; display:inline-block; padding:1px 5px; border-radius:2px">
                   * ${i.notes.toUpperCase()} *
@@ -8706,8 +8719,8 @@ window.renderKOTScreen = () => {
             <div class="kot-item-row ${it.is_done ? 'is-done' : ''}" onclick="toggleKotItemDone('${k.id}', ${itemIdx})">
               <div class="kot-item-qty">${it.quantity}x</div>
               <div class="kot-item-info">
-                <div class="kot-item-name">${it.name}</div>
-                ${it.notes ? `<div class="kot-item-instruction"><i class="fa-solid fa-triangle-exclamation" style="font-size:9px"></i> ${it.notes}</div>` : ''}
+                <div class="kot-item-name">${escapeHtml(it.name)}</div>
+                ${it.notes ? `<div class="kot-item-instruction"><i class="fa-solid fa-triangle-exclamation" style="font-size:9px"></i> ${escapeHtml(it.notes)}</div>` : ''}
               </div>
               <input type="checkbox" ${it.is_done ? 'checked' : ''} style="cursor:pointer; transform:scale(1.2)" onclick="event.stopPropagation(); toggleKotItemDone('${k.id}', ${itemIdx})">
             </div>
@@ -8974,7 +8987,7 @@ window.renderTablesScreen = () => {
         <div class="table-top">
           <div class="table-name">
             <span>${isOccupied ? '🍽️' : '🪑'}</span>
-            <span>${t.name}</span>
+            <span>${escapeHtml(t.name)}</span>
           </div>
           <div style="display:flex; align-items:center; gap:6px">
             <span class="table-status-pill ${isOccupied ? 'table-status-occupied' : 'table-status-vacant'}">
@@ -9043,7 +9056,7 @@ window.openTableDetails = (tableId) => {
   const html = `
     <div style="margin-bottom:14px">
       <div style="display:flex; justify-content:space-between; align-items:center">
-        <h3 style="margin:0">${t.name} (${t.seats} Seats)</h3>
+        <h3 style="margin:0">${escapeHtml(t.name)} (${t.seats} Seats)</h3>
         <span class="badge badge-warning">Occupied</span>
       </div>
       <div style="font-size:12px; color:var(--text-muted); margin-top:2px">
@@ -9054,7 +9067,7 @@ window.openTableDetails = (tableId) => {
       ${ord.items.map(it => `
         <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--surface-3); font-size:13px">
           <div>
-            <strong>${it.quantity}x</strong> ${it.name}
+            <strong>${it.quantity}x</strong> ${escapeHtml(it.name)}
             ${it.notes ? `<div style="font-size:11px; color:#b45309">Note: ${it.notes}</div>` : ''}
           </div>
           <div style="font-weight:700">${formatMoney(it.quantity * it.unit_price)}</div>
@@ -9174,7 +9187,7 @@ window.openEditTableModal = (tableId) => {
     <div class="form-grid">
       <div class="form-group" style="grid-column:span 2">
         <label class="form-label">Table Name *</label>
-        <input class="form-input" id="edit-tbl-name" value="${t.name}" placeholder="e.g. Table 1, VIP 2" autocomplete="off">
+        <input class="form-input" id="edit-tbl-name" value="${escapeHtml(t.name)}" placeholder="e.g. Table 1, VIP 2" autocomplete="off">
       </div>
       <div class="form-group" style="grid-column:span 2">
         <label class="form-label">Guest Seating Capacity</label>
@@ -9283,7 +9296,7 @@ window.openTableManagerModal = () => {
             <div style="display:flex; align-items:center; gap:12px">
               <span style="font-size:20px">${isOccupied ? '🍽️' : '🪑'}</span>
               <div>
-                <div style="font-weight:700; font-size:14px; color:var(--text-primary)">${t.name}</div>
+                <div style="font-weight:700; font-size:14px; color:var(--text-primary)">${escapeHtml(t.name)}</div>
                 <div style="font-size:11.5px; color:var(--text-muted)">
                   <i class="fa-solid fa-users"></i> ${t.seats} Seats · 
                   <span class="${isOccupied ? 'badge badge-warning' : 'badge badge-completed'}" style="font-size:10px; padding:1px 6px">
@@ -9357,8 +9370,8 @@ window.renderRestaurantSettingsUI = () => {
   if (tablesList) {
     tablesList.innerHTML = restaurantTables.map(t => `
       <span class="table-config-pill">
-        <i class="fa-solid fa-chair" style="color:var(--brand)"></i> ${t.name} (${t.seats}s)
-        <button type="button" class="table-config-del" onclick="removeConfigTable('${t.id}')" title="Delete table">✕</button>
+        <i class="fa-solid fa-chair" style="color:var(--brand)"></i> ${escapeHtml(t.name)} (${t.seats}s)
+        <button type="button" class="table-config-del" onclick="removeConfigTable('${t.id}')" title="Delete table" aria-label="Delete table"><i class="fa-solid fa-xmark"></i></button>
       </span>
     `).join('');
   }
