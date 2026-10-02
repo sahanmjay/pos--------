@@ -499,6 +499,8 @@ const db = {
   salesSupportsBillNo,
   // Whether public.products can mark kitchen ingredients
   productsSupportItemType,
+  // Whether public.products can hold a dish's recipe
+  productsSupportRecipe,
   // Whether public.sale_items can store the cost at the moment of sale
   saleItemsSupportCost,
   // Whether public.payroll can record which basis a payslip was paid on
@@ -845,6 +847,22 @@ async function productsSupportItemType() {
     return true; // network hiccup, not a missing column
   }
   return _itemTypeSupported;
+}
+
+// products.recipe arrives with saas-migration.sql. A product update carrying an
+// unknown column is rejected whole, so recipes are only written once confirmed.
+let _recipeSupported = null;
+async function productsSupportRecipe() {
+  if (_recipeSupported !== null) return _recipeSupported;
+  if (isOffline()) return false;
+  try {
+    const { error } = await supa.from('products').select('recipe').limit(1);
+    _recipeSupported = !error;
+    if (error) console.warn('[recipe] Column not present on products — run saas-migration.sql.');
+  } catch (e) {
+    return false;
+  }
+  return _recipeSupported;
 }
 
 let _billNoSupported = null;

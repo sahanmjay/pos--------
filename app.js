@@ -2417,8 +2417,7 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     // ─── BACKGROUND LOCAL UPDATES (Zero UI Lag) ───
     runInBackground('Post-sale database update', async () => {
       const saleRef = `Bill #${sale.bill_no || saleId}`;
-      await Promise.all(checkoutCart.map(item =>
-        moveStock(item.product_id, -item.quantity, { type: 'sale', reference: saleRef })));
+      await returnStock(checkoutCart.map(item => ({ product_id: item.product_id, qty: -item.quantity })), saleRef);
       // Sent once the stock is written; SALE_COMPLETED goes out before it
       broadcastRealtimeEvent('STOCK_UPDATED', {});
 
@@ -3019,7 +3018,20 @@ window.openProductForm = async (id = null) => {
   if(id) { p = await db.products.get(id); }
   
   const cats = await db.categories.toArray();
-  
+
+  // Recipe: which ingredients one of this dish uses, taken off stock on each sale
+  recipeIngredients = (await db.products.toArray())
+    .filter(x => isIngredient(x) && x.is_active !== false)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const showRecipe = !isIngredient(p) && recipeIngredients.length && (await db.productsSupportRecipe());
+  const recipeHtml = !showRecipe ? '' : `
+    <div class="form-group" style="margin-top:14px">
+      <label class="form-label">Recipe — used for 1 of this item</label>
+      <div id="recipe-rows" style="display:grid; gap:8px">${productRecipe(p).map(recipeRowHtml).join('')}</div>
+      <button type="button" class="btn btn-ghost btn-sm" style="justify-self:start; margin-top:6px" onclick="addRecipeRow()">+ Add ingredient</button>
+      <div class="text-muted" style="font-size:12px; margin-top:4px">Each sale takes these amounts off kitchen stock.</div>
+    </div>`;
+
   const html = `
     <input type="hidden" id="f-prod-id" value="${id||''}">
     <div class="form-grid">
@@ -3045,6 +3057,7 @@ window.openProductForm = async (id = null) => {
         <select class="form-input" id="f-prod-active"><option value="true" ${p.is_active?'selected':''}>Active</option><option value="false" ${!p.is_active?'selected':''}>Inactive</option></select>
       </div>
     </div>
+    ${recipeHtml}
   `;
   openModal(id?'Edit Product':'New Product', html, `
     ${id ? `<button class="btn btn-ghost danger-action" onclick="deleteProduct(${id})" style="margin-right:auto">Delete</button>` : ''}
@@ -3057,6 +3070,28 @@ window.openProductForm = async (id = null) => {
     const field = document.getElementById(id ? 'f-prod-name' : 'f-prod-barcode');
     if (field) field.focus();
   }, 100);
+};
+
+let recipeIngredients = [];
+
+function recipeRowHtml(r = {}) {
+  const unitOf = id => (recipeIngredients.find(x => x.id == id) || recipeIngredients[0] || {}).unit || '';
+  return `
+    <div class="recipe-row" style="display:grid; grid-template-columns:minmax(0,1fr) 110px auto; gap:6px; align-items:center">
+      <select class="form-input recipe-ing" aria-label="Ingredient"
+        onchange="this.closest('.recipe-row').querySelector('.recipe-unit').textContent = this.selectedOptions[0].dataset.unit">
+        ${recipeIngredients.map(x => `<option value="${x.id}" data-unit="${escapeHtml(x.unit || '')}" ${x.id == r.product_id ? 'selected' : ''}>${escapeHtml(x.name)}</option>`).join('')}
+      </select>
+      <div style="display:flex; align-items:center; gap:4px">
+        <input class="form-input recipe-qty" type="number" step="any" min="0" value="${r.qty || ''}" placeholder="0" aria-label="Amount">
+        <span class="recipe-unit text-muted" style="font-size:12px">${escapeHtml(unitOf(r.product_id))}</span>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm btn-icon" onclick="this.closest('.recipe-row').remove()" title="Remove" aria-label="Remove ingredient"><i class="fa-solid fa-xmark"></i></button>
+    </div>`;
+}
+
+window.addRecipeRow = () => {
+  document.getElementById('recipe-rows')?.insertAdjacentHTML('beforeend', recipeRowHtml());
 };
 
 window.saveProduct = async () => {
@@ -3076,6 +3111,17 @@ window.saveProduct = async () => {
   if (stockInput) {
     p.unit = document.getElementById('f-prod-unit').value || 'pcs';
     p.low_stock_threshold = parseFloat(document.getElementById('f-prod-low').value)||5;
+  }
+
+  // Only on the form when products.recipe exists; one row per ingredient
+  if (document.getElementById('recipe-rows')) {
+    const totals = new Map();
+    document.querySelectorAll('.recipe-row').forEach(row => {
+      const ing = Number(row.querySelector('.recipe-ing').value);
+      const qty = parseFloat(row.querySelector('.recipe-qty').value);
+      if (ing && qty > 0) totals.set(ing, (totals.get(ing) || 0) + qty);
+    });
+    p.recipe = [...totals].map(([product_id, qty]) => ({ product_id, qty }));
   }
 
   if(!p.name) return showToast('error', 'Name is required');
@@ -3615,10 +3661,35 @@ function saleTaxRate(sale) {
 }
 
 // Puts stock back on the shelf. Positive qty returns units, negative takes more.
+// Also the path for sales (negative qty). A dish with a recipe moves its
+// ingredients too.
 async function returnStock(lines, reference = '') {
-  for (const l of lines) {
+  for (const l of await withRecipeIngredients(lines)) {
     await moveStock(l.product_id, l.qty, { type: l.qty > 0 ? 'return' : 'sale', reference });
   }
+}
+
+function productRecipe(p) {
+  let r = p && p.recipe;
+  if (typeof r === 'string') { try { r = JSON.parse(r); } catch (e) { r = []; } }
+  return Array.isArray(r) ? r.filter(x => x && x.product_id && Number(x.qty) > 0) : [];
+}
+
+// Adds each dish's ingredients (recipe qty × plates) and merges lines for the
+// same product, so two dishes using rice make one stock write, not two racing.
+// Uses today's recipe, so a bill edited after a recipe change moves the new amounts.
+async function withRecipeIngredients(lines) {
+  const products = new Map((await db.products.toArray()).map(p => [Number(p.id), p]));
+  const totals = new Map();
+  const add = (id, qty) => {
+    if (!id || !qty) return;
+    totals.set(Number(id), (totals.get(Number(id)) || 0) + qty);
+  };
+  for (const l of lines) {
+    add(l.product_id, l.qty);
+    for (const r of productRecipe(products.get(Number(l.product_id)))) add(r.product_id, Number(r.qty) * l.qty);
+  }
+  return [...totals].map(([product_id, qty]) => ({ product_id, qty: Number(qty.toFixed(3)) }));
 }
 
 // Credit sales sit on the customer's balance; any change to the total has to

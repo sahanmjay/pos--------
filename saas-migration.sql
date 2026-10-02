@@ -207,6 +207,8 @@ CREATE INDEX IF NOT EXISTS stock_movements_org_date_idx ON public.stock_movement
 
 -- 'menu' is sold on the POS; 'ingredient' is kitchen stock that is bought and used
 ALTER TABLE public.products ADD COLUMN IF NOT EXISTS item_type TEXT DEFAULT 'menu';
+-- A dish's recipe: [{ "product_id": <ingredient id>, "qty": <amount per plate> }]
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS recipe JSONB DEFAULT '[]'::jsonb;
 
 -- Staff can be paid hourly, daily or on a fixed monthly salary
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS pay_basis TEXT DEFAULT 'hourly';
