@@ -6582,9 +6582,26 @@ window.applyTemplate = async (name) => {
 
 // --- MOBILE & SCANNING HELPERS ---
 
-window.toggleMobileCart = () => {
-  document.getElementById('pos-cart-wrap').classList.toggle('active');
+window.toggleMobileCart = (force) => {
+  const wrap = document.getElementById('pos-cart-wrap');
+  const open = wrap.classList.toggle('active', force);
+  // Phone back button closes the sheet instead of leaving the app
+  if (open && history.state?.cartSheet !== true) history.pushState({ cartSheet: true }, '');
+  else if (!open && history.state?.cartSheet === true) history.back();
 };
+
+window.addEventListener('popstate', () => {
+  document.getElementById('pos-cart-wrap')?.classList.remove('active');
+});
+
+// Tapping the products peeking above the sheet closes it
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('pos-cart-wrap');
+  if (!wrap?.classList.contains('active') || !window.matchMedia('(max-width: 640px)').matches) return;
+  if (wrap.contains(e.target) || e.target.closest('#cart-fab, .modal-overlay, .modal')) return;
+  e.preventDefault(); e.stopPropagation();
+  toggleMobileCart(false);
+}, true);
 
 window.toggleSidebarReveal = (force) => {
   const sidebar = document.getElementById('sidebar');

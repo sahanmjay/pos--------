@@ -731,6 +731,7 @@ input, select, textarea, button { font-family: inherit; }
 .pos-cart-wrap { flex: 0 0 384px; min-width: 0; }
 .pos-cart-panel { width: 100%; height: 100%; border-left: 1px solid var(--g3); background: var(--g0); display: flex; flex-direction: column; }
 .cart-header { padding: 16px 18px 12px; display: flex; justify-content: space-between; align-items: center; background: var(--g0); }
+.cart-close-btn { display: none; }
 .cart-header .eyebrow { display: none; }
 .cart-header h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; line-height: 1.3; }
 .cart-header h3 i { color: var(--brand); font-size: 15px; }
@@ -1223,6 +1224,7 @@ input, select, textarea, button { font-family: inherit; }
     border-radius: 20px 20px 0 0; flex-basis: unset;
   }
   .pos-cart-wrap.active { transform: translateY(0); }
+  .cart-close-btn { display: inline-flex; font-size: 18px; }
   .pos-cart-panel { position: static; height: 100%; border-radius: 20px 20px 0 0; border-left: 0; border-top: 1px solid var(--g3); box-shadow: 0 -12px 40px rgba(24,24,27,0.18); overflow: hidden; }
   .pos-cart-panel::before { content: ""; display: block; width: 36px; height: 4px; border-radius: 4px; background: var(--g4); margin: 8px auto 0; flex: 0 0 auto; }
 

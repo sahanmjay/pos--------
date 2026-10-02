@@ -616,7 +616,10 @@
                 <div>
                   <h3 id="cart-heading"><i class="fa-solid fa-receipt"></i> Current Order</h3>
                 </div>
-                <button class="btn btn-ghost btn-sm" onclick="clearCart()" title="Clear Cart"><i class="fa-regular fa-trash-can"></i> Clear</button>
+                <div style="display:flex; gap:4px">
+                  <button class="btn btn-ghost btn-sm" onclick="clearCart()" title="Clear Cart"><i class="fa-regular fa-trash-can"></i> Clear</button>
+                  <button class="btn btn-ghost btn-sm cart-close-btn" onclick="toggleMobileCart(false)" title="Back to products" aria-label="Close cart"><i class="fa-solid fa-xmark"></i></button>
+                </div>
               </div>
               <div class="pos-dining-bar restaurant-only" id="pos-dining-bar" style="display:none; padding:10px 14px; background:var(--surface-2); border-bottom:1px solid var(--border)">
                 <div class="dining-type-selector">
