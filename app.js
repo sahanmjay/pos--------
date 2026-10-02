@@ -2989,7 +2989,13 @@ window.renderProductsTable = async () => {
   catSel.innerHTML = '<option value="">All Categories</option>' + cats.map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('');
   catSel.value = currVal;
   
-  let products = (await db.products.toArray()).filter(p => !isIngredient(p));
+  const all = await db.products.toArray();
+  const byId = new Map(all.map(x => [Number(x.id), x]));
+  const recipeText = p => productRecipe(p).map(r => {
+    const ing = byId.get(Number(r.product_id));
+    return ing ? `${escapeHtml(ing.name)} ${escapeHtml(qtyText(r.qty, ing.unit))}` : '';
+  }).filter(Boolean).join(' · ');
+  let products = all.filter(p => !isIngredient(p));
   const term = document.getElementById('product-search').value.toLowerCase();
 
   if(currVal) products = products.filter(p => p.category === currVal);
@@ -2997,7 +3003,7 @@ window.renderProductsTable = async () => {
   
   document.getElementById('products-tbody').innerHTML = products.map(p => `
     <tr>
-      <td class="fw-600">${escapeHtml(p.name)}</td>
+      <td class="fw-600">${escapeHtml(p.name)}${recipeText(p) ? `<div class="text-muted" style="font-size:12px;font-weight:400;margin-top:2px">${recipeText(p)}</div>` : ''}</td>
       <td class="td-mono">${escapeHtml(p.sku)}</td>
       <td>${escapeHtml(p.category)}</td>
       <td class="td-mono">${formatMoney(p.retail_price)}</td>
@@ -3023,13 +3029,26 @@ window.openProductForm = async (id = null) => {
   recipeIngredients = (await db.products.toArray())
     .filter(x => isIngredient(x) && x.is_active !== false)
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  const showRecipe = !isIngredient(p) && recipeIngredients.length && (await db.productsSupportRecipe());
-  const recipeHtml = !showRecipe ? '' : `
-    <div class="form-group" style="margin-top:14px">
-      <label class="form-label">Recipe — used for 1 of this item</label>
+  // Always shown for menu items; when something is missing, say what instead of hiding
+  let recipeBody;
+  if (isOffline()) {
+    recipeBody = `<div class="text-muted" style="font-size:12.5px">Connect to the internet to edit the recipe.</div>`;
+  } else if (!(await db.productsSupportRecipe())) {
+    recipeBody = `<div class="text-muted" style="font-size:12.5px">One-time setup needed. In Supabase, open <b>SQL Editor</b>, run this line, then refresh:<br>
+      <code style="user-select:all">ALTER TABLE public.products ADD COLUMN IF NOT EXISTS recipe JSONB DEFAULT '[]'::jsonb;</code></div>`;
+  } else if (!recipeIngredients.length) {
+    recipeBody = `<div class="text-muted" style="font-size:12.5px">No ingredients yet. Add rice, chicken, oil and so on in Kitchen Stock first.</div>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="closeModal(); nav('stock'); openIngredientForm()">+ Add ingredient to Kitchen Stock</button>`;
+  } else {
+    recipeBody = `
       <div id="recipe-rows" style="display:grid; gap:8px">${productRecipe(p).map(recipeRowHtml).join('')}</div>
-      <button type="button" class="btn btn-ghost btn-sm" style="justify-self:start; margin-top:6px" onclick="addRecipeRow()">+ Add ingredient</button>
-      <div class="text-muted" style="font-size:12px; margin-top:4px">Each sale takes these amounts off kitchen stock.</div>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="addRecipeRow()">+ Add ingredient</button>
+      <div class="text-muted" style="font-size:12px; margin-top:6px">Each sale takes these amounts off kitchen stock.</div>`;
+  }
+  const recipeHtml = isIngredient(p) ? '' : `
+    <div class="form-group" style="margin-top:16px; padding-top:14px; border-top:1px solid var(--border)">
+      <label class="form-label">Recipe — ingredients used for 1 of this item</label>
+      ${recipeBody}
     </div>`;
 
   const html = `
