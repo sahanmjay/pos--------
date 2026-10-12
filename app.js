@@ -464,11 +464,12 @@ async function loadSettings() {
     if (!currentSettings.receipt_autoprint) currentSettings.receipt_autoprint = 'true';
     if (!currentSettings.biz_logo) currentSettings.biz_logo = '';
 
-    // Self-Healing: Verify and sync active organization with cloud
+    // Self-Healing: Verify and sync active organization with cloud.
+    // An empty catalogue is left empty: a business's menu only ever comes
+    // from what it adds itself, never from a built-in sample.
     if (db.currentOrgId && !isSuperAdmin && supa && !isOffline()) {
       try {
-        let activeOrg = org;
-        if (!activeOrg) {
+        if (!org) {
           const candidateName = currentSettings.biz_name || (currentUser && (currentUser.display_name || currentUser.username)) || '';
           if (candidateName) {
             const { data: matched } = await supa.from('organizations').select('*').ilike('name', candidateName).maybeSingle();
@@ -476,18 +477,8 @@ async function loadSettings() {
               console.log(`[Self-Healing] Re-linked local org ${db.currentOrgId} to cloud org ${matched.id} (${matched.name})`);
               db.currentOrgId = matched.id;
               if (currentUser) currentUser.organization_id = matched.id;
-              activeOrg = matched;
             }
           }
-        }
-        
-        // If store currently has 0 products and 0 categories, auto-seed starter template
-        const prodCount = await db.products.count();
-        const catCount = await db.categories.count();
-        if (prodCount === 0 && catCount === 0) {
-          const typeToSeed = (activeOrg && activeOrg.business_type) || currentSettings.biz_type || 'Restaurant';
-          console.log(`[Self-Healing] Auto-populating initial catalogue for ${typeToSeed}...`);
-          await loadBusinessTemplate(typeToSeed);
         }
       } catch (healErr) {
         console.warn('[Self-Healing] Org check notice:', healErr);
@@ -1075,7 +1066,7 @@ function nav(screenId) {
   document.getElementById('breadcrumb').innerHTML = bc;
   
   // Call init function for screen
-  if(screenId === 'pos') { renderPosCategories(); refreshPosGrid(); refreshHeldBillsCount(); }
+  if(screenId === 'pos') { posCategory = posDefaultTab(); renderPosCategories(); refreshPosGrid(); refreshHeldBillsCount(); }
   if(screenId === 'dashboard') initDashboard();
   if(screenId === 'kot') renderKOTScreen();
   if(screenId === 'tables') renderTablesScreen();
@@ -1329,14 +1320,26 @@ async function renderPosCategories() {
   drawPosCategories();
 }
 
+// Items marked ★ in Products. The tab only shows once at least one is marked.
+const POPULAR_TAB = '__popular__';
+const isPopularItem = p => p.is_popular === true && p.is_active !== false && !isIngredient(p);
+// Settings → "Till opens on" decides where the till starts
+const posDefaultTab = () => currentSettings.pos_default_tab === 'popular' ? POPULAR_TAB : '';
+
 // Redraws the pills from the last download, so a category tap highlights instantly
 function drawPosCategories() {
   const cats = posCats;
-  if (posCategory !== '' && !cats.find(c => c.name === posCategory)) {
+  const hasPopular = (posProducts || []).some(isPopularItem);
+  if (posCategory === POPULAR_TAB) {
+    if (posProducts && !hasPopular) posCategory = ''; // nothing marked (any more)
+  } else if (posCategory !== '' && !cats.find(c => c.name === posCategory)) {
     posCategory = '';
   }
-  
-  let html = `<div class="cat-pill ${posCategory===''?'active':''}" onclick="setPosCategory('')">All</div>`;
+
+  let html = hasPopular
+    ? `<div class="cat-pill cat-pill-popular ${posCategory===POPULAR_TAB?'active':''}" onclick="setPosCategory('${POPULAR_TAB}')"><i class="fa-solid fa-star" aria-hidden="true"></i> High demand</div>`
+    : '';
+  html += `<div class="cat-pill ${posCategory===''?'active':''}" onclick="setPosCategory('')">All</div>`;
   cats.forEach(c => {
     html += `<div class="cat-pill ${posCategory===c.name?'active':''}" onclick="setPosCategory(${jsArg(c.name)})">${escapeHtml(c.name)}</div>`;
   });
@@ -1426,7 +1429,10 @@ let posLoadSeq = 0;
 async function loadPosProducts() {
   const seq = ++posLoadSeq;
   const list = await db.products.toArray();
-  if (seq === posLoadSeq) posProducts = list; // an older, slower response never overwrites a newer one
+  if (seq === posLoadSeq) {
+    posProducts = list; // an older, slower response never overwrites a newer one
+    drawPosCategories(); // the High demand tab appears or goes with the ★ marks
+  }
   return posProducts || list;
 }
 
@@ -1447,8 +1453,10 @@ async function renderPosGrid() {
   const all = posProducts || await loadPosProducts();
   const term = (document.getElementById('pos-search')?.value || '').toLowerCase();
   let products = all.filter(p => p.is_active !== false && !isIngredient(p)).reverse();
-  
-  if(posCategory) products = products.filter(p => p.category === posCategory);
+
+  // Search from the High demand tab looks through the whole menu
+  if (posCategory === POPULAR_TAB) { if (!term) products = products.filter(isPopularItem); }
+  else if (posCategory) products = products.filter(p => p.category === posCategory);
   if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term) || (p.barcode||'').toLowerCase().includes(term));
   
   const grid = document.getElementById('pos-grid');
@@ -1462,7 +1470,6 @@ async function renderPosGrid() {
 
   if (products.length === 0) {
     const isFiltered = !!term || !!posCategory;
-    const bizType = currentSettings.biz_type || 'Restaurant';
     grid.innerHTML = `
       <div class="pos-no-results">
         <div class="pos-no-results-icon"><i class="fa-solid ${isFiltered ? 'fa-box-open' : 'fa-utensils'}"></i></div>
@@ -1470,10 +1477,7 @@ async function renderPosGrid() {
         <div class="pos-no-results-desc">${isFiltered ? 'Try clearing the search query or select another category' : 'No menu items have been added to this store yet.'}</div>
         ${!isFiltered ? `
           <div style="display:flex; gap:12px; margin-top:20px; justify-content:center; flex-wrap:wrap">
-            <button class="btn btn-primary" onclick="quickSeedTemplateCatalogue()" style="padding:10px 22px; font-size:14px; border-radius:10px; font-weight:600; display:inline-flex; align-items:center; gap:8px">
-              <i class="fa-solid fa-wand-magic-sparkles"></i> Load Starter Menu (${bizType})
-            </button>
-            <button class="btn btn-secondary" onclick="openProductForm()" style="padding:10px 22px; font-size:14px; border-radius:10px; font-weight:600; display:inline-flex; align-items:center; gap:8px">
+            <button class="btn btn-primary" onclick="openProductForm()" style="padding:10px 22px; font-size:14px; border-radius:10px; font-weight:600; display:inline-flex; align-items:center; gap:8px">
               <i class="fa-solid fa-plus"></i> Add New Product
             </button>
           </div>
@@ -1516,19 +1520,6 @@ async function renderPosGrid() {
     `;
   }).join('');
 }
-
-window.quickSeedTemplateCatalogue = async () => {
-  const bizType = currentSettings.biz_type || 'Restaurant';
-  showToast('info', `Loading starter catalogue for ${bizType}...`);
-  try {
-    await loadBusinessTemplate(bizType);
-    await renderPosCategories();
-    await refreshPosGrid();
-    showToast('success', `✨ Starter ${bizType} catalogue loaded successfully!`);
-  } catch (err) {
-    showToast('error', 'Error loading catalogue: ' + err.message);
-  }
-};
 
 async function addToCart(id) {
   const p = await findPosProduct(x => x.id == id);
@@ -2358,16 +2349,22 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     items_count: cart.reduce((sum, item)=>sum+item.quantity, 0)
   };
   
+  const products = new Map((posProducts || await loadPosProducts()).map(p => [Number(p.id), p]));
   const saleItems = cart.map(i => ({
     product_id: i.product_id, product_name: i.name,
     quantity: i.quantity, unit_price: i.unit_price, line_total: i.quantity * i.unit_price,
-    cost_price: Number(i.cost_price) || 0
+    cost_price: Number(i.cost_price) || 0,
+    // The recipe this plate is made with today; stock, returns and costs all
+    // use this copy, so a later recipe edit never rewrites the bill
+    recipe: productRecipe(products.get(Number(i.product_id)))
   }));
+  const stockLines = saleItems.map(si => ({ product_id: si.product_id, qty: -si.quantity, recipe: si.recipe }));
 
   try {
     const checkoutCart = cart.map(item => ({ ...item }));
     // Omit rather than have add() quietly demote the line to local-only storage
     if (!(await db.saleItemsSupportCost())) saleItems.forEach(si => { delete si.cost_price; });
+    if (!(await db.supportsBatches())) saleItems.forEach(si => { delete si.recipe; });
     // Only set when the column exists — see salesSupportsBillNo()
     if (await db.salesSupportsBillNo()) sale.bill_no = await nextBillNo();
     const saleId = await db.sales.add(sale);
@@ -2417,7 +2414,8 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     // ─── BACKGROUND LOCAL UPDATES (Zero UI Lag) ───
     runInBackground('Post-sale database update', async () => {
       const saleRef = `Bill #${sale.bill_no || saleId}`;
-      await returnStock(checkoutCart.map(item => ({ product_id: item.product_id, qty: -item.quantity })), saleRef);
+      const used = await returnStock(stockLines, saleRef);
+      await recordLineCosts(saleId, stockLines, used);
       // Sent once the stock is written; SALE_COMPLETED goes out before it
       broadcastRealtimeEvent('STOCK_UPDATED', {});
 
@@ -2995,15 +2993,22 @@ window.renderProductsTable = async () => {
     const ing = byId.get(Number(r.product_id));
     return ing ? `${escapeHtml(ing.name)} ${escapeHtml(qtyText(r.qty, ing.unit))}` : '';
   }).filter(Boolean).join(' · ');
-  let products = all.filter(p => !isIngredient(p));
+  // Same order as the till, newest first
+  let products = all.filter(p => !isIngredient(p)).reverse();
   const term = document.getElementById('product-search').value.toLowerCase();
+  const canStar = await db.productsSupportPopular();
 
   if(currVal) products = products.filter(p => p.category === currVal);
   if(term) products = products.filter(p => (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term) || (p.barcode||'').toLowerCase().includes(term));
-  
+
   document.getElementById('products-tbody').innerHTML = products.map(p => `
     <tr>
-      <td class="fw-600">${escapeHtml(p.name)}${recipeText(p) ? `<div class="text-muted" style="font-size:12px;font-weight:400;margin-top:2px">${recipeText(p)}</div>` : ''}</td>
+      <td class="fw-600">
+        ${canStar ? `<button class="star-toggle ${p.is_popular ? 'on' : ''}" onclick="togglePopular(${p.id})"
+          title="${p.is_popular ? 'High demand — click to remove from the till\'s High demand tab' : 'Mark as high demand'}"
+          aria-label="${p.is_popular ? 'Remove from high demand' : 'Mark as high demand'}" aria-pressed="${p.is_popular ? 'true' : 'false'}">
+          <i class="fa-${p.is_popular ? 'solid' : 'regular'} fa-star" aria-hidden="true"></i></button>` : ''}
+        ${escapeHtml(p.name)}${recipeText(p) ? `<div class="text-muted" style="font-size:12px;font-weight:400;margin-top:2px">${recipeText(p)}</div>` : ''}</td>
       <td class="td-mono">${escapeHtml(p.sku)}</td>
       <td>${escapeHtml(p.category)}</td>
       <td class="td-mono">${formatMoney(p.retail_price)}</td>
@@ -3019,11 +3024,24 @@ window.renderProductsTable = async () => {
   `).join('') || '<tr><td colspan="7" style="text-align:center">No products found</td></tr>';
 };
 
+// ★ on the Products list: puts the item on the till's High demand tab
+window.togglePopular = async (id) => {
+  if (!(await db.productsSupportPopular())) return showToast('error', 'One-time setup needed first — see the High demand note in the product form');
+  const p = await db.products.get(id);
+  if (!p) return renderProductsTable();
+  await db.products.update(p.id, { is_popular: !p.is_popular });
+  showToast('success', p.is_popular ? `${p.name} removed from High demand` : `${p.name} added to High demand`);
+  renderProductsTable();
+  refreshPosGrid();
+  if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {}); // other tills redraw their tabs
+};
+
 window.openProductForm = async (id = null) => {
   let p = { name:'', sku:'', barcode:'', category:'', retail_price:0, wholesale_price:0, cost_price:0, stock_qty:0, low_stock_threshold:5, unit:'pcs', is_active:true };
   if(id) { p = await db.products.get(id); }
   
   const cats = await db.categories.toArray();
+  const popularOk = await db.productsSupportPopular();
 
   // Recipe: which ingredients one of this dish uses, taken off stock on each sale
   recipeIngredients = (await db.products.toArray())
@@ -3075,6 +3093,14 @@ window.openProductForm = async (id = null) => {
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-input" id="f-prod-active"><option value="true" ${p.is_active?'selected':''}>Active</option><option value="false" ${!p.is_active?'selected':''}>Inactive</option></select>
       </div>
+      ${isIngredient(p) ? '' : `
+      <div class="form-group"><label class="form-label" for="f-prod-popular">High demand</label>
+        ${popularOk ? `<select class="form-input" id="f-prod-popular">
+          <option value="false">No</option>
+          <option value="true" ${p.is_popular ? 'selected' : ''}>Yes — on the till's High demand tab</option>
+        </select>` : `<div class="text-muted" style="font-size:12px">One-time setup: in Supabase → SQL Editor run
+          <code style="user-select:all">ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_popular BOOLEAN DEFAULT false;</code> then refresh.</div>`}
+      </div>`}
     </div>
     ${recipeHtml}
   `;
@@ -3125,6 +3151,8 @@ window.saveProduct = async () => {
     wholesale_price: parseFloat(document.getElementById('f-prod-retail').value)||0, // auto fallback
     is_active: document.getElementById('f-prod-active').value === 'true'
   };
+  const popular = document.getElementById('f-prod-popular'); // only there once is_popular exists
+  if (popular) p.is_popular = popular.value === 'true';
   // Stock fields are only on the form for items that keep stock (not restaurant dishes)
   const stockInput = document.getElementById('f-prod-stock');
   if (stockInput) {
@@ -3156,8 +3184,10 @@ window.saveProduct = async () => {
     productId = await db.products.add({ ...p, stock_qty: 0 });
   }
   if (stockTarget != null && stockTarget !== before) {
-    await moveStock(productId, stockTarget - before,
-      { type: 'adjust', reason: id ? 'Edited on product form' : 'Opening stock' });
+    // A new product's first stock is its first batch, at the cost typed here
+    await moveStock(productId, stockTarget - before, id
+      ? { type: 'adjust', reason: 'Edited on product form' }
+      : { type: 'receive', reason: 'Starting amount', unitCost: p.cost_price });
   }
 
   closeModal(); showToast('success', 'Product saved'); renderProductsTable(); refreshPosGrid();
@@ -3192,40 +3222,142 @@ function canSell(p) {
   return !tracksStock(p) || (Number(p.stock_qty) || 0) > 0;
 }
 
+const round3 = n => Number((Number(n) || 0).toFixed(3));
+
 // The single path for any change to stock_qty: it updates the product and logs
 // the movement, so every unit on the shelf can be traced. delta is signed.
-async function moveStock(productId, delta, { type, reason = '', reference = '', unitCost = null } = {}) {
-  delta = Number(delta);
+// Stock comes in as a batch at its own price and goes out oldest batch first
+// (FIFO): one movement per batch drawn from, each at that batch's price.
+// `at` dates a batch coming back from a bill so it re-enters FIFO where it left.
+// Returns what went out and what it cost: { qty, cost }, or null if nothing moved.
+async function moveStock(productId, delta, { type, reason = '', reference = '', unitCost = null, at = null } = {}) {
+  delta = round3(delta);
   if (!productId || !delta) return null;
   const p = await db.products.get(productId);
   if (!p || !tracksStock(p)) return null; // deleted since, or a dish with no stock
   const before = Number(p.stock_qty) || 0;
-  const after = Number((before + delta).toFixed(3));
-  const changes = { stock_qty: after };
-  if (type === 'receive' && unitCost != null) {
-    changes.cost_price = weightedCost(before, Number(p.cost_price) || 0, delta, unitCost);
+  const fifo = await db.supportsBatches();
+
+  let slices; // signed quantities, each at one price
+  if (delta > 0) {
+    const cost = unitCost != null ? unitCost : (Number(p.cost_price) || 0);
+    if (fifo) await addBatch(p, before, delta, cost, { at, reference: reference || reason });
+    slices = [{ qty: delta, unit_cost: cost }];
+  } else {
+    const out = fifo ? await takeFromBatches(p, before, -delta) : [{ qty: -delta, unit_cost: Number(p.cost_price) || 0 }];
+    slices = out.map(s => ({ qty: -s.qty, unit_cost: s.unit_cost }));
   }
-  await db.products.update(p.id, changes);
-  await db.stock_movements.add({
-    product_id: p.id,
-    product_name: p.name,
-    movement_type: type,
-    qty_change: delta,
-    balance_after: after,
-    unit_cost: unitCost != null ? unitCost : (Number(p.cost_price) || 0),
-    reason,
-    reference,
-    recorded_by: (currentUser && (currentUser.display_name || currentUser.username)) || '',
-    date: new Date().toISOString(),
-  });
-  return after;
+
+  const after = round3(before + delta);
+  // A purchase prices what is bought from now on; stock on the shelf keeps its own batch price
+  await db.products.update(p.id, type === 'receive' && unitCost != null
+    ? { stock_qty: after, cost_price: unitCost }
+    : { stock_qty: after });
+
+  let balance = before;
+  for (const s of slices) {
+    balance = round3(balance + s.qty);
+    await db.stock_movements.add({
+      product_id: p.id,
+      product_name: p.name,
+      movement_type: type,
+      qty_change: round3(s.qty),
+      balance_after: balance,
+      unit_cost: s.unit_cost,
+      reason,
+      reference,
+      recorded_by: (currentUser && (currentUser.display_name || currentUser.username)) || '',
+      date: new Date().toISOString(),
+    });
+  }
+  const out = slices.filter(s => s.qty < 0);
+  return { qty: -out.reduce((a, s) => a + s.qty, 0), cost: -out.reduce((a, s) => a + s.qty * s.unit_cost, 0) };
 }
 
-// A delivery at a new price moves cost to the average of old and new stock,
-// weighted by quantity. Stock at or below zero has no cost worth keeping.
-function weightedCost(qtyBefore, costBefore, qtyIn, costIn) {
-  if (qtyBefore <= 0) return costIn;
-  return Number(((qtyBefore * costBefore + qtyIn * costIn) / (qtyBefore + qtyIn)).toFixed(2));
+const byOldest = (a, b) => (Date.parse(a.received_at) - Date.parse(b.received_at)) || ((a.id || 0) - (b.id || 0));
+
+// The batches still holding stock, oldest first, kept in step with stock_qty
+// (which everything else reads). Stock from before batches existed shows as an
+// "Opening stock" batch at the item's cost, ahead of the rest; if the batches
+// hold more than the shelf (stock moved without them), the oldest are trimmed.
+// `save` writes those corrections; without it they are only shown.
+async function shelfBatches(p, stockQty, save = false, rows = null) {
+  const batches = (rows || await db.stock_batches.where('product_id').equals(p.id).toArray())
+    .filter(b => b.product_id == p.id && Number(b.qty_remaining) > 0)
+    .sort(byOldest);
+  const held = round3(batches.reduce((a, b) => a + Number(b.qty_remaining), 0));
+  const shelf = Math.max(0, Number(stockQty) || 0);
+  if (shelf > held) {
+    const gap = round3(shelf - held);
+    const opening = {
+      product_id: p.id, product_name: p.name, qty_received: gap, qty_remaining: gap,
+      unit_cost: Number(p.cost_price) || 0,
+      // A second ahead of anything else, so a delivery saved right after it never sorts first
+      received_at: new Date((batches.length ? Date.parse(batches[0].received_at) : Date.now()) - 1000).toISOString(),
+      reference: 'Opening stock',
+    };
+    if (save) opening.id = await db.stock_batches.add(opening);
+    batches.unshift(opening);
+  } else if (held > shelf) {
+    let extra = round3(held - shelf);
+    for (const b of batches) {
+      if (extra <= 0) break;
+      const take = Math.min(Number(b.qty_remaining), extra);
+      b.qty_remaining = round3(Number(b.qty_remaining) - take);
+      extra = round3(extra - take);
+      if (save) await db.stock_batches.update(b.id, { qty_remaining: b.qty_remaining });
+    }
+  }
+  return batches.filter(b => Number(b.qty_remaining) > 0);
+}
+
+// New stock as its own batch. Units sold while the shelf was empty were
+// already costed, so only what is left over stays in the batch.
+async function addBatch(p, stockBefore, qty, unitCost, { at = null, reference = '' } = {}) {
+  await shelfBatches(p, stockBefore, true); // older stock stays the oldest batch
+  await db.stock_batches.add({
+    product_id: p.id,
+    product_name: p.name,
+    qty_received: qty,
+    qty_remaining: round3(Math.min(qty, Math.max(0, stockBefore + qty))),
+    unit_cost: unitCost,
+    received_at: at ? new Date(at).toISOString() : new Date().toISOString(),
+    reference,
+  });
+}
+
+// Takes qty off the oldest batches first, one slice per batch at its own
+// price. Anything beyond the batches (sold below zero) is priced at the last
+// cost paid.
+async function takeFromBatches(p, stockBefore, qty) {
+  const slices = [];
+  let left = round3(qty);
+  for (const b of await shelfBatches(p, stockBefore, true)) {
+    if (left <= 0) break;
+    const take = Math.min(Number(b.qty_remaining), left);
+    await db.stock_batches.update(b.id, { qty_remaining: round3(Number(b.qty_remaining) - take) });
+    slices.push({ qty: take, unit_cost: Number(b.unit_cost) || 0 });
+    left = round3(left - take);
+  }
+  if (left > 0) slices.push({ qty: left, unit_cost: Number(p.cost_price) || 0 });
+  return slices;
+}
+
+// Value of `qty` on hand at FIFO, as at `until`: what is left on the shelf is
+// the most recent buying, so it is costed from the newest batch received by
+// then backwards. Anything not covered by a batch is at the item's cost.
+function fifoValue(p, qty, batches, until = Infinity) {
+  let left = Math.max(0, Number(qty) || 0), value = 0;
+  const newestFirst = batches
+    .filter(b => b.product_id == p.id && Date.parse(b.received_at) < until)
+    .sort((a, b) => byOldest(b, a));
+  for (const b of newestFirst) {
+    if (left <= 0) break;
+    const take = Math.min(left, Number(b.qty_received) || 0);
+    value += take * (Number(b.unit_cost) || 0);
+    left -= take;
+  }
+  return value + left * (Number(p.cost_price) || 0);
 }
 
 const STOCK_UNITS = ['kg', 'g', 'L', 'ml', 'pcs', 'packets', 'bottles', 'bags', 'boxes'];
@@ -3241,6 +3373,75 @@ const stockState = p => {
 };
 
 window.setStockFilter = (f) => { stockFilter = f; renderStockScreen(); };
+
+let stockView = 'now'; // 'now': what is on the shelf · 'day': the daily sheet
+window.setStockView = (v) => { stockView = v; renderStockScreen(); };
+
+const groupBy = (rows, key) => rows.reduce((m, r) => {
+  const k = key(r);
+  if (!m.has(k)) m.set(k, []);
+  m.get(k).push(r);
+  return m;
+}, new Map());
+
+// YYYY-MM-DD in the shop's own time zone (toISOString would give UTC's date)
+const localDay = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function dayRange(day) {
+  const start = new Date(`${day}T00:00:00`);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+const shortDate = iso => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+// One line per batch still on the shelf: "Batch 1 · 20 kg @ Rs. 100.00 · 3 Oct"
+function batchLines(batches, unit) {
+  if (!batches.length) return '';
+  const worth = batches.reduce((a, b) => a + Number(b.qty_remaining) * (Number(b.unit_cost) || 0), 0);
+  return `<div class="stk-batches">${batches.map((b, i) => `
+    <div class="stk-batch">
+      <span class="stk-batch-no">Batch ${i + 1}</span>
+      ${escapeHtml(qtyText(b.qty_remaining, unit))} @ ${escapeHtml(formatMoney(b.unit_cost))}
+      <span class="text-muted">· ${b.reference === 'Opening stock' ? 'opening stock' : escapeHtml(shortDate(b.received_at) + (b.reference ? ' · ' + b.reference : ''))}</span>
+    </div>`).join('')}
+    ${batches.length > 1 ? `<div class="stk-batch text-muted">Worth ${escapeHtml(formatMoney(worth))} in all</div>` : ''}
+  </div>`;
+}
+
+// Opening, received, used and closing per stocked item for one day, worked
+// back from the stock on hand through the movement log, so a day's opening is
+// always the previous day's closing with nothing to carry over by hand.
+// Used/sold is everything else that left: sales, cooking, waste and count
+// corrections. Value is the closing stock at FIFO batch prices.
+async function dailyStock(start, end, items) {
+  const [moves, batches] = await Promise.all([
+    db.stock_movements.between('date', start.toISOString(), new Date(Date.now() + 864e5).toISOString()),
+    db.supportsBatches().then(ok => ok ? db.stock_batches.toArray() : []),
+  ]);
+  const until = end.getTime();
+  const movesOf = groupBy(moves, m => Number(m.product_id));
+  const batchesOf = groupBy(batches, b => Number(b.product_id));
+  return items.map(p => {
+    let later = 0, net = 0, received = 0;
+    for (const m of movesOf.get(Number(p.id)) || []) {
+      const q = Number(m.qty_change) || 0;
+      if (Date.parse(m.date) >= until) later += q;
+      else {
+        net += q;
+        if (m.movement_type === 'receive' && q > 0) received += q;
+      }
+    }
+    const closing = round3((Number(p.stock_qty) || 0) - later);
+    const opening = round3(closing - net);
+    return {
+      p, opening, closing,
+      received: round3(received),
+      used: round3(opening + received - closing),
+      value: fifoValue(p, closing, batchesOf.get(Number(p.id)) || [], until),
+    };
+  });
+}
 
 window.renderStockScreen = async () => {
   const tbody = document.getElementById('stock-tbody');
@@ -3258,6 +3459,20 @@ window.renderStockScreen = async () => {
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
   stockItems = new Map(items.map(p => [Number(p.id), p]));
 
+  const day = stockView === 'day';
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  document.getElementById('stk-view-now')?.classList.toggle('active', !day);
+  document.getElementById('stk-view-day')?.classList.toggle('active', day);
+  show('stk-chips', !day);
+  show('stk-now-table', !day);
+  show('stk-day', day);
+  show('stk-day-table', day);
+  show('stk-day-foot', day);
+  if (day) return renderStockDay(items);
+
+  const fifo = await db.supportsBatches();
+  const batchesOf = groupBy(fifo ? await db.stock_batches.toArray() : [], b => Number(b.product_id));
+
   const low = items.filter(p => stockState(p) === 'low').length;
   const out = items.filter(p => stockState(p) === 'out').length;
   const chips = document.getElementById('stk-chips');
@@ -3270,6 +3485,8 @@ window.renderStockScreen = async () => {
   const rows = items
     .filter(p => stockFilter === 'all' || stockState(p) === stockFilter)
     .filter(p => !term || String(p.name).toLowerCase().includes(term));
+  const batches = new Map(await Promise.all(rows.map(async p =>
+    [p.id, fifo ? await shelfBatches(p, p.stock_qty, false, batchesOf.get(Number(p.id)) || []) : []])));
 
   tbody.innerHTML = rows.map(p => {
     const state = stockState(p);
@@ -3278,7 +3495,7 @@ window.renderStockScreen = async () => {
     return `
       <tr>
         <td><button class="stk-name" onclick="openStockItem(${p.id})" title="Edit, correct the count, see history">${escapeHtml(p.name)}</button></td>
-        <td><span class="stk-left">${escapeHtml(qtyText(p.stock_qty, p.unit))}</span> ${pill}</td>
+        <td><span class="stk-left">${escapeHtml(qtyText(p.stock_qty, p.unit))}</span> ${pill}${batchLines(batches.get(p.id), p.unit)}</td>
         <td><div class="stk-actions">
           <button class="btn btn-secondary btn-sm" onclick="openStockForm('receive', ${p.id})">+ Bought</button>
           <button class="btn btn-secondary btn-sm" onclick="openStockForm('use', ${p.id})">− Used</button>
@@ -3289,6 +3506,97 @@ window.renderStockScreen = async () => {
       <div class="text-muted" style="font-size:12.5px">${items.length ? 'Try another filter or search.' : (restaurant
         ? 'Add the things you buy for the kitchen: chicken, rice, oil, vegetables…'
         : 'Add the things you keep in stock.')}</div></td></tr>`;
+};
+
+// The daily sheet. Today's closing can be counted and saved; past days are
+// read-only, worked out from the stock history.
+async function renderStockDay(items) {
+  const tbody = document.getElementById('stk-day-tbody');
+  const input = document.getElementById('stk-day');
+  if (!tbody || !input) return;
+  input.max = localDay();
+  if (!input.value) input.value = localDay();
+  const day = input.value;
+  const today = day === localDay();
+  const { start, end } = dayRange(day);
+  // A sale on another till redraws this sheet; counts typed so far must survive it
+  const typed = [...document.querySelectorAll('.stk-count-input')]
+    .filter(i => i.value.trim() !== '').map(i => [i.dataset.id, i.value]);
+  tbody.innerHTML = '<tr><td colspan="7" class="text-muted" style="text-align:center;padding:24px">Working out the day…</td></tr>';
+
+  const sheet = await dailyStock(start, end, items);
+  if (input.value !== day || stockView !== 'day') return; // another day was picked meanwhile
+
+  const term = (document.getElementById('stk-search')?.value || '').toLowerCase().trim();
+  const rows = sheet.filter(r => !term || String(r.p.name).toLowerCase().includes(term));
+  const q = n => escapeHtml(qtyText(n, ''));
+  document.getElementById('stk-count-head').style.display = today ? '' : 'none';
+  const total = rows.reduce((a, r) => a + r.value, 0);
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td><button class="stk-name" onclick="openStockItem(${r.p.id})" title="Batches and history">${escapeHtml(r.p.name)}</button>
+        <div class="text-muted stk-unit">${escapeHtml(r.p.unit || '')}</div></td>
+      <td class="num">${q(r.opening)}</td>
+      <td class="num">${r.received ? '+' + q(r.received) : '<span class="text-muted">—</span>'}</td>
+      <td class="num">${r.used ? q(r.used) : '<span class="text-muted">—</span>'}</td>
+      <td class="num fw-700">${q(r.closing)}</td>
+      <td class="num">${escapeHtml(formatMoney(r.value))}</td>
+      ${today ? `<td class="num"><input class="form-input stk-count-input" type="number" step="any" min="0"
+        data-id="${r.p.id}" placeholder="${q(r.closing)}" aria-label="Counted closing stock of ${escapeHtml(r.p.name)}"></td>` : ''}
+    </tr>`).join('') + (rows.length ? `
+    <tr class="stk-day-total">
+      <td colspan="5">Stock value at close</td>
+      <td class="num">${escapeHtml(formatMoney(total))}</td>
+      ${today ? '<td></td>' : ''}
+    </tr>` : `<tr><td colspan="7" class="text-muted" style="text-align:center;padding:24px">No stocked items${term ? ' match' : ' yet'}.</td></tr>`);
+  for (const [id, value] of typed) {
+    const field = tbody.querySelector(`.stk-count-input[data-id="${id}"]`);
+    if (field) field.value = value;
+  }
+
+  const foot = document.getElementById('stk-day-note');
+  if (foot) foot.textContent = today
+    ? 'At closing, count what is left and type it in, then save. Any difference is recorded as used (or found) stock, and tomorrow opens with these amounts.'
+    : 'A past day is worked out from the stock history. Opening is the previous day\'s closing.';
+  show('stk-count-save', today);
+
+  function show(id, on) { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; }
+}
+
+window.saveClosingCounts = async () => {
+  const entries = [...document.querySelectorAll('.stk-count-input')]
+    .filter(i => i.value.trim() !== '')
+    .map(i => ({ p: stockItems.get(Number(i.dataset.id)), counted: parseFloat(i.value) }));
+  if (!entries.length) return showToast('info', 'Type what you counted for at least one item');
+  if (entries.some(e => !e.p || !Number.isFinite(e.counted) || e.counted < 0)) {
+    return showToast('error', 'A count must be a number, zero or more');
+  }
+  const btn = document.getElementById('stk-count-save');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    let changed = 0;
+    for (const { p, counted } of entries) {
+      // Read the shelf again: a sale may have moved it since the sheet was drawn
+      const fresh = await db.products.get(p.id);
+      const delta = round3(counted - (Number(fresh && fresh.stock_qty) || 0));
+      if (!delta) continue;
+      await moveStock(p.id, delta, { type: 'adjust', reason: 'Closing count' });
+      changed++;
+    }
+    logSecurityEvent('STOCK_CLOSING_COUNT', { counted: entries.length, corrected: changed });
+    document.querySelectorAll('.stk-count-input').forEach(i => { i.value = ''; }); // saved, so start clean
+    showToast('success', changed
+      ? `Closing stock saved · ${changed} item${changed === 1 ? '' : 's'} corrected`
+      : 'Closing stock saved · every count matched');
+    renderStockScreen();
+    refreshPosGrid();
+    if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
+  } catch (err) {
+    console.error('Closing count error:', err);
+    showToast('error', 'Could not save the counts: ' + (err.message || err));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save closing stock'; }
+  }
 };
 
 // Opened from the Products screen for shops that stock their products
@@ -3465,22 +3773,24 @@ function describeMovement(m, unit) {
   const n = Number(m.qty_change) || 0;
   const amount = qtyText(Math.abs(n), unit);
   let text;
-  if (m.reason === 'Stock count') text = `Counted — ${amount} ${n > 0 ? 'more' : 'less'} than expected`;
+  if (m.reason === 'Stock count' || m.reason === 'Closing count') text = `Counted — ${amount} ${n > 0 ? 'more' : 'less'} than expected`;
   else if (m.reason === 'Starting amount') text = `Starting amount ${amount}`;
   else if (m.movement_type === 'receive') text = `Bought ${amount}`;
   else if (m.movement_type === 'sale') text = `Sold ${amount}`;
   else if (m.movement_type === 'return') text = `Returned ${amount}`;
   else text = `${n > 0 ? 'Added' : 'Used'} ${amount}${m.reason && m.reason !== 'Used in cooking' ? ' — ' + m.reason.toLowerCase() : ''}`;
+  // The batch price it moved at: a sale across two batches shows as two lines
+  if (Number(m.unit_cost) > 0 && ['sale', 'receive', 'return'].includes(m.movement_type)) text += ` @ ${formatMoney(m.unit_cost)}`;
   return [text, m.reference].filter(Boolean).join(' · ');
 }
 
 window.openStockItem = async (id) => {
   const p = stockItems.get(Number(id)) || await db.products.get(id);
   if (!p) return showToast('error', 'That item is no longer on the list');
-  const moves = (await db.stock_movements.toArray())
-    .filter(m => m.product_id == p.id)
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+  const moves = (await db.stock_movements.where('product_id').equals(p.id).toArray())
+    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date) || (b.id || 0) - (a.id || 0))
     .slice(0, 15);
+  const batches = (await db.supportsBatches()) ? await shelfBatches(p, p.stock_qty) : null;
   const unit = p.unit || '';
   const history = moves.map(m => `
     <div class="stk-hist-row">
@@ -3500,6 +3810,9 @@ window.openStockItem = async (id) => {
       <span class="text-muted">${escapeHtml(unit)} actually there now</span>
       <button class="btn btn-secondary btn-sm" id="stk-save-btn" onclick="saveStockCount()">Save count</button>
     </div>
+    ${batches ? `
+    <div class="stk-section-title">Batches on the shelf · used oldest first</div>
+    ${batchLines(batches, unit) || '<div class="text-muted" style="font-size:13px">None — nothing left on the shelf.</div>'}` : ''}
     <div class="stk-section-title">Details</div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label" for="f-item-name">Name</label><input class="form-input" id="f-item-name" value="${escapeHtml(p.name)}"></div>
@@ -3551,13 +3864,6 @@ window.deleteStockItem = async (id) => {
   showToast('success', `${p.name} removed`);
   renderStockScreen();
   if (typeof broadcastRealtimeEvent === 'function') broadcastRealtimeEvent('STOCK_UPDATED', {});
-};
-
-window.applyTemplate = async (type) => {
-  if(!await showConfirmation(`This will delete all existing products and categories, then load the ${type} template.`, { title: 'Replace inventory?', confirmLabel: 'Load template', danger: true })) return;
-  await loadBusinessTemplate(type);
-  showToast('success', `${type} template applied`);
-  nav('products');
 };
 
 // --- SALES HISTORY ---
@@ -3681,11 +3987,21 @@ function saleTaxRate(sale) {
 
 // Puts stock back on the shelf. Positive qty returns units, negative takes more.
 // Also the path for sales (negative qty). A dish with a recipe moves its
-// ingredients too.
-async function returnStock(lines, reference = '') {
+// ingredients too. Stock coming back re-enters at `unitCosts` (what the bill
+// took it off the shelf at), dated `at`. Returns, per product, what went out
+// and its FIFO cost: Map(product_id → { qty, cost }).
+async function returnStock(lines, reference = '', { at = null, unitCosts = null } = {}) {
+  const used = new Map();
   for (const l of await withRecipeIngredients(lines)) {
-    await moveStock(l.product_id, l.qty, { type: l.qty > 0 ? 'return' : 'sale', reference });
+    const back = l.qty > 0;
+    const moved = await moveStock(l.product_id, l.qty, {
+      type: back ? 'return' : 'sale', reference,
+      at: back ? at : null,
+      unitCost: back && unitCosts ? (unitCosts.get(Number(l.product_id)) ?? null) : null,
+    });
+    if (moved && moved.qty > 0) used.set(Number(l.product_id), moved);
   }
+  return used;
 }
 
 function productRecipe(p) {
@@ -3696,7 +4012,9 @@ function productRecipe(p) {
 
 // Adds each dish's ingredients (recipe qty × plates) and merges lines for the
 // same product, so two dishes using rice make one stock write, not two racing.
-// Uses today's recipe, so a bill edited after a recipe change moves the new amounts.
+// A line carrying `recipe` (saved on the bill when it was sold) uses that, so
+// editing a recipe later never changes what an old bill moves. Lines without
+// one (bills from before recipes were saved) fall back to today's recipe.
 async function withRecipeIngredients(lines) {
   const products = new Map((await db.products.toArray()).map(p => [Number(p.id), p]));
   const totals = new Map();
@@ -3706,9 +4024,48 @@ async function withRecipeIngredients(lines) {
   };
   for (const l of lines) {
     add(l.product_id, l.qty);
-    for (const r of productRecipe(products.get(Number(l.product_id)))) add(r.product_id, Number(r.qty) * l.qty);
+    const recipe = l.recipe != null ? productRecipe(l) : productRecipe(products.get(Number(l.product_id)));
+    for (const r of recipe) add(r.product_id, Number(r.qty) * l.qty);
   }
-  return [...totals].map(([product_id, qty]) => ({ product_id, qty: Number(qty.toFixed(3)) }));
+  return [...totals].map(([product_id, qty]) => ({ product_id, qty: round3(qty) }));
+}
+
+// What each product cost when this bill took it off the shelf, so stock
+// coming back from an edit or a deletion re-enters at that price.
+async function billUnitCosts(sale) {
+  const moves = await db.stock_movements.where('reference').equals(`Bill #${billNumber(sale)}`).toArray();
+  const totals = new Map();
+  for (const m of moves) {
+    const q = -(Number(m.qty_change) || 0);
+    if (m.movement_type !== 'sale' || q <= 0) continue;
+    const t = totals.get(Number(m.product_id)) || { qty: 0, cost: 0 };
+    t.qty += q;
+    t.cost += q * (Number(m.unit_cost) || 0);
+    totals.set(Number(m.product_id), t);
+  }
+  return new Map([...totals].map(([id, t]) => [id, t.cost / t.qty]));
+}
+
+// Each sold line's unit cost at the FIFO prices that just left the shelf: the
+// item itself when it is stocked, plus its recipe's ingredients. Lines with
+// neither keep the cost captured at the till.
+async function recordLineCosts(saleId, lines, used) {
+  if (!used.size || !(await db.saleItemsSupportCost())) return;
+  const unitCost = id => { const u = used.get(Number(id)); return u ? u.cost / u.qty : null; };
+  const costs = new Map();
+  for (const l of lines) {
+    let cost = unitCost(l.product_id);
+    for (const r of productRecipe(l)) {
+      const c = unitCost(r.product_id);
+      if (c != null) cost = (cost || 0) + c * Number(r.qty);
+    }
+    if (cost != null) costs.set(Number(l.product_id), Number(cost.toFixed(2)));
+  }
+  if (!costs.size) return;
+  for (const row of await db.sale_items.where('sale_id').equals(saleId).toArray()) {
+    const c = costs.get(Number(row.product_id));
+    if (c != null && c !== Number(row.cost_price)) await db.sale_items.update(row.id, { cost_price: c });
+  }
 }
 
 // Credit sales sit on the customer's balance; any change to the total has to
@@ -3745,6 +4102,7 @@ window.openSaleEditor = async (id) => {
       unit_price: Number(i.unit_price) || 0,
       originalQty: Number(i.quantity) || 0,
       qty: Number(i.quantity) || 0,
+      recipe: i.recipe ?? null, // as sold; null on bills from before recipes were saved
     })),
   };
 
@@ -3887,8 +4245,8 @@ window.saveSaleEdit = async () => {
 
   try {
     // Stock first: a positive figure is stock coming back from a reduced line
-    await returnStock(lines.map(l => ({ product_id: l.product_id, qty: l.originalQty - l.qty })),
-      `Bill #${billNumber(sale)} edited`);
+    await returnStock(lines.map(l => ({ product_id: l.product_id, qty: l.originalQty - l.qty, recipe: l.recipe })),
+      `Bill #${billNumber(sale)} edited`, { at: sale.date, unitCosts: await billUnitCosts(sale) });
 
     for (const l of lines) {
       if (l.qty > 0) {
@@ -3912,6 +4270,7 @@ window.saveSaleEdit = async () => {
 
     await logSecurityEvent('SALE_EDITED', {
       sale_id: id,
+      bill_no: billNumber(sale),
       before: { total: sale.total_amount, items: lines.map(l => ({ p: l.product_id, q: l.originalQty })) },
       after:  { total, items: kept.map(l => ({ p: l.product_id, q: l.qty })) },
       credit_delta: sale.payment_type === 'credit' ? delta : 0,
@@ -3950,8 +4309,8 @@ window.deleteSale = async (id) => {
   if (!ok) return;
 
   try {
-    await returnStock(items.map(i => ({ product_id: i.product_id, qty: Number(i.quantity) || 0 })),
-      `Bill #${billNumber(sale)} deleted`);
+    await returnStock(items.map(i => ({ product_id: i.product_id, qty: Number(i.quantity) || 0, recipe: i.recipe ?? null })),
+      `Bill #${billNumber(sale)} deleted`, { at: sale.date, unitCosts: await billUnitCosts(sale) });
     await adjustCustomerCredit(sale, -(Number(sale.total_amount) || 0));
 
     for (const i of items) await db.sale_items.delete(i.id);
@@ -3959,6 +4318,8 @@ window.deleteSale = async (id) => {
 
     await logSecurityEvent('SALE_DELETED', {
       sale_id: id,
+      bill_no: billNumber(sale),
+      cashier: sale.cashier,
       total: sale.total_amount,
       payment_type: sale.payment_type,
       date: sale.date,
@@ -5228,28 +5589,35 @@ let reportCharts = {};
 let currentReportData = null;
 
 window.setReportPeriod = (period) => {
-  document.querySelectorAll('.btn-group .btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#report-period-group .btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`btn-period-${period}`).classList.add('active');
   document.getElementById('custom-range-inputs').style.display = (period === 'custom') ? 'flex' : 'none';
-  
+  showReportMode(period === 'today');
   if (period !== 'custom') renderAIReports();
 };
 
+// The daily report is its own sheet; weekly, monthly and custom ranges keep the analytics view
+function showReportMode(daily) {
+  const show = (id, on, display) => { const el = document.getElementById(id); if (el) el.style.display = on ? display : 'none'; };
+  show('daily-report-controls', daily, 'flex');
+  show('daily-report-view', daily, 'block');
+  show('period-report-controls', !daily, 'flex');
+  if (daily) show('report-main-content', false);
+}
+
 window.renderAIReports = async () => {
   const mainContent = document.getElementById('report-main-content');
+  const activeBtn = document.querySelector('#report-period-group .btn.active');
+  if (!activeBtn) return;
+  const period = activeBtn.id.replace('btn-period-', '');
+  showReportMode(period === 'today');
+  if (period === 'today') return renderDailyReport();
   try {
-    await loadSettings(); 
-    const activeBtn = document.querySelector('#report-period-group .btn.active');
-    if (!activeBtn) return;
-    
-    const period = activeBtn.id.replace('btn-period-', '');
+    await loadSettings();
     let start, end;
     const now = new Date();
     
-    if (period === 'today') {
-      start = new Date(new Date(now).setHours(0,0,0,0)).toISOString();
-      end = new Date(new Date(now).setHours(23,59,59,999)).toISOString();
-    } else if (period === 'week') {
+    if (period === 'week') {
       const day = now.getDay() || 7;
       const firstDay = new Date(now);
       firstDay.setDate(now.getDate() - day + 1);
@@ -5495,6 +5863,331 @@ window.renderAIReports = async () => {
 
 
 
+
+// ─── DAILY REPORT ───
+// One day on one sheet: orders and takings by payment method, sales by
+// category and product, cost of goods at FIFO batch prices and gross profit,
+// each stocked item's opening → closing, low stock, and every discount,
+// edited or deleted bill. Prints on A4 and downloads as a PDF.
+
+window.renderDailyReport = async () => {
+  const view = document.getElementById('daily-report-view');
+  const input = document.getElementById('dr-date');
+  if (!view || !input) return;
+  input.max = localDay();
+  if (!input.value) input.value = localDay();
+  const day = input.value;
+  view.innerHTML = '<div class="spinner-lg" style="margin:50px auto"></div>';
+  try {
+    const report = await buildDailyReport(day);
+    if (input.value !== day) return; // another day was picked meanwhile
+    view.innerHTML = dailyReportHtml(report);
+  } catch (err) {
+    console.error('Daily report error:', err);
+    view.innerHTML = `<div class="error-state">Could not build the report: ${escapeHtml(err.message || String(err))}</div>`;
+  }
+};
+
+async function buildDailyReport(day) {
+  const { start, end } = dayRange(day);
+  const from = start.toISOString(), to = end.toISOString();
+  const [sales, products, audit] = await Promise.all([
+    db.sales.between('date', from, to),
+    db.products.toArray(),
+    db.audit_log.between('timestamp', from, to).catch(() => []),
+  ]);
+  const bills = sales.filter(s => s.status !== 'voided').sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+  const lines = await db.sale_items.anyOf('sale_id', bills.map(s => s.id));
+  const byId = new Map(products.map(p => [Number(p.id), p]));
+  const sum = (rows, f) => rows.reduce((a, r) => a + (Number(r[f]) || 0), 0);
+
+  const takings = {
+    orders: bills.length,
+    gross: sum(bills, 'subtotal'),
+    discount: sum(bills, 'discount'),
+    tax: sum(bills, 'tax'),
+    collected: sum(bills, 'total_amount'),
+  };
+  takings.net = takings.gross - takings.discount;
+
+  const payments = new Map();
+  for (const s of bills) {
+    const method = String(s.payment_type || 'other').toLowerCase();
+    const t = payments.get(method) || { method, count: 0, amount: 0 };
+    t.count++;
+    t.amount += Number(s.total_amount) || 0;
+    payments.set(method, t);
+  }
+
+  // Each line's cost is what it recorded when sold: FIFO batch prices of the
+  // stock or recipe ingredients it used. Bills from before costs were kept
+  // fall back to the product's cost.
+  const byProduct = new Map(), byCategory = new Map();
+  let cogs = 0;
+  const tally = (map, key, qty, amount, cost, extra = {}) => {
+    const t = map.get(key) || { name: key, qty: 0, amount: 0, cost: 0, ...extra };
+    t.qty += qty; t.amount += amount; t.cost += cost;
+    map.set(key, t);
+  };
+  for (const l of lines) {
+    const p = byId.get(Number(l.product_id));
+    const qty = Number(l.quantity) || 0;
+    const amount = Number(l.line_total) || 0;
+    const unitCost = l.cost_price != null && Number.isFinite(Number(l.cost_price))
+      ? Number(l.cost_price) : (Number(p && p.cost_price) || 0);
+    const cost = qty * unitCost;
+    const category = (p && p.category) || 'Uncategorised';
+    cogs += cost;
+    tally(byProduct, l.product_name || (p && p.name) || 'Item', qty, amount, cost, { category });
+    tally(byCategory, category, qty, amount, cost);
+  }
+  const byAmount = (a, b) => b.amount - a.amount;
+
+  const stocked = products
+    .filter(p => p.is_active !== false && tracksStock(p))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const stock = await dailyStock(start, end, stocked);
+
+  const details = e => { try { return JSON.parse(e.details || '{}'); } catch (x) { return {}; } };
+  const events = type => audit
+    .filter(e => e.event_type === type)
+    .map(e => ({ at: e.timestamp, by: e.username, ...details(e) }))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+
+  return {
+    day, takings, cogs,
+    profit: takings.net - cogs,
+    payments: [...payments.values()].sort(byAmount),
+    categories: [...byCategory.values()].sort(byAmount),
+    products: [...byProduct.values()].sort(byAmount),
+    stock,
+    low: stock.filter(isLowAtClose),
+    discounted: bills.filter(s => Number(s.discount) > 0),
+    voided: sales.filter(s => s.status === 'voided'),
+    deleted: events('SALE_DELETED'),
+    edited: events('SALE_EDITED'),
+  };
+}
+
+const isLowAtClose = s => s.closing <= 0 || s.closing <= (Number(s.p.low_stock_threshold) || 0);
+
+function dailyReportHtml(r) {
+  const m = n => escapeHtml(formatMoney(n));
+  const q = n => escapeHtml(qtyText(n, ''));
+  const pct = (a, b) => b ? `${(a / b * 100).toFixed(1)}%` : '—';
+  const time = iso => escapeHtml(new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
+  const empty = (cols, text) => `<tr><td colspan="${cols}" class="dr-empty">${text}</td></tr>`;
+  const title = s => escapeHtml(s.charAt(0).toUpperCase() + s.slice(1));
+  const t = r.takings;
+  const date = new Date(`${r.day}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const stockValue = r.stock.reduce((a, s) => a + s.value, 0);
+  const salesRow = (cells, x) => `${cells}<td class="num">${q(x.qty)}</td><td class="num">${m(x.amount)}</td><td class="num">${m(x.cost)}</td><td class="num">${m(x.amount - x.cost)}</td>`;
+  const changes = r.discounted.length + r.edited.length + r.deleted.length + r.voided.length;
+
+  return `
+  <article class="dr-paper" id="dr-paper" data-day="${escapeHtml(r.day)}">
+    <header class="dr-head">
+      <div>
+        <div class="dr-biz">${escapeHtml(currentSettings.biz_name || 'NexPOS')}</div>
+        <h2 class="dr-title">Daily report</h2>
+        <div class="dr-date">${escapeHtml(date)}</div>
+      </div>
+      <div class="dr-meta">Prepared ${escapeHtml(new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}${currentUser ? `<br>by ${escapeHtml(currentUser.display_name || currentUser.username || '')}` : ''}</div>
+    </header>
+
+    <section class="dr-kpis">
+      <div class="dr-kpi"><span>Orders</span><strong>${t.orders}</strong></div>
+      <div class="dr-kpi"><span>Total collected</span><strong>${m(t.collected)}</strong></div>
+      <div class="dr-kpi"><span>Cost of goods (FIFO)</span><strong>${m(r.cogs)}</strong></div>
+      <div class="dr-kpi"><span>Gross profit</span><strong>${m(r.profit)}</strong>${t.net ? `<em>${pct(r.profit, t.net)} of net sales</em>` : ''}</div>
+    </section>
+
+    <div class="dr-cols">
+      <section class="dr-block">
+        <h3>Takings</h3>
+        <table class="dr-table"><tbody>
+          <tr><td>Gross sales</td><td class="num">${m(t.gross)}</td></tr>
+          <tr><td>Discounts</td><td class="num">− ${m(t.discount)}</td></tr>
+          <tr class="dr-sub"><td>Net sales</td><td class="num">${m(t.net)}</td></tr>
+          <tr><td>Tax collected</td><td class="num">${m(t.tax)}</td></tr>
+          <tr class="dr-sub"><td>Total collected</td><td class="num">${m(t.collected)}</td></tr>
+          <tr><td>Cost of goods sold (FIFO)</td><td class="num">− ${m(r.cogs)}</td></tr>
+          <tr class="dr-total"><td>Gross profit <span>net sales − cost</span></td><td class="num">${m(r.profit)}</td></tr>
+        </tbody></table>
+      </section>
+      <section class="dr-block">
+        <h3>Payments</h3>
+        <table class="dr-table">
+          <thead><tr><th>Method</th><th class="num">Bills</th><th class="num">Amount</th></tr></thead>
+          <tbody>${r.payments.map(p => `<tr><td>${title(p.method)}</td><td class="num">${p.count}</td><td class="num">${m(p.amount)}</td></tr>`).join('') || empty(3, 'No sales')}</tbody>
+          ${r.payments.length ? `<tfoot><tr><td>Total</td><td class="num">${t.orders}</td><td class="num">${m(t.collected)}</td></tr></tfoot>` : ''}
+        </table>
+      </section>
+    </div>
+
+    <section class="dr-block">
+      <h3>Sales by category</h3>
+      <table class="dr-table">
+        <thead><tr><th>Category</th><th class="num">Qty</th><th class="num">Amount</th><th class="num">Cost</th><th class="num">Profit</th></tr></thead>
+        <tbody>${r.categories.map(c => `<tr>${salesRow(`<td>${escapeHtml(c.name)}</td>`, c)}</tr>`).join('') || empty(5, 'No sales on this day')}</tbody>
+      </table>
+    </section>
+
+    <section class="dr-block">
+      <h3>Sales by product</h3>
+      <table class="dr-table">
+        <thead><tr><th>Product</th><th>Category</th><th class="num">Qty</th><th class="num">Amount</th><th class="num">Cost</th><th class="num">Profit</th></tr></thead>
+        <tbody>${r.products.map(p => `<tr>${salesRow(`<td>${escapeHtml(p.name)}</td><td class="dr-muted">${escapeHtml(p.category)}</td>`, p)}</tr>`).join('') || empty(6, 'No sales on this day')}</tbody>
+      </table>
+      <p class="dr-note">Amounts are before bill discounts. Cost is the FIFO batch price of the stock, or of the recipe ingredients, each item used.</p>
+    </section>
+
+    <section class="dr-block">
+      <h3>Stock</h3>
+      <table class="dr-table">
+        <thead><tr><th>Item</th><th class="num">Opening</th><th class="num">Received</th><th class="num">Used / sold</th><th class="num">Closing</th><th class="num">Value</th></tr></thead>
+        <tbody>${r.stock.map(s => `
+          <tr class="${isLowAtClose(s) ? 'dr-warn' : ''}">
+            <td>${escapeHtml(s.p.name)} <span class="dr-unit">${escapeHtml(s.p.unit || '')}</span></td>
+            <td class="num">${q(s.opening)}</td>
+            <td class="num">${s.received ? '+' + q(s.received) : '—'}</td>
+            <td class="num">${s.used ? q(s.used) : '—'}</td>
+            <td class="num"><b>${q(s.closing)}</b></td>
+            <td class="num">${m(s.value)}</td>
+          </tr>`).join('') || empty(6, 'No stocked items')}</tbody>
+        ${r.stock.length ? `<tfoot><tr><td colspan="5">Stock value at close (FIFO)</td><td class="num">${m(stockValue)}</td></tr></tfoot>` : ''}
+      </table>
+      <p class="dr-note">Opening is the previous day's closing. Used / sold = opening + received − closing, so it includes cooking, waste and count corrections.</p>
+    </section>
+
+    <section class="dr-block">
+      <h3>Low stock</h3>
+      ${r.low.length ? `
+      <table class="dr-table">
+        <thead><tr><th>Item</th><th class="num">Left at close</th><th class="num">Minimum</th></tr></thead>
+        <tbody>${r.low.map(s => `
+          <tr class="dr-warn"><td>${escapeHtml(s.p.name)}${s.closing <= 0 ? ' <b>· finished</b>' : ''}</td>
+            <td class="num">${q(s.closing)} ${escapeHtml(s.p.unit || '')}</td>
+            <td class="num">${q(s.p.low_stock_threshold)} ${escapeHtml(s.p.unit || '')}</td></tr>`).join('')}</tbody>
+      </table>` : '<p class="dr-empty">Nothing is below its minimum.</p>'}
+    </section>
+
+    <section class="dr-block">
+      <h3>Discounts, edits and deleted bills</h3>
+      ${!changes ? '<p class="dr-empty">No discounts, edited or deleted bills.</p>' : ''}
+      ${r.discounted.length ? `
+      <h4>Discounts</h4>
+      <table class="dr-table">
+        <thead><tr><th>Bill</th><th>Time</th><th>Cashier</th><th class="num">Bill total</th><th class="num">Discount</th></tr></thead>
+        <tbody>${r.discounted.map(s => `<tr><td>#${escapeHtml(String(billNumber(s)))}</td><td>${time(s.date)}</td><td>${escapeHtml(s.cashier || '')}</td><td class="num">${m(s.total_amount)}</td><td class="num">${m(s.discount)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="4">Total discounts</td><td class="num">${m(t.discount)}</td></tr></tfoot>
+      </table>` : ''}
+      ${r.edited.length ? `
+      <h4>Edited bills</h4>
+      <table class="dr-table">
+        <thead><tr><th>Bill</th><th>Edited at</th><th>By</th><th class="num">Was</th><th class="num">Now</th></tr></thead>
+        <tbody>${r.edited.map(e => `<tr><td>#${escapeHtml(String(e.bill_no || e.sale_id || '—'))}</td><td>${time(e.at)}</td><td>${escapeHtml(e.by || '')}</td><td class="num">${m(e.before && e.before.total)}</td><td class="num">${m(e.after && e.after.total)}</td></tr>`).join('')}</tbody>
+      </table>` : ''}
+      ${r.deleted.length || r.voided.length ? `
+      <h4>Deleted and voided bills</h4>
+      <table class="dr-table">
+        <thead><tr><th>Bill</th><th>When</th><th>By</th><th class="num">Amount</th></tr></thead>
+        <tbody>
+          ${r.deleted.map(e => `<tr><td>#${escapeHtml(String(e.bill_no || e.sale_id || '—'))}</td><td>Deleted ${time(e.at)}</td><td>${escapeHtml(e.by || '')}</td><td class="num">${m(e.total)}</td></tr>`).join('')}
+          ${r.voided.map(s => `<tr><td>#${escapeHtml(String(billNumber(s)))}</td><td>Voided · rung ${time(s.date)}</td><td>${escapeHtml(s.cashier || '')}</td><td class="num">${m(s.total_amount)}</td></tr>`).join('')}
+        </tbody>
+      </table>
+      <p class="dr-note">Deleted and voided bills are not in the totals above.</p>` : ''}
+    </section>
+
+    <footer class="dr-foot">${escapeHtml(currentSettings.biz_name || 'NexPOS')} · Daily report · ${escapeHtml(r.day)}</footer>
+  </article>`;
+}
+
+// The sheet's own rules (every .dr- rule in the stylesheet), so it prints the
+// same in a bare window that does not carry the till's 80 mm receipt styles.
+function dailyReportCss() {
+  return [...document.styleSheets]
+    .flatMap(s => { try { return [...s.cssRules]; } catch (e) { return []; } }) // other origins refuse
+    .map(rule => rule.cssText)
+    .filter(css => css.includes('.dr-'))
+    .join('\n');
+}
+
+window.printDailyReport = () => {
+  const paper = document.getElementById('dr-paper');
+  if (!paper) return showToast('error', 'Wait for the report to load first');
+  const win = window.open('', '_blank');
+  if (!win) return showToast('error', 'Allow pop-ups for this site to print the report');
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8">
+    <title>Daily report ${escapeHtml(paper.dataset.day || '')}</title>
+    <style>
+      @page { size: A4; margin: 12mm; }
+      *, *::before, *::after { box-sizing: border-box; }
+      body { margin: 0; background: #fff; }
+      ${dailyReportCss()}
+      @media print { .dr-paper { border: 0; border-radius: 0; padding: 0; max-width: none; box-shadow: none; } }
+    </style></head><body>${paper.outerHTML}</body></html>`);
+  win.document.close();
+  win.onafterprint = () => win.close();
+  setTimeout(() => { win.focus(); win.print(); }, 300); // let the fonts load
+};
+
+// The sheet as an A4 PDF. Rendered as an image so any script prints exactly
+// as on screen; pages break between rows, never through one.
+window.downloadDailyReportPDF = async () => {
+  const paper = document.getElementById('dr-paper');
+  const JsPDF = window.jspdf ? window.jspdf.jsPDF : window.jsPDF;
+  if (!paper) return showToast('error', 'Wait for the report to load first');
+  if (!JsPDF || typeof html2canvas !== 'function') {
+    return showToast('error', 'The PDF tools did not load. Check the internet connection, or use Print and choose "Save as PDF".');
+  }
+  const btn = document.getElementById('dr-pdf-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const WIDTH = 794; // A4 at 96 dpi, so the PDF never gets the phone layout
+    let cuts = [];
+    const canvas = await html2canvas(paper, {
+      scale: 2, backgroundColor: '#ffffff', windowWidth: 1100,
+      onclone: (doc) => {
+        const el = doc.getElementById('dr-paper');
+        Object.assign(el.style, { width: WIDTH + 'px', maxWidth: 'none', margin: '0', border: '0', borderRadius: '0', boxShadow: 'none' });
+        const top = el.getBoundingClientRect().top;
+        cuts = [...el.querySelectorAll('tr, .dr-block, .dr-kpis, .dr-head')]
+          .map(n => n.getBoundingClientRect().bottom - top);
+      },
+    });
+    const pdf = new JsPDF('p', 'mm', 'a4');
+    const margin = 10, imgW = 210 - margin * 2, pageMm = 297 - margin * 2;
+    const pxPerMm = canvas.width / imgW;
+    const pagePx = pageMm * pxPerMm;
+    const scale = canvas.width / WIDTH;
+    const breaks = cuts.map(c => Math.round(c * scale)).sort((a, b) => a - b);
+    for (let y = 0, page = 0; y < canvas.height - 1; page++) {
+      let end = Math.min(y + Math.floor(pagePx), canvas.height);
+      if (end < canvas.height) {
+        const fit = breaks.filter(b => b > y + pagePx * 0.3 && b <= end);
+        if (fit.length) end = fit[fit.length - 1];
+      }
+      const slice = document.createElement('canvas');
+      slice.width = canvas.width;
+      slice.height = end - y;
+      const ctx = slice.getContext('2d');
+      ctx.fillStyle = '#ffffff'; // JPEG turns any pixel left uncovered black
+      ctx.fillRect(0, 0, slice.width, slice.height);
+      ctx.drawImage(canvas, 0, y, canvas.width, slice.height, 0, 0, canvas.width, slice.height);
+      if (page) pdf.addPage();
+      pdf.addImage(slice.toDataURL('image/jpeg', 0.92), 'JPEG', margin, margin, imgW, slice.height / pxPerMm);
+      y = end;
+    }
+    pdf.save(`daily-report-${paper.dataset.day || localDay()}.pdf`);
+  } catch (err) {
+    console.error('Daily report PDF error:', err);
+    showToast('error', 'Could not make the PDF: ' + (err.message || err));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+};
 
 async function fetchReportData(start, end) {
   // 1. Sales Data
@@ -6349,6 +7042,8 @@ window.loadSettingsForm = () => {
   document.getElementById('set-address').value = currentSettings.address || '';
   const autoPrintReceipt = document.getElementById('set-receipt-autoprint');
   if (autoPrintReceipt) autoPrintReceipt.value = currentSettings.receipt_autoprint !== 'false' ? 'true' : 'false';
+  const defaultTab = document.getElementById('set-pos-default-tab');
+  if (defaultTab) defaultTab.value = currentSettings.pos_default_tab === 'popular' ? 'popular' : 'all';
   populatePrinterSetting();
   
   const theme = currentSettings.theme || 'default';
@@ -6361,7 +7056,6 @@ window.loadSettingsForm = () => {
   });
 
   updateLogoPreviewUI();
-  renderBizTemplates();
   loadRamisConfigUI();
   if (typeof renderRestaurantSettingsUI === 'function') {
     renderRestaurantSettingsUI();
@@ -6549,6 +7243,7 @@ window.saveSettings = async () => {
       address: document.getElementById('set-address').value,
       theme: document.getElementById('set-theme') ? document.getElementById('set-theme').value : 'default',
       receipt_autoprint: document.getElementById('set-receipt-autoprint')?.value || 'true',
+      pos_default_tab: document.getElementById('set-pos-default-tab')?.value || 'all',
       receipt_printer: document.getElementById('set-receipt-printer')?.value || '',
       restaurant_mode: isRestEnabled ? 'true' : 'false',
       kot_autoprint: document.getElementById('set-kot-autoprint')?.value || 'true',
@@ -6608,66 +7303,6 @@ window.saveSettings = async () => {
       btn.textContent = 'Save Settings';
     }
   }
-};
-
-function renderBizTemplates() {
-  const templates = [
-    { name: 'Grocery', icon: '🛒', products: ['Fresh Milk 1L', 'Cheddar Cheese', 'Basmati Rice 5kg', 'Red Lentils 1kg', 'Chili Powder 250g', 'Turmeric Powder', 'Sugar 1kg', 'Tea Leaves 250g'] },
-    { name: 'Bookshop', icon: '📚', products: ['A4 Paper Bundle', 'Blue Pen (Box)', 'Pencil Pack', 'Exercise Book', 'Geometry Box', 'Calculator'] },
-    { name: 'Meat Shop', icon: '🥩', products: ['Fresh Chicken 1kg', 'Beef Curry Cut', 'Pork Ribs', 'Mutton', 'Chicken Sausages', 'Beef Meatballs'] },
-    { name: 'Retail', icon: '👕', products: ['Cotton T-Shirt', 'Denim Jeans', 'Leather Belt', 'Socks (Pair)', 'Baseball Cap', 'Canvas Shoes'] }
-  ];
-
-  document.getElementById('biz-templates').innerHTML = templates.map(t => `
-    <div class="quick-action" onclick="applyTemplate('${t.name}')">
-      <div class="qa-icon">${t.icon}</div>
-      <div>
-        <div class="qa-text">${escapeHtml(t.name)} Template</div>
-        <div class="qa-sub">Load sample products</div>
-      </div>
-    </div>
-  `).join('');
-}
-
-window.applyTemplate = async (name) => {
-  if (!await showConfirmation(`Apply ${name} template? This will add sample products to your inventory.`, { title: 'Apply product template', confirmLabel: 'Apply template' })) return;
-  
-  const templates = {
-    'Grocery': [
-      { name: 'Fresh Milk 1L', category: 'Dairy', price: 320, cost: 280, barcode: '880123' },
-      { name: 'Cheddar Cheese', category: 'Dairy', price: 850, cost: 720, barcode: '880124' },
-      { name: 'Basmati Rice 5kg', category: 'Grains', price: 1250, cost: 1100, barcode: '880125' },
-      { name: 'Red Lentils 1kg', category: 'Grains', price: 480, cost: 420, barcode: '880126' },
-      { name: 'Chili Powder 250g', category: 'Spices', price: 280, cost: 210, barcode: '880127' }
-    ],
-    'Bookshop': [
-      { name: 'A4 Paper Bundle', category: 'Stationery', price: 1450, cost: 1200, barcode: '770123' },
-      { name: 'Blue Pen (Box)', category: 'Stationery', price: 450, cost: 350, barcode: '770124' },
-      { name: 'Exercise Book', category: 'Stationery', price: 120, cost: 90, barcode: '770125' }
-    ],
-    'Meat Shop': [
-      { name: 'Fresh Chicken 1kg', category: 'Poultry', price: 1150, cost: 950, barcode: '660123' },
-      { name: 'Beef Curry Cut', category: 'Meat', price: 2400, cost: 2100, barcode: '660124' }
-    ]
-  };
-
-  const prods = templates[name] || templates['Grocery'];
-  
-  // Add category if not exists
-  const existingCats = await db.categories.toArray();
-  for (const p of prods) {
-    if (!existingCats.find(c => c.name === p.category)) {
-      await db.categories.add({ name: p.category });
-      existingCats.push({ name: p.category });
-    }
-    await db.products.add({
-      name: p.name, sku: p.barcode, barcode: p.barcode, category: p.category,
-      retail_price: p.price, cost_price: p.cost, stock_qty: 100,
-      low_stock_threshold: 10, is_active: true, created_at: new Date().toISOString()
-    });
-  }
-
-  showToast('success', `${name} template applied! Check your inventory.`);
 };
 
 // --- MOBILE & SCANNING HELPERS ---

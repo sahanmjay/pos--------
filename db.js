@@ -50,11 +50,12 @@ function toggleForceOffline() {
 
 // ─── INDEXEDDB LOCAL STORAGE & STORE-AND-FORWARD ENGINE ───
 const IDB_NAME = 'nexpos_local_offline_db';
-const IDB_VERSION = 2; // 2: added stock_movements
+const IDB_VERSION = 3; // 2: added stock_movements, 3: stock_batches
 const ALL_IDB_STORES = [
   'organizations','products','categories','customers','sales','sale_items',
   'users','settings','attendance','held_carts','payroll','advances',
-  'pos_shifts','shift_closures','audit_log','offline_sales_queue','stock_movements'
+  'pos_shifts','shift_closures','audit_log','offline_sales_queue','stock_movements',
+  'stock_batches'
 ];
 
 let _idbPromise = null;
@@ -171,6 +172,25 @@ async function idbClear(storeName) {
 
 // ─── SUPABASE COMPATIBILITY LAYER WITH OFFLINE STORE-AND-FORWARD ───
 
+// PostgREST returns at most 1000 rows per request. Page through the rest, or a
+// busy shop's 1001st bill silently drops out of every total and bill number.
+// makeQuery builds a fresh, ordered query for each page.
+const PAGE_SIZE = 1000;
+async function fetchAllRows(makeQuery) {
+  const rows = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await makeQuery().range(from, from + PAGE_SIZE - 1);
+    if (error || !Array.isArray(data)) return { data: null, error: error || new Error('No data returned') };
+    rows.push(...data);
+    if (data.length < PAGE_SIZE) return { data: rows, error: null };
+  }
+}
+
+// Catalogue rows deleted in the cloud are dropped from the device cache too, or
+// an offline till keeps selling a menu that no longer exists. Limited to tables
+// whose offline-made rows are always flagged _is_offline (add(), never bulkAdd()).
+const PURGE_STALE_TABLES = ['products', 'categories'];
+
 class SupaQuery {
   constructor(table, filters) {
     this._table = table;
@@ -215,32 +235,7 @@ class SupaQuery {
     }
     return all[0] || null;
   }
-  async toArray() {
-    if (isOffline()) {
-      let all = await idbGetAll(this._table);
-      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
-        all = all.filter(x => x.organization_id == currentOrgId);
-      }
-      for (const f of this._filters) {
-        all = all.filter(x => x[f.field] == f.val);
-      }
-      return all;
-    }
-    try {
-      let q = supa.from(this._table).select('*');
-      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
-        q = q.eq('organization_id', currentOrgId);
-      }
-      for (const f of this._filters) q = q.eq(f.field, f.val);
-      const { data, error } = await q;
-      if (!error && data) {
-        idbPutMany(this._table, data).catch(() => {});
-        return data;
-      }
-    } catch (e) {
-      console.warn(`[Offline fallback] Query.toArray failed on ${this._table}:`, e);
-    }
-    // Fallback to local
+  async _local() {
     let all = await idbGetAll(this._table);
     if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
       all = all.filter(x => x.organization_id == currentOrgId);
@@ -250,56 +245,116 @@ class SupaQuery {
     }
     return all;
   }
+  async toArray() {
+    if (isOffline()) return this._local();
+    try {
+      const { data, error } = await fetchAllRows(() => {
+        let q = supa.from(this._table).select('*').order('id', { ascending: true });
+        if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._table)) {
+          q = q.eq('organization_id', currentOrgId);
+        }
+        for (const f of this._filters) q = q.eq(f.field, f.val);
+        return q;
+      });
+      if (!error && data) return mergePending(this._table, data, await this._local());
+    } catch (e) {
+      console.warn(`[Offline fallback] Query.toArray failed on ${this._table}:`, e);
+    }
+    return this._local();
+  }
+}
+
+// Cloud rows plus what this device made offline that has not reached the
+// cloud yet. `purge` is for whole-table reads only: then a cached row missing
+// from the cloud was deleted there.
+async function mergePending(name, data, local, purge = false) {
+  const cloudIds = new Set(data.map(d => d.id));
+  // A synced offline sale is no longer pending once it has left the queue;
+  // purge leftovers so they stop showing next to their cloud copy.
+  const queued = name === 'sales'
+    ? new Set((await idbGetAll('offline_sales_queue')).map(q => q.id))
+    : null;
+  const pendingLocal = [];
+  for (const l of local) {
+    if (cloudIds.has(l.id)) continue;
+    if (l._is_offline && (!queued || queued.has(l.id))) pendingLocal.push(l);
+    else if (l._is_offline || (purge && PURGE_STALE_TABLES.includes(name))) {
+      idbDelete(name, l.id).catch(() => {});
+    }
+  }
+  idbPutMany(name, data).catch(() => {});
+  return [...data, ...pendingLocal];
 }
 
 class SupaTable {
   constructor(name) { this._name = name; }
 
-  async toArray() {
-    if (isOffline()) {
-      let local = await idbGetAll(this._name);
-      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
-        local = local.filter(x => x.organization_id == currentOrgId);
-      }
-      return local;
-    }
-    try {
-      let q = supa.from(this._name).select('*').order('id', { ascending: true });
-      if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
-        q = q.eq('organization_id', currentOrgId);
-      }
-      const { data, error } = await q;
-      if (!error && Array.isArray(data)) {
-        let local = await idbGetAll(this._name);
-        if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
-          local = local.filter(x => x.organization_id == currentOrgId);
-        }
-        // Merge any locally-created offline items. Anything else only in the
-        // cache was deleted in the cloud, even when the cloud list is now empty.
-        const cloudIds = new Set(data.map(d => d.id));
-        // A synced offline sale is no longer pending once it has left the queue;
-        // purge leftovers so they stop showing next to their cloud copy.
-        const queued = this._name === 'sales'
-          ? new Set((await idbGetAll('offline_sales_queue')).map(q => q.id))
-          : null;
-        const pendingLocal = [];
-        for (const l of local) {
-          if (cloudIds.has(l.id) || !l._is_offline) continue;
-          if (!queued || queued.has(l.id)) pendingLocal.push(l);
-          else idbDelete(this._name, l.id).catch(() => {});
-        }
+  _scoped() {
+    return !!currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name);
+  }
 
-        idbPutMany(this._name, data).catch(() => {});
-        return [...data, ...pendingLocal];
-      }
+  // A cloud query for this business's rows, ordered so pages line up
+  _cloud(build = q => q) {
+    let q = build(supa.from(this._name).select('*')).order('id', { ascending: true });
+    if (this._scoped()) q = q.eq('organization_id', currentOrgId);
+    return q;
+  }
+
+  async _localRows() {
+    const local = await idbGetAll(this._name);
+    return this._scoped() ? local.filter(x => x.organization_id == currentOrgId) : local;
+  }
+
+  async toArray() {
+    if (isOffline()) return this._localRows();
+    try {
+      const { data, error } = await fetchAllRows(() => this._cloud());
+      if (!error) return mergePending(this._name, data, await this._localRows(), true);
     } catch (e) {
       console.warn(`[Offline fallback] toArray on ${this._name}:`, e);
     }
-    let local = await idbGetAll(this._name);
-    if (currentOrgId && !isSuperAdmin && !GLOBAL_SAAS_TABLES.includes(this._name)) {
-      local = local.filter(x => x.organization_id == currentOrgId);
+    return this._localRows();
+  }
+
+  // Rows whose `field` falls in [from, to), filtered by the server so one
+  // day's report does not download the whole history. ISO strings in.
+  async between(field, from, to) {
+    const lo = Date.parse(from), hi = Date.parse(to);
+    const inRange = x => { const t = Date.parse(x[field]); return t >= lo && t < hi; };
+    if (!isOffline()) {
+      try {
+        const { data, error } = await fetchAllRows(() => this._cloud(q => q.gte(field, from).lt(field, to)));
+        if (!error) return mergePending(this._name, data, (await this._localRows()).filter(inRange));
+      } catch (e) {
+        console.warn(`[Offline fallback] between on ${this._name}:`, e);
+      }
     }
-    return local;
+    return (await this._localRows()).filter(inRange);
+  }
+
+  // Rows whose `field` is one of `values`, e.g. the lines of one day's bills.
+  // Values the cloud has nothing for (an offline bill not synced yet) come
+  // from the device instead.
+  async anyOf(field, values) {
+    if (!values.length) return [];
+    const want = new Set(values.map(String));
+    const local = (await this._localRows()).filter(x => want.has(String(x[field])));
+    if (isOffline()) return local;
+    try {
+      const rows = [];
+      for (let i = 0; i < values.length; i += 150) { // keeps the request URL short
+        const chunk = values.slice(i, i + 150);
+        const { data, error } = await fetchAllRows(() => this._cloud(q => q.in(field, chunk)));
+        if (error) throw error;
+        rows.push(...data);
+      }
+      idbPutMany(this._name, rows).catch(() => {});
+      const found = new Set(rows.map(r => String(r[field])));
+      return [...rows, ...local.filter(x => !found.has(String(x[field])))];
+    } catch (e) {
+      console.warn(`[Offline fallback] anyOf on ${this._name}:`, e);
+      return local;
+    }
   }
 
   async get(id) {
@@ -501,6 +556,10 @@ const db = {
   productsSupportItemType,
   // Whether public.products can hold a dish's recipe
   productsSupportRecipe,
+  // Whether FIFO stock batches (and recipe snapshots on bill lines) are set up
+  supportsBatches,
+  // Whether products can be marked high demand
+  productsSupportPopular,
   // Whether public.sale_items can store the cost at the moment of sale
   saleItemsSupportCost,
   // Whether public.payroll can record which basis a payslip was paid on
@@ -519,6 +578,7 @@ const db = {
   advances:      new SupaTable('advances'),
   expenses:      new SupaTable('expenses'),
   stock_movements: new SupaTable('stock_movements'),
+  stock_batches: new SupaTable('stock_batches'),
   pos_shifts:    new SupaTable('pos_shifts'),
   shift_closures: new SupaTable('shift_closures'),
   audit_log:     new SupaTable('audit_log'),
@@ -847,6 +907,44 @@ async function productsSupportItemType() {
     return true; // network hiccup, not a missing column
   }
   return _itemTypeSupported;
+}
+
+// stock_batches and sale_items.recipe arrive with
+// migrations/2026-10-12-fifo-stock.sql. Until it has run, stock keeps working
+// as before, just without batch prices. Offline it is never assumed: batch
+// writes made offline would not reach the cloud anyway.
+let _batchesSupported = null;
+async function supportsBatches() {
+  if (_batchesSupported !== null) return _batchesSupported;
+  if (isOffline()) return false;
+  try {
+    const [batches, lines] = await Promise.all([
+      supa.from('stock_batches').select('id').limit(1),
+      supa.from('sale_items').select('recipe').limit(1),
+    ]);
+    _batchesSupported = !batches.error && !lines.error;
+    if (!_batchesSupported) console.warn('[stock_batches] Not set up — run migrations/2026-10-12-fifo-stock.sql.');
+  } catch (e) {
+    return false;
+  }
+  return _batchesSupported;
+}
+
+// products.is_popular arrives with migrations/2026-10-12-high-demand.sql. A
+// product update carrying an unknown column is rejected whole, so the ★ is
+// only written once the column is confirmed.
+let _popularSupported = null;
+async function productsSupportPopular() {
+  if (_popularSupported !== null) return _popularSupported;
+  if (isOffline()) return false;
+  try {
+    const { error } = await supa.from('products').select('is_popular').limit(1);
+    _popularSupported = !error;
+    if (error) console.warn('[is_popular] Column not present on products — run migrations/2026-10-12-high-demand.sql.');
+  } catch (e) {
+    return false;
+  }
+  return _popularSupported;
 }
 
 // products.recipe arrives with saas-migration.sql. A product update carrying an

@@ -19,7 +19,7 @@
 <link rel="shortcut icon" href="favicon.ico">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=20261002_recipe_v24">
+<link rel="stylesheet" href="style.css?v=20261012_fifo_v26">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -324,7 +324,7 @@
               <div class="form-section-title" style="margin-top:24px">Quick Setup</div>
               <div class="form-group">
                 <label class="form-label" style="display:flex;align-items:center;gap:8px">
-                  <input type="checkbox" id="sa-new-load-template" checked> Load sample products for selected business type
+                  <input type="checkbox" id="sa-new-load-template"> Load sample products for selected business type
                 </label>
               </div>
 
@@ -833,14 +833,30 @@
           </div>
           <div class="card">
             <div class="filter-bar">
+              <div class="pos-view-toggles" role="group" aria-label="Stock view">
+                <button type="button" class="view-toggle-btn active" id="stk-view-now" onclick="setStockView('now')">Stock now</button>
+                <button type="button" class="view-toggle-btn" id="stk-view-day" onclick="setStockView('day')">Daily sheet</button>
+              </div>
               <div class="search-input-wrap"><span class="search-icon">🔍</span><input class="search-input" id="stk-search" placeholder="Find an item…" oninput="renderStockScreen()"></div>
               <div class="stk-chips" id="stk-chips"></div>
+              <input type="date" class="filter-select" id="stk-day" style="display:none" onchange="renderStockScreen()" aria-label="Day">
             </div>
             <div class="data-table-wrap">
-              <table class="data-table stk-table">
+              <table class="data-table stk-table" id="stk-now-table">
                 <thead><tr><th>Item</th><th>Left</th><th></th></tr></thead>
                 <tbody id="stock-tbody"></tbody>
               </table>
+              <table class="data-table stk-table stk-day-table" id="stk-day-table" style="display:none">
+                <thead><tr>
+                  <th>Item</th><th class="num">Opening</th><th class="num">Received</th><th class="num">Used / sold</th>
+                  <th class="num">Closing</th><th class="num">Value</th><th class="num" id="stk-count-head">Counted at close</th>
+                </tr></thead>
+                <tbody id="stk-day-tbody"></tbody>
+              </table>
+            </div>
+            <div class="stk-day-foot" id="stk-day-foot" style="display:none">
+              <span id="stk-day-note"></span>
+              <button class="btn btn-primary" id="stk-count-save" onclick="saveClosingCounts()">Save closing stock</button>
             </div>
           </div>
         </div>
@@ -1201,6 +1217,13 @@
                 </select>
               </div>
               <div class="form-group">
+                <label class="form-label" for="set-pos-default-tab">Till opens on</label>
+                <select class="form-input" id="set-pos-default-tab">
+                  <option value="all">All items</option>
+                  <option value="popular">High demand items (marked ★ in Products)</option>
+                </select>
+              </div>
+              <div class="form-group">
                 <label class="form-label">Receipt Printer (80mm)</label>
                 <div style="display:flex; gap:8px; align-items:center">
                   <select class="form-input" id="set-receipt-printer" style="flex:1">
@@ -1344,12 +1367,6 @@
               <button class="btn btn-secondary" onclick="loadSettingsForm()">Reset</button>
             </div>
           </div></div>
-
-          <div class="card" style="margin-top:20px"><div class="card-body">
-            <div class="form-section-title">Quick Setup — Load Business Template</div>
-            <div class="page-subtitle" style="margin-bottom:16px">Load sample products and categories for your business type</div>
-            <div class="quick-actions" id="biz-templates"></div>
-          </div></div>
         </div>
       </div>
 
@@ -1381,12 +1398,21 @@
                 <input type="date" class="filter-select" id="report-end-date">
               </div>
 
-              <div style="display:flex; gap:10px">
+              <div class="dr-controls" id="daily-report-controls">
+                <input type="date" class="filter-select" id="dr-date" onchange="renderDailyReport()" aria-label="Report date">
+                <button class="btn btn-secondary" onclick="printDailyReport()"><i class="fa-solid fa-print" aria-hidden="true"></i> Print</button>
+                <button class="btn btn-primary" id="dr-pdf-btn" onclick="downloadDailyReportPDF()"><i class="fa-solid fa-file-arrow-down" aria-hidden="true"></i> Download PDF</button>
+              </div>
+
+              <div id="period-report-controls" style="display:none; gap:10px">
                 <button class="btn btn-primary" onclick="downloadPDFReport()" id="btn-download-pdf">📄 Download PDF Report</button>
-                <button class="btn btn-secondary" onclick="refreshReport()">🔄 Refresh Data</button>
+                <button class="btn btn-secondary" onclick="renderAIReports()">🔄 Refresh Data</button>
               </div>
             </div>
           </div>
+
+          <!-- Daily report: one printable sheet for the chosen day -->
+          <div id="daily-report-view"></div>
 
           <!-- Active Report Content (Hidden until loaded) -->
           <div id="report-main-content" style="display:none; flex-direction:column; gap:24px">
@@ -1581,8 +1607,8 @@
 </div>
 
 <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js';document.head.appendChild(s);"></script>
-<script src="db.js?v=20261002_recipe_v24"></script>
-<script src="app.js?v=20261002_recipe_v24"></script>
+<script src="db.js?v=20261012_fifo_v26"></script>
+<script src="app.js?v=20261012_fifo_v26"></script>
 <script>
 window.addEventListener('keydown', (e) => {
   if ((e.key === '/' || ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K'))) && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {
