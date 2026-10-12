@@ -76,7 +76,45 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   
   await loadSettings();
+  await restoreSession();
 });
+
+// ─── STAY SIGNED IN ───
+// A till that is switched off overnight should open ready to sell. The user
+// (never the password) is kept on this device until Sign out.
+const SESSION_KEY = 'nexpos_session';
+
+function rememberSession(user) {
+  try {
+    if (!document.getElementById('login-remember')?.checked) return localStorage.removeItem(SESSION_KEY);
+    const { password, ...safe } = user;
+    localStorage.setItem(SESSION_KEY, JSON.stringify(safe));
+  } catch (e) {}
+}
+
+function forgetSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+}
+
+async function restoreSession() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) {}
+  if (!saved || !saved.organization_id) return;
+  // Online, re-read the account: a removed or deactivated user is signed out,
+  // and a changed role or name applies straight away. Offline, trust the device.
+  if (!isOffline() && saved.id) {
+    db.currentOrgId = saved.organization_id;
+    try {
+      const { data, error } = await supa.from('users').select('*').eq('id', saved.id).maybeSingle();
+      if (!error) {
+        if (!data || data.is_active === false) { forgetSession(); db.currentOrgId = null; return; }
+        const { password, ...fresh } = data;
+        saved = { ...saved, ...fresh };
+      }
+    } catch (e) {}
+  }
+  await completeLogin(saved, { audit: false });
+}
 
 async function syncOfflineSales() {
   if (typeof syncOfflineSalesNow === 'function') {
@@ -792,7 +830,10 @@ async function completeLogin(user, options = {}) {
   currentUser = user;
   db.currentOrgId = user.organization_id;
   db.isSuperAdmin = false;
-  if (audit) await logSecurityEvent('LOGIN_SUCCESS');
+  if (audit) {
+    await logSecurityEvent('LOGIN_SUCCESS');
+    rememberSession(user); // a fresh sign-in from the form; a restored one is already saved
+  }
   
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').classList.add('visible');
@@ -876,6 +917,7 @@ async function completeLogin(user, options = {}) {
 }
 
 async function signOut() {
+  forgetSession();
   currentUser = null;
   superAdminUser = null;
   currentOrgId = null;
