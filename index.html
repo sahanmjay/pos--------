@@ -19,7 +19,7 @@
 <link rel="shortcut icon" href="favicon.ico">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=20261012_fifo_v26">
+<link rel="stylesheet" href="style.css?v=20261012_fifo_v27">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -1400,7 +1400,8 @@
 
               <div class="dr-controls" id="daily-report-controls">
                 <input type="date" class="filter-select" id="dr-date" onchange="renderDailyReport()" aria-label="Report date">
-                <button class="btn btn-secondary" onclick="printDailyReport()"><i class="fa-solid fa-print" aria-hidden="true"></i> Print</button>
+                <button class="btn btn-secondary" onclick="printDailyReport()" title="Full page, A4"><i class="fa-solid fa-print" aria-hidden="true"></i> Print A4</button>
+                <button class="btn btn-secondary" onclick="printDailyReport80()" title="On the 80 mm receipt printer"><i class="fa-solid fa-receipt" aria-hidden="true"></i> Print 80 mm</button>
                 <button class="btn btn-primary" id="dr-pdf-btn" onclick="downloadDailyReportPDF()"><i class="fa-solid fa-file-arrow-down" aria-hidden="true"></i> Download PDF</button>
               </div>
 
@@ -1607,8 +1608,8 @@
 </div>
 
 <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js';document.head.appendChild(s);"></script>
-<script src="db.js?v=20261012_fifo_v26"></script>
-<script src="app.js?v=20261012_fifo_v26"></script>
+<script src="db.js?v=20261012_fifo_v27"></script>
+<script src="app.js?v=20261012_fifo_v27"></script>
 <script>
 window.addEventListener('keydown', (e) => {
   if ((e.key === '/' || ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K'))) && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {

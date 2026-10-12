@@ -5882,6 +5882,7 @@ window.renderDailyReport = async () => {
     const report = await buildDailyReport(day);
     if (input.value !== day) return; // another day was picked meanwhile
     view.innerHTML = dailyReportHtml(report);
+    shownDailyReport = report;
   } catch (err) {
     console.error('Daily report error:', err);
     view.innerHTML = `<div class="error-state">Could not build the report: ${escapeHtml(err.message || String(err))}</div>`;
@@ -6103,6 +6104,93 @@ function dailyReportHtml(r) {
     <footer class="dr-foot">${escapeHtml(currentSettings.biz_name || 'NexPOS')} · Daily report · ${escapeHtml(r.day)}</footer>
   </article>`;
 }
+
+// The report on screen, for the 80 mm slip
+let shownDailyReport = null;
+
+// The same day as an 80 mm slip for the receipt printer. The thermal print
+// styles set every glyph to 12.5px bold and size only three table columns
+// (item / qty / amount), so the slip is label–amount lines plus 3-column tables.
+function dailyReportSlipHtml(r) {
+  const m = n => escapeHtml(formatMoney(n));
+  const q = n => escapeHtml(qtyText(n, ''));
+  const t = r.takings;
+  const line = (label, value = '', strong = false) =>
+    `<div style="display:flex;justify-content:space-between;gap:8px${strong ? ';font-weight:800' : ''}"><span>${label}</span><span style="white-space:nowrap">${value}</span></div>`;
+  const rule = '<div class="thermal-dashed" style="border-top:1px dashed var(--rule);margin:6px 0"></div>';
+  const head = text => `<div style="font-weight:800;margin:2px 0">${text}</div>`;
+  const time = iso => escapeHtml(new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
+  // Table amounts go without "Rs.": the amount column is ~13 characters on 80 mm paper
+  const amt = n => escapeHtml((Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  const table = rows => `<table style="width:100%">
+    <tr><th style="text-align:left">Item</th><th>Qty</th><th style="text-align:right">Amount</th></tr>${rows}</table>`;
+  const salesRows = list => list.map(x => `<tr><td>${escapeHtml(x.name)}</td><td>${q(x.qty)}</td><td style="text-align:right;white-space:nowrap">${amt(x.amount)}</td></tr>`).join('');
+  const bill = x => '#' + escapeHtml(String(x.bill_no || x.sale_id || billNumber(x)));
+  const date = new Date(`${r.day}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  const stockValue = r.stock.reduce((a, s) => a + s.value, 0);
+  const changes = r.discounted.length + r.edited.length + r.deleted.length + r.voided.length;
+
+  return `
+    <div style="text-align:center">
+      <h2 style="margin:0">${escapeHtml(currentSettings.biz_name || 'NexPOS')}</h2>
+      <div style="font-weight:800">DAILY REPORT</div>
+      <div>${escapeHtml(date)}</div>
+    </div>
+    ${rule}
+    ${line('Orders', t.orders)}
+    ${line('Gross sales', m(t.gross))}
+    ${line('Discounts', '-' + m(t.discount))}
+    ${line('Net sales', m(t.net))}
+    ${line('Tax', m(t.tax))}
+    ${line('TOTAL COLLECTED', m(t.collected), true)}
+    ${line('Cost (FIFO)', '-' + m(r.cogs))}
+    ${line('GROSS PROFIT', m(r.profit), true)}
+    ${rule}
+    ${head('PAYMENTS')}
+    ${r.payments.map(p => line(`${escapeHtml(p.method.charAt(0).toUpperCase() + p.method.slice(1))} (${p.count})`, m(p.amount))).join('') || line('No sales')}
+    ${rule}
+    ${head('BY CATEGORY')}
+    ${r.categories.length ? table(salesRows(r.categories)) : line('No sales')}
+    ${rule}
+    ${head('BY PRODUCT')}
+    ${r.products.length ? table(salesRows(r.products)) : line('No sales')}
+    ${rule}
+    ${head('STOCK')}
+    <div>Opening + in - used = closing</div>
+    ${r.stock.map(s => `
+      ${line(`${escapeHtml(s.p.name)} (${escapeHtml(s.p.unit || '')})`, m(s.value))}
+      <div style="padding-left:8px">${q(s.opening)} + ${q(s.received)} - ${q(s.used)} = ${q(s.closing)}${isLowAtClose(s) ? ' LOW' : ''}</div>`).join('') || line('No stocked items')}
+    ${r.stock.length ? line('STOCK VALUE', m(stockValue), true) : ''}
+    ${r.low.length ? rule + head('LOW STOCK') + r.low.map(s =>
+      line(escapeHtml(s.p.name), `${q(s.closing)} / min ${q(s.p.low_stock_threshold)} ${escapeHtml(s.p.unit || '')}`)).join('') : ''}
+    ${changes ? rule + head('DISCOUNTS / EDITS / DELETED')
+      + r.discounted.map(s => line(`${bill(s)} ${time(s.date)} discount`, '-' + m(s.discount))).join('')
+      + r.edited.map(e => line(`${bill(e)} edited ${time(e.at)}`) + line('&nbsp;&nbsp;was / now', `${m(e.before && e.before.total)} / ${m(e.after && e.after.total)}`)).join('')
+      + r.deleted.map(e => line(`${bill(e)} deleted ${time(e.at)}`, m(e.total))).join('')
+      + r.voided.map(s => line(`${bill(s)} voided`, m(s.total_amount))).join('')
+      + '<div>Deleted and voided bills are not in the totals.</div>' : ''}
+    ${rule}
+    <div style="text-align:center">Printed ${escapeHtml(new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}${currentUser ? ` by ${escapeHtml(currentUser.display_name || currentUser.username || '')}` : ''}</div>`;
+}
+
+// Prints the slip on the receipt printer the same way a bill does: through the
+// receipt overlay (80 mm print styles), silently to the chosen printer on the
+// desktop app, through the print dialog in a browser.
+window.printDailyReport80 = () => {
+  if (!shownDailyReport || !document.getElementById('dr-paper')) return showToast('error', 'Wait for the report to load first');
+  const body = document.getElementById('receipt-body');
+  const overlay = document.getElementById('receipt-overlay');
+  if (!body || !overlay) return showToast('error', 'Receipt printing is unavailable here');
+  // Not a sale: nothing goes into currentReceiptData, so reprint/share never pick this up
+  const banner = document.getElementById('receipt-status-banner');
+  if (banner) banner.style.display = 'none';
+  body.innerHTML = dailyReportSlipHtml(shownDailyReport);
+  overlay.classList.add('open', 'autoprint-mode');
+  setTimeout(async () => {
+    await printReceipt({ quiet: true });
+    setTimeout(() => overlay.classList.remove('open', 'autoprint-mode'), 400);
+  }, 120);
+};
 
 // The sheet's own rules (every .dr- rule in the stylesheet), so it prints the
 // same in a bare window that does not carry the till's 80 mm receipt styles.
