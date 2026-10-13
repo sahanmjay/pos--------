@@ -673,6 +673,8 @@ async function doLogin() {
 
     // 2. Direct Query: Look up user across businesses by username & password
     let matchedUser = null;
+    // Set when the cloud could not be asked at all, so that is not reported as a wrong password
+    let cloudProblem = supa ? null : 'the online database script did not load';
     try {
       // First attempt: search in Supabase users table
       const { data: usersData, error: uErr } = await supa
@@ -680,6 +682,7 @@ async function doLogin() {
         .select('*, organizations(*)')
         .eq('password', p)
         .eq('is_active', true);
+      if (uErr) cloudProblem = uErr.message || 'no answer from the server';
 
       if (usersData && usersData.length > 0) {
         matchedUser = usersData.find(usr => 
@@ -689,6 +692,7 @@ async function doLogin() {
       }
     } catch (e) {
       console.warn('Supabase user search notice:', e);
+      cloudProblem = cloudProblem || e.message || 'no answer from the server';
     }
 
     // Secondary attempt: exact query
@@ -762,7 +766,10 @@ async function doLogin() {
     // 4. Invalid credentials (no account lockout)
     try { localStorage.removeItem('pos_login_attempts'); } catch(e) {}
     await logSecurityEvent('LOGIN_FAILURE', { username: u });
-    err.textContent = 'Invalid username or password';
+    if (cloudProblem) console.warn('Login could not reach the cloud:', cloudProblem);
+    err.textContent = cloudProblem
+      ? `Could not reach NexPOS online (${cloudProblem}). Check the internet connection and try again — your password was not checked.`
+      : 'Invalid username or password';
     err.style.display = 'block';
 
   } finally {
