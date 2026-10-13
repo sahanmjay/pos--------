@@ -5610,7 +5610,10 @@ window.saveExpense = async () => {
     if (id == null) {
       record.recorded_by = (currentUser && (currentUser.display_name || currentUser.username)) || '';
       await db.expenses.add(record);
-      showToast('success', `${category} expense of ${formatMoney(amount)} added`);
+      // add() keeps it on this device when the cloud refuses it; say so
+      if (record._is_offline && !isOffline()) {
+        showToast('error', `Saved on this device only — the cloud did not accept the expense, so other tills and reports elsewhere will not see it`);
+      } else showToast('success', `${category} expense of ${formatMoney(amount)} added`);
       logSecurityEvent('EXPENSE_ADDED', { category, amount, expense_type, date });
     } else {
       await db.expenses.update(id, record);
@@ -5932,6 +5935,8 @@ window.renderDailyReport = async () => {
   if (!view || !input) return;
   input.max = localDay();
   if (!input.value) input.value = localDay();
+  const deduct = document.getElementById('dr-deduct');
+  if (deduct) deduct.checked = drDeductExpenses();
   const day = input.value;
   view.innerHTML = '<div class="spinner-lg" style="margin:50px auto"></div>';
   try {
@@ -6005,6 +6010,12 @@ async function buildDailyReport(day) {
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const stock = await dailyStock(start, end, stocked);
 
+  // The day's daily expenses (monthly fixed costs are left to the monthly view)
+  const expenses = (await db.expenses.toArray().catch(() => []))
+    .filter(x => (x.expense_type || 'daily') === 'daily' && x.date && localDay(new Date(`${String(x.date).slice(0, 10)}T00:00:00`)) === day)
+    .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0));
+  const expenseTotal = expenses.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+
   const details = e => { try { return JSON.parse(e.details || '{}'); } catch (x) { return {}; } };
   const events = type => audit
     .filter(e => e.event_type === type)
@@ -6014,6 +6025,7 @@ async function buildDailyReport(day) {
   return {
     day, takings, cogs,
     profit: takings.net - cogs,
+    expenses, expenseTotal,
     payments: [...payments.values()].sort(byAmount),
     categories: [...byCategory.values()].sort(byAmount),
     products: [...byProduct.values()].sort(byAmount),
@@ -6040,6 +6052,8 @@ function dailyReportHtml(r) {
   const stockValue = r.stock.reduce((a, s) => a + s.value, 0);
   const salesRow = (cells, x) => `${cells}<td class="num">${q(x.qty)}</td><td class="num">${m(x.amount)}</td><td class="num">${m(x.cost)}</td><td class="num">${m(x.amount - x.cost)}</td>`;
   const changes = r.discounted.length + r.edited.length + r.deleted.length + r.voided.length;
+  const deduct = drDeductExpenses();
+  const net = r.profit - r.expenseTotal;
 
   return `
   <article class="dr-paper" id="dr-paper" data-day="${escapeHtml(r.day)}">
@@ -6056,7 +6070,9 @@ function dailyReportHtml(r) {
       <div class="dr-kpi"><span>Orders</span><strong>${t.orders}</strong></div>
       <div class="dr-kpi"><span>Total collected</span><strong>${m(t.collected)}</strong></div>
       <div class="dr-kpi"><span>Cost of goods (FIFO)</span><strong>${m(r.cogs)}</strong></div>
-      <div class="dr-kpi"><span>Gross profit</span><strong>${m(r.profit)}</strong>${t.net ? `<em>${pct(r.profit, t.net)} of net sales</em>` : ''}</div>
+      ${deduct
+        ? `<div class="dr-kpi"><span>Net profit</span><strong>${m(net)}</strong><em>after ${m(r.expenseTotal)} expenses</em></div>`
+        : `<div class="dr-kpi"><span>Gross profit</span><strong>${m(r.profit)}</strong>${t.net ? `<em>${pct(r.profit, t.net)} of net sales</em>` : ''}</div>`}
     </section>
 
     <div class="dr-cols">
@@ -6069,7 +6085,9 @@ function dailyReportHtml(r) {
           <tr><td>Tax collected</td><td class="num">${m(t.tax)}</td></tr>
           <tr class="dr-sub"><td>Total collected</td><td class="num">${m(t.collected)}</td></tr>
           <tr><td>Cost of goods sold (FIFO)</td><td class="num">− ${m(r.cogs)}</td></tr>
-          <tr class="dr-total"><td>Gross profit <span>net sales − cost</span></td><td class="num">${m(r.profit)}</td></tr>
+          <tr class="${deduct ? 'dr-sub' : 'dr-total'}"><td>Gross profit <span>net sales − cost</span></td><td class="num">${m(r.profit)}</td></tr>
+          ${deduct ? `<tr><td>Expenses (today)</td><td class="num">− ${m(r.expenseTotal)}</td></tr>
+          <tr class="dr-total"><td>Net profit <span>gross profit − expenses</span></td><td class="num">${m(net)}</td></tr>` : ''}
         </tbody></table>
       </section>
       <section class="dr-block">
@@ -6098,6 +6116,16 @@ function dailyReportHtml(r) {
       </table>
       <p class="dr-note">Amounts are before bill discounts. Cost is the FIFO batch price of the stock, or of the recipe ingredients, each item used.</p>
     </section>
+
+    ${r.expenses.length ? `
+    <section class="dr-block">
+      <h3>Expenses</h3>
+      <table class="dr-table">
+        <thead><tr><th>Category</th><th>Note</th><th class="num">Amount</th></tr></thead>
+        <tbody>${r.expenses.map(x => `<tr><td>${escapeHtml(x.category || 'Other')}</td><td class="dr-muted">${escapeHtml(x.description || '')}</td><td class="num">${m(x.amount)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="2">Total expenses${deduct ? '' : ' (not deducted)'}</td><td class="num">${m(r.expenseTotal)}</td></tr></tfoot>
+      </table>
+    </section>` : ''}
 
     <section class="dr-block">
       <h3>Stock</h3>
@@ -6161,6 +6189,14 @@ function dailyReportHtml(r) {
   </article>`;
 }
 
+// Per till: whether the daily report takes the day's expenses off the profit
+const drDeductExpenses = () => { try { return localStorage.getItem('nexpos_dr_expenses') !== '0'; } catch (e) { return true; } };
+window.setDrDeductExpenses = (on) => {
+  try { localStorage.setItem('nexpos_dr_expenses', on ? '1' : '0'); } catch (e) {}
+  const view = document.getElementById('daily-report-view');
+  if (shownDailyReport && view) view.innerHTML = dailyReportHtml(shownDailyReport);
+};
+
 // The report on screen, for the 80 mm slip
 let shownDailyReport = null;
 
@@ -6201,6 +6237,8 @@ function dailyReportSlipHtml(r) {
     ${line('TOTAL COLLECTED', m(t.collected), true)}
     ${line('Cost (FIFO)', '-' + m(r.cogs))}
     ${line('GROSS PROFIT', m(r.profit), true)}
+    ${drDeductExpenses() ? line('Expenses', '-' + m(r.expenseTotal)) + line('NET PROFIT', m(r.profit - r.expenseTotal), true) : ''}
+    ${r.expenses.length ? rule + head('EXPENSES') + r.expenses.map(x => line(escapeHtml(x.category || 'Other') + (x.description ? ' - ' + escapeHtml(x.description) : ''), m(x.amount))).join('') : ''}
     ${rule}
     ${head('PAYMENTS')}
     ${r.payments.map(p => line(`${escapeHtml(p.method.charAt(0).toUpperCase() + p.method.slice(1))} (${p.count})`, m(p.amount))).join('') || line('No sales')}
