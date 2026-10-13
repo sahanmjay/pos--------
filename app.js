@@ -4773,8 +4773,13 @@ window.saveUser = async () => {
     ot_rate: parseFloat(document.getElementById('f-usr-ot-rate')?.value) || 0
   };
   if(id) await db.users.update(parseInt(id), u); else await db.users.add(u);
-  closeModal(); 
-  renderUsersTable(); 
+  closeModal();
+  renderUsersTable();
+  // add() keeps the account on this device when the cloud refuses it; a login
+  // that only works on one browser must not look like success
+  if (u._is_offline && !isOffline()) {
+    return showToast('error', `${displayName} was saved on this device only — the cloud did not accept it, so other tills cannot sign in with it`);
+  }
   showToast('success', id ? 'Staff account updated' : 'New employee created with assigned password');
 };
 window.deleteUser = async (id, name) => {
