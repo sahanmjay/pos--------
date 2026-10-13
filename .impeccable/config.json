@@ -9,6 +9,12 @@
         "value": "inter",
         "createdAt": "2026-09-29T16:46:03.651Z",
         "reason": "claude: user rejected a distinctive direction and asked for premium-but-simple; Inter chosen deliberately as the workhorse UI face for this Operate app"
+      },
+      {
+        "rule": "overused-font",
+        "value": "arial",
+        "createdAt": "2026-10-13T05:13:38.406Z",
+        "reason": "Claude: thermal receipt print font (@media print, 80mm) chosen for a heavy face guaranteed on Windows tills; not a screen typography choice"
       }
     ]
   }

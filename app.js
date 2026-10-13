@@ -496,6 +496,8 @@ async function loadSettings() {
       if (!currentSettings.tax_rate) currentSettings.tax_rate = String(org.tax_rate || 0);
       if (!currentSettings.phone) currentSettings.phone = org.phone || '';
       if (!currentSettings.address) currentSettings.address = org.address || '';
+      // The logo is kept on the business record too, so a new till or browser has it
+      if (!currentSettings.biz_logo && org.logo_url) currentSettings.biz_logo = org.logo_url;
       if (!currentSettings.receipt_autoprint) currentSettings.receipt_autoprint = 'true';
       currentSettings.plan_id = org.plan_id || 'free';
     }
@@ -7105,6 +7107,39 @@ window.updateLogoPreviewUI = () => {
   }
 };
 
+// A thermal printer has one colour. Greys and colours come out as faint stipple,
+// so the logo becomes pure black and white, split at the threshold that best
+// separates its dark and light pixels (Otsu's method).
+function toBlackAndWhite(ctx, w, h) {
+  const image = ctx.getImageData(0, 0, w, h);
+  const px = image.data;
+  const lum = new Uint8Array(w * h);
+  const hist = new Array(256).fill(0);
+  for (let i = 0, j = 0; i < px.length; i += 4, j++) {
+    lum[j] = Math.round(0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]);
+    hist[lum[j]]++;
+  }
+  let sumAll = 0;
+  for (let t = 0; t < 256; t++) sumAll += t * hist[t];
+  let best = 128, bestVar = -1, sumB = 0, wB = 0;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = lum.length - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const diff = sumB / wB - (sumAll - sumB) / wF;
+    const between = wB * wF * diff * diff;
+    if (between > bestVar) { bestVar = between; best = t; }
+  }
+  for (let i = 0, j = 0; i < px.length; i += 4, j++) {
+    const v = lum[j] <= best ? 0 : 255;
+    px[i] = px[i + 1] = px[i + 2] = v;
+    px[i + 3] = 255;
+  }
+  ctx.putImageData(image, 0, 0);
+}
+
 window.handleLogoFileInput = (input) => {
   const file = input?.files?.[0];
   if (!file) return;
@@ -7133,13 +7168,19 @@ window.handleLogoFileInput = (input) => {
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext('2d');
+      // White first: a transparent logo saved as JPEG otherwise printed as a black box
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
       ctx.drawImage(img, 0, 0, width, height);
+      toBlackAndWhite(ctx, width, height);
 
-      const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
-      const compressedDataUrl = canvas.toDataURL(mimeType, 0.88);
+      // Pure black and white compresses best as PNG and prints crisp on a thermal head
+      const compressedDataUrl = canvas.toDataURL('image/png');
 
       currentSettings.biz_logo = compressedDataUrl;
       updateLogoPreviewUI();
+      // Also on the business record, so every till and browser gets the logo
+      if (db.currentOrgId) db.organizations.update(db.currentOrgId, { logo_url: compressedDataUrl }).catch(() => {});
 
       // Auto-save to settings database
       try {
@@ -7164,6 +7205,7 @@ window.handleLogoFileInput = (input) => {
 window.removeBusinessLogo = async () => {
   currentSettings.biz_logo = '';
   updateLogoPreviewUI();
+  if (db.currentOrgId) db.organizations.update(db.currentOrgId, { logo_url: '' }).catch(() => {});
   try {
     const existing = await db.settings.where('key').equals('biz_logo').first();
     if (existing) {

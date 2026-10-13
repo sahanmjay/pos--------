@@ -31,3 +31,4 @@ BEGIN
     VALUES ('admincrystal', new_password, 'crystal admin', 'Admin', true, org);
   END IF;
 END $$;
+  
