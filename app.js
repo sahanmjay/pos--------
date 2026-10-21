@@ -2417,26 +2417,40 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     if (!(await db.saleItemsSupportCost())) saleItems.forEach(si => { delete si.cost_price; });
     if (!(await db.supportsBatches())) saleItems.forEach(si => { delete si.recipe; });
     // Only set when the column exists — see salesSupportsBillNo()
-    if (await db.salesSupportsBillNo()) sale.bill_no = await nextBillNo();
+    try {
+      sale.bill_no = await nextBillNo(new Date(sale.date));
+    } catch (bErr) {
+      console.warn('[Checkout] Bill number generation note:', bErr);
+    }
     const saleId = await db.sales.add(sale);
     await db.sale_items.bulkAdd(saleItems.map(si => ({...si, sale_id: saleId})));
 
-    cart = []; manualDiscount = 0; cartCustomerId = 1;
+    // Immediately clear cart, discounts, and customer selection
+    cart = [];
+    manualDiscount = 0;
+    cartCustomerId = 1;
+    updateCartCustomer();
+    renderCart();
+    updateTotals();
+
     // Show the new stock at once; the refresh after the stock write confirms it
     checkoutCart.forEach(item => {
       const p = (posProducts || []).find(x => x.id == item.product_id);
       if (p) p.stock_qty = (Number(p.stock_qty) || 0) - item.quantity;
     });
-    renderCart(); updateCartCustomer(); renderPosGrid();
+    renderPosGrid();
 
-    // If a restaurant order was checked out, free table and mark its KOTs served
-    if (typeof activeTableOrders !== 'undefined' && currentTableId) {
-      if (currentDiningType === 'dine_in') {
+    // If a restaurant order was checked out, free table and clear all table orders
+    if (typeof activeTableOrders !== 'undefined') {
+      if (currentTableId) {
         delete activeTableOrders[currentTableId];
+      }
+      if (currentDiningType && activeTableOrders[currentDiningType]) {
+        delete activeTableOrders[currentDiningType];
       }
       if (typeof activeKots !== 'undefined' && Array.isArray(activeKots)) {
         activeKots.forEach(k => {
-          if ((k.table_id === currentTableId || k.id === currentTableId) && k.status !== 'served') {
+          if ((k.table_id === currentTableId || k.id === currentTableId || k.table_id === currentDiningType) && k.status !== 'served') {
             k.status = 'served';
             k.sale_id = saleId;
           }
@@ -3921,7 +3935,7 @@ window.deleteStockItem = async (id) => {
 window.renderSalesHistory = async () => {
   let sales = await db.sales.toArray();
   if (await backfillBillNumbers(sales)) sales = await db.sales.toArray();
-  sales.sort((a,b)=>new Date(b.date)-new Date(a.date));
+  sales.sort((a, b) => (new Date(b.date).getTime() - new Date(a.date).getTime()) || ((Number(b.bill_no) || b.id) - (Number(a.bill_no) || a.id)));
   
   const from = document.getElementById('sale-date-from').value;
   const to = document.getElementById('sale-date-to').value;
@@ -3972,12 +3986,19 @@ window.viewSaleDetails = async (id) => {
 // sales.id is a SERIAL shared by every tenant in the table, so this shop's
 // receipts jump whenever another business rings a sale; an offline sale gets
 // a timestamp id like 1789119592618. bill_no is this business's own counter.
-async function nextBillNo() {
+async function nextBillNo(saleDate = new Date()) {
   const sales = await db.sales.toArray();
+  const dTarget = new Date(saleDate);
+  const targetYear = dTarget.getFullYear();
+  const targetMonth = dTarget.getMonth();
   let max = 0;
   for (const s of sales) {
-    const n = Number(s.bill_no);
-    if (Number.isFinite(n) && n > max) max = n;
+    if (!s.date) continue;
+    const d = new Date(s.date);
+    if (d.getFullYear() === targetYear && d.getMonth() === targetMonth) {
+      const n = Number(s.bill_no);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
   }
   return max + 1;
 }
@@ -3989,8 +4010,7 @@ function billNumber(sale) {
 }
 
 // Bills predating this feature have no number. Fill the gaps once, oldest
-// first, so the sequence reads 1, 2, 3 with no renumbering of anything that
-// already has one.
+// first, strictly scoped to each calendar month so each month begins at 1.
 let _backfillDone = false;
 async function backfillBillNumbers(sales) {
   if (_backfillDone) return false;
@@ -3999,15 +4019,23 @@ async function backfillBillNumbers(sales) {
   if (!(await db.salesSupportsBillNo())) { _backfillDone = true; return false; }
 
   _backfillDone = true;
-  missing.sort((a, b) => new Date(a.date) - new Date(b.date));
-  let next = sales.reduce((m, s) => {
-    const n = Number(s.bill_no);
-    return Number.isFinite(n) && n > m ? n : m;
-  }, 0);
+  missing.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   let done = 0;
   for (const s of missing) {
-    next++;
+    const sDate = new Date(s.date || Date.now());
+    const sy = sDate.getFullYear();
+    const sm = sDate.getMonth();
+    let monthMax = 0;
+    for (const other of sales) {
+      if (!other.date) continue;
+      const od = new Date(other.date);
+      if (od.getFullYear() === sy && od.getMonth() === sm) {
+        const n = Number(other.bill_no);
+        if (Number.isFinite(n) && n > monthMax) monthMax = n;
+      }
+    }
+    const next = monthMax + 1;
     try {
       await db.sales.update(s.id, { bill_no: next });
       s.bill_no = next;
@@ -4018,8 +4046,8 @@ async function backfillBillNumbers(sales) {
     }
   }
   if (done) {
-    showToast('info', `Numbered ${done} earlier bill${done === 1 ? '' : 's'} (1–${next})`);
-    logSecurityEvent('BILLS_NUMBERED', { count: done, through: next });
+    showToast('info', `Assigned sequential bill numbers to ${done} records.`);
+    logSecurityEvent('BILLS_NUMBERED', { count: done });
   }
   return done > 0;
 }
