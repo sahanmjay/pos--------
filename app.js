@@ -2604,7 +2604,7 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
   const logo = currentSettings.biz_logo || '';
   
   let html = `
-    <div style="text-align:center;margin-bottom:12px;border-bottom:1px dashed var(--rule);padding-bottom:8px">
+    <div style="text-align:center;margin-bottom:12px;border-bottom:1px dashed var(--rule);padding:0 4px 8px 4px">
       ${logo ? `
         <div style="margin-bottom:8px; display:flex; justify-content:center; align-items:center;">
           <img src="${logo}" alt="${escapeHtml(shopName)}" style="max-height:60px; max-width:160px; object-fit:contain; display:block; margin:0 auto;" />
@@ -2614,7 +2614,7 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
       ${address ? `<div style="color:#000;font-size:11.5px;font-weight:600;margin-top:2px">${address}</div>` : ''}
       ${phone ? `<div style="color:#000;font-size:11.5px;font-weight:600">${phone}</div>` : ''}
     </div>
-    <div style="margin-bottom:8px;color:#000;font-size:12px;font-weight:600;line-height:1.45">
+    <div style="margin-bottom:8px;color:#000;font-size:12px;font-weight:600;line-height:1.45;padding:0 4px">
       <div>Receipt: <span style="font-weight:800">#${billNumber(sale)}</span></div>
       <div>Date: <span style="font-weight:600">${new Date(sale.date).toLocaleString()}</span></div>
       <div>Cashier: <span style="font-weight:600">${sale.cashier}</span></div>
@@ -2622,32 +2622,32 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
     </div>
     <table style="width:100%;text-align:left;border-bottom:1px dashed var(--rule);margin-bottom:8px;color:#000;font-size:12px;font-weight:600">
       <tr style="color:#000;font-size:11px;font-weight:800;text-transform:uppercase;border-bottom:1px dashed var(--rule)">
-        <th style="padding:4px 0">Item</th>
-        <th style="padding:4px 0;text-align:center">Qty</th>
-        <th style="padding:4px 0;text-align:right">Total</th>
+        <th style="padding:4px">Item</th>
+        <th style="padding:4px;text-align:center">Qty</th>
+        <th style="padding:4px;text-align:right">Total</th>
       </tr>
   `;
   
   items.forEach(i => {
     html += `<tr>
-      <td style="padding:4px 0;font-weight:600">${i.product_name}</td>
-      <td style="padding:4px 0;text-align:center;font-weight:700">${i.quantity}</td>
-      <td style="padding:4px 0;text-align:right;font-weight:700" class="td-mono">${formatMoney(i.line_total)}</td>
+      <td style="padding:4px;font-weight:600">${i.product_name}</td>
+      <td style="padding:4px;text-align:center;font-weight:700">${i.quantity}</td>
+      <td style="padding:4px;text-align:right;font-weight:700" class="td-mono">${formatMoney(i.line_total)}</td>
     </tr>`;
   });
   
   html += `</table>
-    <div style="text-align:right;color:#000;font-size:12.5px;font-weight:600;line-height:1.45">
+    <div style="text-align:right;color:#000;font-size:12.5px;font-weight:600;line-height:1.45;padding:0 4px">
       <div>Subtotal: <span style="font-weight:700">${formatMoney(sale.subtotal)}</span></div>
       ${sale.discount>0 ? `<div>Discount: <span style="font-weight:700">-${formatMoney(sale.discount)}</span></div>` : ''}
       ${sale.tax>0 ? `<div>Tax: <span style="font-weight:700">${formatMoney(sale.tax)}</span></div>` : ''}
       <h3 style="margin:5px 0;color:#000;font-size:18px;font-weight:900">Total: ${formatMoney(sale.total_amount)}</h3>
       ${sale.payment_type==='cash' ? `<div>Tendered: <span style="font-weight:700">${formatMoney(tendered)}</span></div><div style="font-weight:800;font-size:13px">Change: ${formatMoney(change)}</div>` : ''}
     </div>
-    <div style="text-align:center;margin-top:10px;border-top:1px dashed var(--rule);padding-top:6px;color:#000;font-weight:600;font-style:italic;font-size:11px">Thank you for your business!</div>
+    <div style="text-align:center;margin-top:10px;border-top:1px dashed var(--rule);padding:6px 4px 0 4px;color:#000;font-weight:600;font-style:italic;font-size:11px">Thank you for your business!</div>
     
     <!-- 80mm Custom Branding Footer -->
-    <div class="thermal-univerzlk-footer" style="text-align:center;margin-top:8px;border-top:1px dashed var(--rule);padding-top:6px;font-family:'Courier New',Courier,monospace;font-size:10.5px;font-weight:700;line-height:1.35;color:#000">
+    <div class="thermal-univerzlk-footer" style="text-align:center;margin-top:8px;border-top:1px dashed var(--rule);padding:6px 4px 0 4px;font-family:'Courier New',Courier,monospace;font-size:10.5px;font-weight:700;line-height:1.35;color:#000">
       <div class="univerzlk-title" style="font-weight:800;font-size:11.5px;color:#000">Powered by Univerzlk (pvt)Ltd</div>
       <div class="univerzlk-tagline" style="font-size:9.5px;font-weight:700;color:#000">Ask for POS Systems</div>
       <div class="univerzlk-contact" style="font-size:10px;font-weight:700;color:#000">+94 77 887 3302 | univerzlk.com</div>
