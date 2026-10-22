@@ -2607,42 +2607,50 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
     <div style="text-align:center;margin-bottom:12px;border-bottom:1px dashed var(--rule);padding-bottom:8px">
       ${logo ? `
         <div style="margin-bottom:8px; display:flex; justify-content:center; align-items:center;">
-          <img src="${logo}" alt="${escapeHtml(shopName)}" style="max-height:55px; max-width:150px; object-fit:contain; display:block; margin:0 auto;" />
+          <img src="${logo}" alt="${escapeHtml(shopName)}" style="max-height:60px; max-width:160px; object-fit:contain; display:block; margin:0 auto;" />
         </div>
       ` : ''}
-      <h2 style="margin:0;font-size:17px;color:var(--ink);letter-spacing:0.5px">${shopName}</h2>
-      <div style="color:var(--ink-3);font-size:11px">${address}</div>
-      <div style="color:var(--ink-3);font-size:11px">${phone}</div>
+      <h2 style="margin:0;font-size:17px;font-weight:800;color:#000;letter-spacing:0.5px">${shopName}</h2>
+      ${address ? `<div style="color:#000;font-size:11.5px;font-weight:600;margin-top:2px">${address}</div>` : ''}
+      ${phone ? `<div style="color:#000;font-size:11.5px;font-weight:600">${phone}</div>` : ''}
     </div>
-    <div style="margin-bottom:8px;color:var(--ink);font-size:11.5px">
-      <div>Receipt: <span class="fw-600">#${billNumber(sale)}</span></div>
-      <div>Date: ${new Date(sale.date).toLocaleString()}</div>
-      <div>Cashier: ${sale.cashier}</div>
-      <div>Pay Method: <span style="font-weight:700">${sale.payment_type.toUpperCase()}</span></div>
+    <div style="margin-bottom:8px;color:#000;font-size:12px;font-weight:600;line-height:1.45">
+      <div>Receipt: <span style="font-weight:800">#${billNumber(sale)}</span></div>
+      <div>Date: <span style="font-weight:600">${new Date(sale.date).toLocaleString()}</span></div>
+      <div>Cashier: <span style="font-weight:600">${sale.cashier}</span></div>
+      <div>Pay Method: <span style="font-weight:800">${sale.payment_type.toUpperCase()}</span></div>
     </div>
-    <table style="width:100%;text-align:left;border-bottom:1px dashed var(--rule);margin-bottom:8px;color:var(--ink);font-size:11.5px">
-      <tr style="color:var(--ink-3);font-size:10.5px;text-transform:uppercase"><th>Item</th><th>Qty</th><th style="text-align:right">Total</th></tr>
+    <table style="width:100%;text-align:left;border-bottom:1px dashed var(--rule);margin-bottom:8px;color:#000;font-size:12px;font-weight:600">
+      <tr style="color:#000;font-size:11px;font-weight:800;text-transform:uppercase;border-bottom:1px dashed var(--rule)">
+        <th style="padding:4px 0">Item</th>
+        <th style="padding:4px 0;text-align:center">Qty</th>
+        <th style="padding:4px 0;text-align:right">Total</th>
+      </tr>
   `;
   
   items.forEach(i => {
-    html += `<tr><td style="padding:3px 0">${i.product_name}</td><td>${i.quantity}</td><td style="text-align:right" class="td-mono">${formatMoney(i.line_total)}</td></tr>`;
+    html += `<tr>
+      <td style="padding:4px 0;font-weight:600">${i.product_name}</td>
+      <td style="padding:4px 0;text-align:center;font-weight:700">${i.quantity}</td>
+      <td style="padding:4px 0;text-align:right;font-weight:700" class="td-mono">${formatMoney(i.line_total)}</td>
+    </tr>`;
   });
   
   html += `</table>
-    <div style="text-align:right;color:var(--ink);font-size:12px">
-      <div style="color:var(--ink-3)">Subtotal: ${formatMoney(sale.subtotal)}</div>
-      ${sale.discount>0 ? `<div style="color:var(--ink-2)">Discount: -${formatMoney(sale.discount)}</div>` : ''}
-      ${sale.tax>0 ? `<div style="color:var(--ink-3)">Tax: ${formatMoney(sale.tax)}</div>` : ''}
-      <h3 style="margin:4px 0;color:var(--ink);font-size:18px;font-weight:800">Total: ${formatMoney(sale.total_amount)}</h3>
-      ${sale.payment_type==='cash' ? `<div style="font-size:11.5px">Tendered: ${formatMoney(tendered)}</div><div style="font-weight:700;color:var(--ink);font-size:12.5px">Change: ${formatMoney(change)}</div>` : ''}
+    <div style="text-align:right;color:#000;font-size:12.5px;font-weight:600;line-height:1.45">
+      <div>Subtotal: <span style="font-weight:700">${formatMoney(sale.subtotal)}</span></div>
+      ${sale.discount>0 ? `<div>Discount: <span style="font-weight:700">-${formatMoney(sale.discount)}</span></div>` : ''}
+      ${sale.tax>0 ? `<div>Tax: <span style="font-weight:700">${formatMoney(sale.tax)}</span></div>` : ''}
+      <h3 style="margin:5px 0;color:#000;font-size:18px;font-weight:900">Total: ${formatMoney(sale.total_amount)}</h3>
+      ${sale.payment_type==='cash' ? `<div>Tendered: <span style="font-weight:700">${formatMoney(tendered)}</span></div><div style="font-weight:800;font-size:13px">Change: ${formatMoney(change)}</div>` : ''}
     </div>
-    <div style="text-align:center;margin-top:10px;border-top:1px dashed var(--rule);padding-top:6px;color:var(--ink-3);font-style:italic;font-size:10.5px">Thank you for your business!</div>
+    <div style="text-align:center;margin-top:10px;border-top:1px dashed var(--rule);padding-top:6px;color:#000;font-weight:600;font-style:italic;font-size:11px">Thank you for your business!</div>
     
     <!-- 80mm Custom Branding Footer -->
-    <div class="thermal-univerzlk-footer" style="text-align:center;margin-top:8px;border-top:1px dashed var(--rule);padding-top:6px;font-family:'Courier New',Courier,monospace;font-size:10px;line-height:1.35;color:var(--ink-2)">
-      <div class="univerzlk-title" style="font-weight:700;font-size:11px;color:var(--ink)">Powered by Univerzlk (pvt)Ltd</div>
-      <div class="univerzlk-tagline" style="font-size:9px;color:var(--ink-3)">Ask for POS Systems</div>
-      <div class="univerzlk-contact" style="font-size:9.5px;font-weight:600;color:var(--ink)">+94 77 887 3302 | univerzlk.com</div>
+    <div class="thermal-univerzlk-footer" style="text-align:center;margin-top:8px;border-top:1px dashed var(--rule);padding-top:6px;font-family:'Courier New',Courier,monospace;font-size:10.5px;font-weight:700;line-height:1.35;color:#000">
+      <div class="univerzlk-title" style="font-weight:800;font-size:11.5px;color:#000">Powered by Univerzlk (pvt)Ltd</div>
+      <div class="univerzlk-tagline" style="font-size:9.5px;font-weight:700;color:#000">Ask for POS Systems</div>
+      <div class="univerzlk-contact" style="font-size:10px;font-weight:700;color:#000">+94 77 887 3302 | univerzlk.com</div>
     </div>
   `;
   
