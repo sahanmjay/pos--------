@@ -189,7 +189,7 @@ async function fetchAllRows(makeQuery) {
 // Catalogue rows deleted in the cloud are dropped from the device cache too, or
 // an offline till keeps selling a menu that no longer exists. Limited to tables
 // whose offline-made rows are always flagged _is_offline (add(), never bulkAdd()).
-const PURGE_STALE_TABLES = ['products', 'categories'];
+const PURGE_STALE_TABLES = ['products', 'categories', 'sales', 'sale_items'];
 
 class SupaQuery {
   constructor(table, filters) {
@@ -612,9 +612,33 @@ async function syncOfflineQueue() {
         delete uploadSale._is_offline;
         delete uploadSale._offline_created_at;
 
-        // Insert sale into Supabase
-        const { data: newSale, error: saleErr } = await supa.from('sales').insert(uploadSale).select('id').single();
-        if (!saleErr && newSale) {
+        // Check if sale already exists in cloud to prevent duplicate ghost records
+        let newSale = null;
+        if (uploadSale.date && uploadSale.total_amount) {
+          const { data: existing } = await supa.from('sales')
+            .select('id, bill_no')
+            .eq('organization_id', uploadSale.organization_id || currentOrgId)
+            .eq('date', uploadSale.date)
+            .eq('total_amount', uploadSale.total_amount)
+            .limit(1);
+          if (existing && existing.length > 0) {
+            newSale = existing[0];
+            console.log(`[Store-and-Forward] Sale already recorded in cloud (id: ${newSale.id}), linking items.`);
+          }
+        }
+
+        if (!newSale) {
+          if (!uploadSale.bill_no || uploadSale.bill_no <= 0) {
+            if (typeof nextBillNo === 'function') {
+              uploadSale.bill_no = await nextBillNo(new Date(uploadSale.date));
+            }
+          }
+          const { data, error: saleErr } = await supa.from('sales').insert(uploadSale).select('id').single();
+          if (saleErr) throw saleErr;
+          newSale = data;
+        }
+
+        if (newSale) {
           // Sync associated sale items
           const allItems = await idbGetAll('sale_items');
           const relatedItems = allItems.filter(it => it.sale_id == localSaleId);

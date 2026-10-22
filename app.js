@@ -2175,8 +2175,11 @@ window.openCashPaymentModal = (total, subtotal, discount, tax) => {
 
   const footer = `
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-    <button class="btn btn-primary cash-payment-btn" id="btn-confirm-cash" onclick="confirmCashSale()" style="padding:12px 20px; font-weight:700">
-      Complete Cash Sale →
+    <button class="btn btn-secondary" id="btn-confirm-cash-noprint" onclick="confirmCashSale(false)" style="padding:10px 16px; font-weight:600; display:inline-flex; align-items:center; gap:6px" title="Complete sale without printing bill (Shift+Enter)">
+      <i class="fa-solid fa-check" style="color:var(--brand)"></i> Complete Without Print
+    </button>
+    <button class="btn btn-primary cash-payment-btn" id="btn-confirm-cash" onclick="confirmCashSale(true)" style="padding:10px 20px; font-weight:700; display:inline-flex; align-items:center; gap:6px" title="Complete sale and print bill (Enter)">
+      <i class="fa-solid fa-print"></i> Complete Cash Sale →
     </button>
   `;
 
@@ -2188,7 +2191,14 @@ window.openCashPaymentModal = (total, subtotal, discount, tax) => {
     if(input) {
       input.focus();
       input.addEventListener('keydown', (e) => {
-        if(e.key === 'Enter') confirmCashSale();
+        if(e.key === 'Enter') {
+          e.preventDefault();
+          if (e.shiftKey || e.ctrlKey || e.altKey) {
+            confirmCashSale(false);
+          } else {
+            confirmCashSale(true);
+          }
+        }
       });
     }
   }, 120);
@@ -2376,21 +2386,28 @@ function renderCashCalcSummary() {
   }
 }
 
-window.confirmCashSale = async () => {
+let _isCheckingOut = false;
+window.confirmCashSale = async (shouldPrint = true) => {
+  if (_isCheckingOut) return;
   const total = currentCashCheckout.total;
   let tendered = parseFloat(document.getElementById('cash-tendered-input')?.value);
   if (isNaN(tendered) || tendered <= 0) {
     tendered = currentCashCheckout.tendered || total;
   }
 
-  // Directly complete sale and print receipt with NO other confirmation popup
+  // Directly complete sale with or without receipt printing
   const change = Math.max(0, tendered - total);
   closeModal();
-  await executeCheckout('cash', total, tendered, change, currentCashCheckout.subtotal, currentCashCheckout.discount, currentCashCheckout.tax);
+  await executeCheckout('cash', total, tendered, change, currentCashCheckout.subtotal, currentCashCheckout.discount, currentCashCheckout.tax, shouldPrint);
 };
 
 // ─── EXECUTE CHECKOUT & BACKGROUND PIPELINES ───
-async function executeCheckout(paymentType, total, tendered, change, subtotal, discount, tax) {
+async function executeCheckout(paymentType, total, tendered, change, subtotal, discount, tax, shouldPrint = true) {
+  if (_isCheckingOut) {
+    console.warn('[Checkout] Checkout already in progress, blocking duplicate execution');
+    return;
+  }
+  _isCheckingOut = true;
   const sale = {
     date: new Date().toISOString(),
     subtotal, discount, tax, total_amount: total,
@@ -2462,8 +2479,15 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
       if (typeof renderKOTScreen === 'function') renderKOTScreen();
     }
     
-    // Display 80mm receipt with Univerzlk branding and auto-print
-    showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?tendered:total, true);
+    // Display 80mm receipt with Univerzlk branding and auto-print, or complete silently
+    if (shouldPrint) {
+      showReceipt(Object.assign({id:saleId}, sale), saleItems, change, paymentType==='cash'?tendered:total, true);
+    } else {
+      lastBillPrintedSig = null;
+      currentReceiptData = { sale: Object.assign({id:saleId}, sale), items: saleItems };
+      const changeMsg = change > 0 ? ` · Change: ${formatMoney(change)}` : '';
+      showToast('success', `✓ Cash sale #${billNumber(sale)} completed${changeMsg}`);
+    }
 
     // ⚡ Realtime Broadcast across all connected terminals and kitchen screens
     if (typeof broadcastRealtimeEvent === 'function') {
@@ -2521,6 +2545,8 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
   } catch (err) {
     console.error('Checkout error:', err);
     showToast('error', 'Failed to complete checkout: ' + err.message);
+  } finally {
+    _isCheckingOut = false;
   }
 }
 
