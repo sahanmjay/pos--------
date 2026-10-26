@@ -463,12 +463,14 @@ class SupaTable {
       await idbPut(this._name, merged);
     }
     if (!isOffline()) {
+      let error;
       try {
-        const { error } = await supa.from(this._name).update(changes).eq('id', id);
-        if (error) console.warn('update remote error:', error);
+        ({ error } = await supa.from(this._name).update(changes).eq('id', id));
       } catch (e) {
         console.warn('update online error:', e);
       }
+      // The cloud refused the change: the next read would silently undo it, so say so
+      if (error) throw new Error(error.message || 'Cloud rejected the update');
     }
   }
 

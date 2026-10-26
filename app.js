@@ -3271,6 +3271,8 @@ window.saveProduct = async () => {
   }
 
   if(!p.name) return showToast('error', 'Name is required');
+  // Product edits are not queued offline; the next cloud read would wipe them
+  if (isOffline()) return showToast('error', 'You are offline. Connect to the internet to save product changes.');
 
   // Stock is never written directly here, so the change shows up in the stock history
   const stockTarget = stockInput ? (parseFloat(stockInput.value) || 0) : null;
@@ -3278,7 +3280,11 @@ window.saveProduct = async () => {
   let before = 0;
   if(productId) {
     before = Number((await db.products.get(productId))?.stock_qty) || 0;
-    await db.products.update(productId, p);
+    try {
+      await db.products.update(productId, p);
+    } catch (e) {
+      return showToast('error', `Product not saved: ${e.message}`);
+    }
   } else {
     productId = await db.products.add({ ...p, stock_qty: 0 });
   }
