@@ -1641,24 +1641,20 @@ function renderCart() {
 
   cEl.innerHTML = cart.map((item, i) => `
     <div class="cart-item">
-      <div class="cart-item-avatar"><i class="fa-solid fa-box-open"></i></div>
       <div class="cart-item-info">
         <div class="cart-item-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
-        <div class="cart-item-price">@ ${formatMoney(item.unit_price)}</div>
-        ${isRestaurant ? `
-          <div class="cart-item-note-row">
-            ${item.notes ? `
-              <span class="cart-item-note-tag" onclick="openItemNoteModal(${i})" title="Click to edit cooking note">
-                <i class="fa-solid fa-pen" style="font-size:9px"></i> ${escapeHtml(item.notes)}
-              </span>
-            ` : `
-              <button type="button" class="cart-item-note-btn" onclick="openItemNoteModal(${i})">
-                <i class="fa-solid fa-plus"></i> Add Note
-              </button>
-            `}
-          </div>
+        ${isRestaurant && item.notes ? `
+          <span class="cart-item-note-tag" onclick="openItemNoteModal(${i})" title="Click to edit cooking note">
+            <i class="fa-solid fa-pen" style="font-size:9px"></i> ${escapeHtml(item.notes)}
+          </span>
         ` : ''}
       </div>
+      ${isRestaurant && !item.notes ? `
+        <button type="button" class="cart-item-note-btn" onclick="openItemNoteModal(${i})" title="Add a cooking note" aria-label="Add note for ${escapeHtml(item.name)}">
+          <i class="fa-regular fa-note-sticky"></i>
+        </button>
+      ` : ''}
+      <div class="cart-item-price" title="${escapeHtml(formatMoney(item.unit_price))} each">@ ${Number(item.unit_price || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}</div>
       <div class="cart-item-qty">
         <button onclick="updateCartQty(${i}, -1)" aria-label="Decrease quantity">−</button>
         <span>${item.quantity}</span>
@@ -1671,6 +1667,34 @@ function renderCart() {
   updateTotals();
 }
 
+// One place for the bill maths: service charge on the amount after discount,
+// then tax on both (VAT applies to service charge). Rounded to cents per line,
+// so the printed lines always add up to the total.
+function billTotals(subtotal, discount, scRate, taxRate) {
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const taxable = Math.max(0, (Number(subtotal) || 0) - (Number(discount) || 0));
+  const serviceCharge = r2(taxable * (Number(scRate) || 0));
+  const tax = r2((taxable + serviceCharge) * (Number(taxRate) || 0));
+  return { serviceCharge, tax, total: r2(taxable + serviceCharge + tax) };
+}
+
+// Dine-in only; the cashier can take it off one bill
+let serviceChargeWaived = false;
+function serviceChargePercent() {
+  return isRestaurantMode() ? (parseFloat(currentSettings.service_charge) || 0) : 0;
+}
+function serviceChargeRate() {
+  return currentDiningType === 'dine_in' && !serviceChargeWaived ? serviceChargePercent() / 100 : 0;
+}
+
+window.toggleServiceCharge = () => {
+  serviceChargeWaived = !serviceChargeWaived;
+  updateTotals();
+  if (serviceChargeWaived) {
+    logSecurityEvent('SERVICE_CHARGE_WAIVED', { items: cart.length, subtotal: cart.reduce((s, i) => s + i.unit_price * i.quantity, 0) });
+  }
+};
+
 function updateTotals() {
   // Round to cents like the sale-edit path, so stored totals match the printed receipt
   const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -1680,15 +1704,24 @@ function updateTotals() {
   let discount = Math.max(0, Number(manualDiscount) || 0);
   if(discount > subtotal) discount = subtotal; // cap discount
 
-  const taxable = Math.max(0, subtotal - discount);
-  const tax = r2(taxable * taxRate);
-  const total = r2(taxable + tax);
-  
+  const { serviceCharge, tax, total } = billTotals(subtotal, discount, serviceChargeRate(), taxRate);
+
   document.getElementById('cart-subtotal').textContent = formatMoney(subtotal);
   document.getElementById('cart-discount').textContent = (discount > 0 ? '- ' : '') + formatMoney(discount);
   document.getElementById('tax-rate-display').textContent = currentSettings.tax_rate || '0';
   document.getElementById('cart-tax').textContent = formatMoney(tax);
   document.getElementById('cart-total').textContent = formatMoney(total);
+
+  // The line stays visible while removed, so it can be put back
+  const scRow = document.getElementById('cart-sc-row');
+  if (scRow) {
+    const applies = serviceChargePercent() > 0 && currentDiningType === 'dine_in';
+    scRow.style.display = applies ? '' : 'none';
+    scRow.classList.toggle('is-zero', serviceChargeWaived);
+    document.getElementById('sc-rate-display').textContent = serviceChargePercent();
+    document.getElementById('cart-service').textContent = serviceChargeWaived ? 'Removed' : formatMoney(serviceCharge);
+    document.getElementById('sc-toggle').textContent = serviceChargeWaived ? 'Add back' : 'Remove';
+  }
 
   // A zero discount is not a saving and a 0% tax line is not information —
   // mute them so the eye goes straight to the figures that moved.
@@ -1697,14 +1730,15 @@ function updateTotals() {
   const taxRow = document.getElementById('cart-tax')?.closest('.cart-line');
   if (taxRow) taxRow.style.display = taxRate > 0 ? '' : 'none';
   
-  return { subtotal, discount, tax, total };
+  return { subtotal, discount, tax, total, serviceCharge };
 }
 
 window.clearCart = async () => { 
   if(await showConfirmation('Clear current cart?', { title: 'Clear cart', confirmLabel: 'Clear cart' })) { 
-    cart=[]; 
-    manualDiscount=0; 
-    renderCart(); 
+    cart=[];
+    manualDiscount=0;
+    serviceChargeWaived = false;
+    renderCart();
     renderPosGrid(); 
   } 
 };
@@ -1838,12 +1872,22 @@ function deliveryPlatforms() {
   try { saved = JSON.parse(currentSettings.delivery_platforms || '[]'); } catch (e) {}
   return PLATFORM_IDS.map(id => {
     const s = saved.find(x => x.id === id) || {};
-    return { id, name: DINING_LABELS[id], markup: Number(s.markup) || 0, commission: Number(s.commission) || 0 };
+    // Shown on the till unless switched off in Settings
+    return { id, name: DINING_LABELS[id], enabled: s.enabled !== false, markup: Number(s.markup) || 0, commission: Number(s.commission) || 0 };
   });
 }
 
 function currentPlatform() {
-  return PLATFORM_IDS.includes(currentDiningType) ? deliveryPlatforms().find(x => x.id === currentDiningType) : null;
+  return PLATFORM_IDS.includes(currentDiningType) ? deliveryPlatforms().find(x => x.id === currentDiningType && x.enabled) || null : null;
+}
+
+// Hide switched-off platforms; an order left on one falls back to dine-in
+function applyPlatformButtons() {
+  deliveryPlatforms().forEach(pl => {
+    const btn = document.querySelector(`.dining-type-btn[data-type="${pl.id}"]`);
+    if (btn) btn.style.display = pl.enabled ? '' : 'none';
+  });
+  if (PLATFORM_IDS.includes(currentDiningType) && !currentPlatform()) setDiningType('dine_in');
 }
 
 // What a product costs on the till right now, for the selected order type
@@ -2486,6 +2530,7 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     sale.order_type = currentDiningType;
     sale.ref_no = platform ? (document.getElementById('platform-ref-no')?.value.trim() || null) : null;
     sale.commission = platform ? platformCommission(total, platform.commission) : 0;
+    sale.service_charge = updateTotals().serviceCharge;
   }
   
   const products = new Map((posProducts || await loadPosProducts()).map(p => [Number(p.id), p]));
@@ -2512,13 +2557,14 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     }
     // The receipt still shows the platform order no. when the columns are missing
     const saleRow = { ...sale };
-    if (!(await db.salesSupportsOrderType())) ['order_type', 'ref_no', 'commission'].forEach(k => { delete saleRow[k]; });
+    if (!(await db.salesSupportsOrderType())) ['order_type', 'ref_no', 'commission', 'service_charge'].forEach(k => { delete saleRow[k]; });
     const saleId = await db.sales.add(saleRow);
     await db.sale_items.bulkAdd(saleItems.map(si => ({...si, sale_id: saleId})));
 
     // Immediately clear cart, discounts, and customer selection
     const refInput = document.getElementById('platform-ref-no');
     if (refInput) refInput.value = '';
+    serviceChargeWaived = false; // removing it was for that bill only
     cart = [];
     manualDiscount = 0;
     cartCustomerId = 1;
@@ -2720,6 +2766,7 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
     <div style="text-align:right;color:#000;font-size:12.5px;font-weight:600;line-height:1.45;padding:0 4px">
       <div>Subtotal: <span style="font-weight:700">${formatMoney(sale.subtotal)}</span></div>
       ${sale.discount>0 ? `<div>Discount: <span style="font-weight:700">-${formatMoney(sale.discount)}</span></div>` : ''}
+      ${sale.service_charge>0 ? `<div>Service charge: <span style="font-weight:700">${formatMoney(sale.service_charge)}</span></div>` : ''}
       ${sale.tax>0 ? `<div>Tax: <span style="font-weight:700">${formatMoney(sale.tax)}</span></div>` : ''}
       <h3 style="margin:5px 0;color:#000;font-size:18px;font-weight:900">Total: ${formatMoney(sale.total_amount)}</h3>
       ${sale.payment_type==='cash' ? `<div>Tendered: <span style="font-weight:700">${formatMoney(tendered)}</span></div><div style="font-weight:800;font-size:13px">Change: ${formatMoney(change)}</div>` : ''}
@@ -2861,7 +2908,7 @@ function cartSignature(lines, total) {
 window.printTableBill = async () => {
   if (!cart.length) return showToast('error', 'Cart is empty — nothing to bill');
 
-  const { subtotal, discount, tax, total } = updateTotals();
+  const { subtotal, discount, tax, total, serviceCharge } = updateTotals();
   const shopName = currentSettings.biz_name || 'NexPOS';
   const address = currentSettings.address || '';
   const phone = currentSettings.phone || '';
@@ -2910,6 +2957,7 @@ window.printTableBill = async () => {
     <div style="text-align:right;color:var(--ink);font-size:12px">
       <div style="color:var(--ink-3)">Subtotal: ${formatMoney(subtotal)}</div>
       ${discount > 0 ? `<div style="color:var(--ink-2)">Discount: -${formatMoney(discount)}</div>` : ''}
+      ${serviceCharge > 0 ? `<div style="color:var(--ink-3)">Service charge (${serviceChargePercent()}%): ${formatMoney(serviceCharge)}</div>` : ''}
       ${taxRate > 0 ? `<div style="color:var(--ink-3)">Tax (${taxRate}%): ${formatMoney(tax)}</div>` : ''}
       <h3 style="margin:4px 0;color:var(--ink);font-size:18px;font-weight:800">Total: ${formatMoney(total)}</h3>
     </div>
@@ -4179,9 +4227,16 @@ function canAmendBills() {
 // Original tax rate is derived from the stored figures rather than the current
 // setting, so a later tax change never rewrites an old bill's rate.
 function saleTaxRate(sale) {
-  const taxable = (Number(sale.subtotal) || 0) - (Number(sale.discount) || 0);
+  const taxable = (Number(sale.subtotal) || 0) - (Number(sale.discount) || 0) + (Number(sale.service_charge) || 0);
   if (taxable <= 0) return 0;
   return (Number(sale.tax) || 0) / taxable;
+}
+
+// Same idea for service charge: the bill's own rate (0 if it had none or it was removed)
+function saleServiceRate(sale) {
+  const base = (Number(sale.subtotal) || 0) - (Number(sale.discount) || 0);
+  if (base <= 0) return 0;
+  return (Number(sale.service_charge) || 0) / base;
 }
 
 // Puts stock back on the shelf. Positive qty returns units, negative takes more.
@@ -4294,6 +4349,7 @@ window.openSaleEditor = async (id) => {
     id,
     sale,
     taxRate: saleTaxRate(sale),
+    scRate: saleServiceRate(sale),
     lines: items.map(i => ({
       row_id: i.id,
       product_id: i.product_id,
@@ -4340,6 +4396,7 @@ window.openSaleEditor = async (id) => {
     <dl class="sale-edit-sums">
       <div><dt>Subtotal</dt><dd class="td-mono" id="sale-edit-subtotal">—</dd></div>
       <div><dt>Discount</dt><dd class="td-mono" id="sale-edit-disc">—</dd></div>
+      ${Number(sale.service_charge) > 0 ? `<div><dt>Service charge</dt><dd class="td-mono" id="sale-edit-sc">—</dd></div>` : ''}
       <div><dt>Tax</dt><dd class="td-mono" id="sale-edit-tax">—</dd></div>
       <div class="sale-edit-grand"><dt>New total</dt><dd class="td-mono" id="sale-edit-total">—</dd></div>
       <div class="sale-edit-delta"><dt>Change from original</dt><dd class="td-mono" id="sale-edit-delta">—</dd></div>
@@ -4372,7 +4429,7 @@ window.stepSaleEditQty = (i, delta) => {
 
 window.recalcSaleEdit = () => {
   if (!editingSale) return;
-  const { lines, sale, taxRate } = editingSale;
+  const { lines, sale, taxRate, scRate } = editingSale;
 
   let subtotal = 0;
   lines.forEach((l, i) => {
@@ -4387,9 +4444,10 @@ window.recalcSaleEdit = () => {
   let discount = Math.max(0, Number(document.getElementById('sale-edit-discount')?.value) || 0);
   if (discount > subtotal) discount = subtotal;
 
-  const tax = (subtotal - discount) * taxRate;
-  const total = subtotal - discount + tax;
+  const { serviceCharge, tax, total } = billTotals(subtotal, discount, scRate, taxRate);
   const delta = total - (Number(sale.total_amount) || 0);
+  const scCell = document.getElementById('sale-edit-sc');
+  if (scCell) scCell.textContent = formatMoney(serviceCharge);
 
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('sale-edit-subtotal', formatMoney(subtotal));
@@ -4421,7 +4479,7 @@ window.saveSaleEdit = async () => {
   if (!editingSale) return;
   if (!canAmendBills()) return showToast('error', 'Only an Administrator can edit a bill');
 
-  const { id, sale, lines, taxRate } = editingSale;
+  const { id, sale, lines, taxRate, scRate } = editingSale;
   const kept = lines.filter(l => l.qty > 0);
   if (!kept.length) {
     return showToast('error', 'A bill must keep at least one item — delete the bill instead');
@@ -4430,8 +4488,7 @@ window.saveSaleEdit = async () => {
   const subtotal = kept.reduce((a, l) => a + l.unit_price * l.qty, 0);
   let discount = Math.max(0, Number(document.getElementById('sale-edit-discount')?.value) || 0);
   if (discount > subtotal) discount = subtotal;
-  const tax = Number(((subtotal - discount) * taxRate).toFixed(2));
-  const total = Number((subtotal - discount + tax).toFixed(2));
+  const { serviceCharge, tax, total } = billTotals(subtotal, discount, scRate, taxRate);
   const delta = total - (Number(sale.total_amount) || 0);
 
   const ok = await showConfirmation(
@@ -4462,6 +4519,8 @@ window.saveSaleEdit = async () => {
       subtotal: Number(subtotal.toFixed(2)),
       discount: Number(discount.toFixed(2)),
       tax, total_amount: total,
+      // Only bills that carry the column (it arrives with the order-type migration)
+      ...('service_charge' in sale ? { service_charge: serviceCharge } : {}),
       items_count: kept.reduce((a, l) => a + l.qty, 0),
     });
 
@@ -5941,6 +6000,7 @@ window.renderAIReports = async () => {
     ['Revenue', data.revenue, ''],
     ['Cost of goods sold', -(data.revenue - data.grossProfit), 'neg'],
     ['Gross profit', data.grossProfit, 'sub'],
+    ...(data.serviceTotal ? [['Service charge (to staff)', -data.serviceTotal, 'neg']] : []),
     ...(data.commissionTotal ? [['Platform commission (PickMe / Uber Eats)', -data.commissionTotal, 'neg']] : []),
     ['Daily expenses', -data.expenses.daily, 'neg'],
     ['Monthly expenses (apportioned)', -data.expenses.monthly, 'neg'],
@@ -6120,6 +6180,8 @@ async function buildDailyReport(day) {
     collected: sum(bills, 'total_amount'),
     // PickMe / Uber Eats cut, stored on each bill at checkout
     commission: sum(bills, 'commission'),
+    // Collected for staff, so it is shown but not counted as profit
+    service: sum(bills, 'service_charge'),
   };
   takings.net = takings.gross - takings.discount;
 
@@ -6234,6 +6296,7 @@ function dailyReportHtml(r) {
           <tr><td>Gross sales</td><td class="num">${m(t.gross)}</td></tr>
           <tr><td>Discounts</td><td class="num">− ${m(t.discount)}</td></tr>
           <tr class="dr-sub"><td>Net sales</td><td class="num">${m(t.net)}</td></tr>
+          ${t.service ? `<tr><td>Service charge <span>for staff, not profit</span></td><td class="num">${m(t.service)}</td></tr>` : ''}
           <tr><td>Tax collected</td><td class="num">${m(t.tax)}</td></tr>
           <tr class="dr-sub"><td>Total collected</td><td class="num">${m(t.collected)}</td></tr>
           <tr><td>Cost of goods sold (FIFO)</td><td class="num">− ${m(r.cogs)}</td></tr>
@@ -6386,6 +6449,7 @@ function dailyReportSlipHtml(r) {
     ${line('Gross sales', m(t.gross))}
     ${line('Discounts', '-' + m(t.discount))}
     ${line('Net sales', m(t.net))}
+    ${t.service ? line('Service charge', m(t.service)) : ''}
     ${line('Tax', m(t.tax))}
     ${line('TOTAL COLLECTED', m(t.collected), true)}
     ${line('Cost (FIFO)', '-' + m(r.cogs))}
@@ -6554,6 +6618,8 @@ async function fetchReportData(start, end) {
   const payments = { cash: 0, card: 0, credit: 0, pickme: 0, uber: 0 };
   periodSales.forEach(s => { if (payments[s.payment_type] !== undefined) payments[s.payment_type] += s.total_amount; });
   const commissionTotal = periodSales.reduce((a, s) => a + (Number(s.commission) || 0), 0);
+  // Inside revenue (bill totals) but belongs to staff
+  const serviceTotal = periodSales.reduce((a, s) => a + (Number(s.service_charge) || 0), 0);
   
   // 4. Time Analytics (Daily & Hourly)
   const dailyRev = {};
@@ -6648,7 +6714,7 @@ async function fetchReportData(start, end) {
 
   // Gross profit is what the kitchen earns; net profit is what the business
   // keeps once rent, utilities and wages are paid.
-  const netProfit = grossProfit - commissionTotal - expensesTotal - payrollTotal;
+  const netProfit = grossProfit - serviceTotal - commissionTotal - expensesTotal - payrollTotal;
   const netMargin = (netProfit / (revenue || 1)) * 100;
 
   const turnoverRate = totalCost > 0 ? (totalCost / (totalInventoryValue || 1)) : 0;
@@ -6659,7 +6725,7 @@ async function fetchReportData(start, end) {
     ipt, uniqueCustomers, repeatCount, repeatRate, peakHour,
     payments, dailyRev, hourlySales, salesByCashier: {}, // Simplified for now
     categoryStats, topProducts, grossProfit, profitMargin,
-    expenses, expensesTotal, netProfit, netMargin, commissionTotal,
+    expenses, expensesTotal, netProfit, netMargin, commissionTotal, serviceTotal,
     payrollTotal, advancesTotal, totalHours, totalInventoryValue, lowStockCount,
     turnoverRate, sellThroughRate, start, end
   };
@@ -7625,8 +7691,10 @@ window.saveSettings = async () => {
       restaurant_mode: isRestEnabled ? 'true' : 'false',
       kot_autoprint: document.getElementById('set-kot-autoprint')?.value || 'true',
       kot_sound: document.getElementById('set-kot-sound')?.value || 'true',
+      service_charge: String(Math.min(100, Math.max(0, parseFloat(document.getElementById('set-service-charge')?.value) || 0))),
       delivery_platforms: JSON.stringify(PLATFORM_IDS.map(id => ({
         id,
+        enabled: document.getElementById(`set-${id}-enabled`)?.checked !== false,
         markup: Math.max(0, parseFloat(document.getElementById(`set-${id}-markup`)?.value) || 0),
         commission: Math.max(0, parseFloat(document.getElementById(`set-${id}-commission`)?.value) || 0),
       }))),
@@ -7674,6 +7742,9 @@ window.saveSettings = async () => {
     if (typeof renderRestaurantSettingsUI === 'function') {
       renderRestaurantSettingsUI();
     }
+    // Platform on/off and service charge show on the till straight away
+    updateDiningTableUI();
+    updateTotals();
     await logSecurityEvent('SETTINGS_CHANGED', { settings });
     showToast('success', 'Settings saved successfully');
   } catch (err) {
@@ -9491,6 +9562,7 @@ window.setDiningType = (type) => {
 };
 
 window.updateDiningTableUI = () => {
+  applyPlatformButtons();
   const nameEl = document.getElementById('pos-selected-table-name');
   const seatsEl = document.getElementById('pos-selected-table-seats');
   const pillEl = document.getElementById('pos-table-status-pill');
@@ -10078,14 +10150,15 @@ window.reprintKotBill = async (kotId) => {
   }));
   const subtotal = items.reduce((s, it) => s + it.line_total, 0);
   const taxRate = parseFloat(currentSettings.tax_rate || 0);
-  const tax = Number((subtotal * (taxRate / 100)).toFixed(2));
-  const total = Number((subtotal + tax).toFixed(2));
+  const scRate = kot.order_type === 'dine_in' ? serviceChargePercent() / 100 : 0;
+  const { serviceCharge, tax, total } = billTotals(subtotal, 0, scRate, taxRate / 100);
 
   const sale = {
     id: `KOT-${kot.kot_number}`,
     date: kot.created_at || new Date().toISOString(),
     subtotal,
     discount: 0,
+    service_charge: serviceCharge,
     tax,
     total_amount: total,
     payment_type: 'cash',
@@ -10687,11 +10760,15 @@ window.renderRestaurantSettingsUI = () => {
   const isRest = currentSettings.restaurant_mode === 'true' || currentSettings.biz_type === 'Restaurant' || (bizTypeSel && bizTypeSel.value === 'Restaurant');
 
   if (enabledCb) enabledCb.checked = isRest;
+  const scInput = document.getElementById('set-service-charge');
+  if (scInput) scInput.value = parseFloat(currentSettings.service_charge) || '';
   deliveryPlatforms().forEach(pl => {
     const mk = document.getElementById(`set-${pl.id}-markup`);
     const cm = document.getElementById(`set-${pl.id}-commission`);
+    const on = document.getElementById(`set-${pl.id}-enabled`);
     if (mk) mk.value = pl.markup || '';
     if (cm) cm.value = pl.commission || '';
+    if (on) on.checked = pl.enabled;
   });
   if (badge) {
     badge.textContent = isRest ? 'Restaurant Active' : 'Suite Disabled';

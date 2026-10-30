@@ -1005,14 +1005,15 @@ async function salesSupportsBillNo() {
   return _billNoSupported;
 }
 
-// sales.order_type / ref_no / commission arrive with
-// migrations/2026-10-30-sales-order-type.sql
+// sales.order_type / ref_no / commission / service_charge arrive with
+// migrations/2026-10-30-sales-order-type.sql. All are checked, so a database
+// that ran an earlier copy of that file is not sent a column it lacks.
 let _orderTypeSupported = null;
 async function salesSupportsOrderType() {
   if (_orderTypeSupported !== null) return _orderTypeSupported;
   if (isOffline()) return false;
   try {
-    const { error } = await supa.from('sales').select('order_type').limit(1);
+    const { error } = await supa.from('sales').select('order_type,ref_no,commission,service_charge').limit(1);
     _orderTypeSupported = !error;
     if (error) console.warn('[order_type] Columns not present — run migrations/2026-10-30-sales-order-type.sql.');
   } catch (e) {

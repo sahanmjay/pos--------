@@ -662,6 +662,7 @@
               <div class="cart-totals">
                 <div class="cart-line"><span>Subtotal</span><span id="cart-subtotal" class="fw-600">0.00</span></div>
                 <div class="cart-line"><span>Discount</span><span id="cart-discount" class="text-success">- 0.00</span></div>
+                <div class="cart-line" id="cart-sc-row" style="display:none"><span>Service charge (<span id="sc-rate-display">0</span>%) <button type="button" class="sc-toggle" id="sc-toggle" onclick="toggleServiceCharge()">Remove</button></span><span id="cart-service">0.00</span></div>
                 <div class="cart-line"><span>Tax (<span id="tax-rate-display">0</span>%)</span><span id="cart-tax">0.00</span></div>
                 <div class="cart-line cart-total"><span>Total</span><span id="cart-total">0.00</span></div>
                 <div class="cart-actions">
@@ -1301,14 +1302,21 @@
                     <option value="false">Muted</option>
                   </select>
                 </div>
+                <div class="form-group">
+                  <label class="form-label" for="set-service-charge">Service charge % <span style="font-weight:400; color:var(--text-muted)">(dine-in only)</span></label>
+                  <input class="form-input" type="number" min="0" max="100" step="0.5" id="set-service-charge" placeholder="0 = off">
+                  <div style="font-size:11.5px; color:var(--text-muted); margin-top:4px">Added to dine-in bills after discount. The cashier can remove it on a single bill.</div>
+                </div>
                 <div class="form-group" style="grid-column: span 2">
                   <label class="form-label">Delivery platforms</label>
                   <div class="platform-settings">
-                    <span></span><span class="platform-settings-head">Price markup %</span><span class="platform-settings-head">Commission %</span>
+                    <span></span><span class="platform-settings-head">Show on till</span><span class="platform-settings-head">Price markup %</span><span class="platform-settings-head">Commission %</span>
                     <strong>PickMe</strong>
+                    <label class="platform-toggle"><input type="checkbox" id="set-pickme-enabled" checked> <span>On</span></label>
                     <input class="form-input" type="number" min="0" step="0.5" id="set-pickme-markup" placeholder="0" aria-label="PickMe price markup percent">
                     <input class="form-input" type="number" min="0" step="0.5" id="set-pickme-commission" placeholder="0" aria-label="PickMe commission percent">
                     <strong>Uber Eats</strong>
+                    <label class="platform-toggle"><input type="checkbox" id="set-uber-enabled" checked> <span>On</span></label>
                     <input class="form-input" type="number" min="0" step="0.5" id="set-uber-markup" placeholder="0" aria-label="Uber Eats price markup percent">
                     <input class="form-input" type="number" min="0" step="0.5" id="set-uber-commission" placeholder="0" aria-label="Uber Eats commission percent">
                   </div>
