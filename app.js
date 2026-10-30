@@ -561,7 +561,7 @@ async function loadSettings() {
   document.querySelectorAll('.restaurant-only').forEach(el => {
     if (el.classList.contains('sidebar-divider')) el.style.display = isRestaurant ? 'block' : 'none';
     else if (el.classList.contains('pos-dining-bar')) el.style.display = isRestaurant ? 'flex' : 'none';
-    else if (el.id === 'btn-fire-kot' || el.id === 'btn-table-bill') el.style.display = isRestaurant ? 'inline-flex' : 'none';
+    else if (el.id === 'btn-fire-kot') el.style.display = isRestaurant ? 'inline-flex' : 'none';
     else el.style.display = isRestaurant ? 'block' : 'none';
   });
   if (isRestaurant && typeof initRestaurantSuite === 'function') {
@@ -874,7 +874,7 @@ async function completeLogin(user, options = {}) {
       pwItem.style.opacity = '1';
       pwItem.style.cursor = 'pointer';
       pwItem.onclick = openChangePasswordModal;
-      pwItem.innerHTML = '🔑 Change Password';
+      pwItem.innerHTML = '<i class="fa-solid fa-key" aria-hidden="true"></i> Change Password';
       pwItem.title = 'Change your administrator password';
     } else {
       pwItem.style.display = 'block';
@@ -1222,7 +1222,7 @@ window.renderRamisMonitor = async () => {
           </td>
           <td>
             <button class="btn btn-ghost btn-sm" onclick="viewRamisPayload('${j.id}')" title="View IRD JSON payload">
-              👁 View JSON
+              <i class="fa-regular fa-eye" aria-hidden="true"></i> View JSON
             </button>
           </td>
         </tr>
@@ -2149,7 +2149,7 @@ window.openHeldBills = async () => {
               <div class="held-bill-total">${formatMoney(total)}</div>
               <div class="held-bill-actions">
                 <button class="btn btn-primary btn-sm" onclick="resumeHeldBill('${escapeHtml(r.id)}')">▶ Resume</button>
-                <button class="btn btn-ghost btn-sm btn-icon" onclick="deleteHeldBill('${escapeHtml(r.id)}')" title="Delete held bill">🗑️</button>
+                <button class="btn btn-ghost btn-sm btn-icon" onclick="deleteHeldBill('${escapeHtml(r.id)}')" title="Delete held bill"><i class="fa-regular fa-trash-can" aria-hidden="true"></i></button>
               </div>
             </div>
           </div>`;
@@ -3326,7 +3326,7 @@ window.renderProductsTable = async () => {
         : '<td class="text-muted">—</td>'}
       <td><span class="badge ${p.is_active?'badge-active':'badge-inactive'}">${p.is_active?'Active':'Inactive'}</span></td>
       <td><div class="row-actions">
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="openProductForm(${p.id})" title="Edit product">✏️</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="openProductForm(${p.id})" title="Edit product"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
         ${tracksStock(p) ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="viewStockHistory(${p.id})" title="Stock history">📜</button>` : ''}
       </div></td>
     </tr>
@@ -4207,10 +4207,10 @@ window.renderSalesHistory = async () => {
       <td><span class="badge ${s.status==='completed'?'badge-completed':'badge-voided'}">${s.status}</span></td>
       <td>
         <div class="row-actions">
-          <button class="btn btn-ghost btn-sm btn-icon" onclick="viewSaleDetails(${s.id})" title="View bill">👁️</button>
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="viewSaleDetails(${s.id})" title="View bill"><i class="fa-regular fa-eye" aria-hidden="true"></i></button>
           ${canAmendBills() && s.status !== 'voided' ? `
-            <button class="btn btn-ghost btn-sm btn-icon" onclick="openSaleEditor(${s.id})" title="Edit bill">✏️</button>
-            <button class="btn btn-ghost btn-sm btn-icon danger-action" onclick="deleteSale(${s.id})" title="Delete bill">🗑️</button>
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="openSaleEditor(${s.id})" title="Edit bill"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+            <button class="btn btn-ghost btn-sm btn-icon danger-action" onclick="deleteSale(${s.id})" title="Delete bill"><i class="fa-regular fa-trash-can" aria-hidden="true"></i></button>
           ` : ''}
         </div>
       </td>
@@ -4707,7 +4707,7 @@ window.renderCustomersTable = async () => {
       <td>${escapeHtml(c.email||'-')}</td>
       <td class="td-mono">${formatMoney(c.total_purchases)}</td>
       <td class="td-mono" style="${c.outstanding_balance>0?'color:var(--danger);font-weight:bold':''}">${formatMoney(c.outstanding_balance)}</td>
-      <td><button class="btn btn-ghost btn-sm btn-icon" onclick="openCustomerForm(${c.id})">✏️</button></td>
+      <td><button class="btn btn-ghost btn-sm btn-icon" onclick="openCustomerForm(${c.id})" title="Edit customer" aria-label="Edit customer"><i class="fa-solid fa-pen" aria-hidden="true"></i></button></td>
     </tr>
   `).join('') || '<tr><td colspan="6" style="text-align:center">No customers found</td></tr>';
 };
@@ -4797,8 +4797,8 @@ window.renderCategoriesTable = async () => {
         <td class="text-muted">${n} product${n === 1 ? '' : 's'}</td>
         <td>
           <div class="row-actions">
-            <button class="btn btn-ghost btn-sm btn-icon" onclick="openCategoryForm(${c.id})" title="Rename category">✏️</button>
-            <button class="btn btn-ghost btn-sm btn-icon danger-action" onclick="deleteCategory(${c.id})" title="Delete category">🗑️</button>
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="openCategoryForm(${c.id})" title="Rename category"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+            <button class="btn btn-ghost btn-sm btn-icon danger-action" onclick="deleteCategory(${c.id})" title="Delete category"><i class="fa-regular fa-trash-can" aria-hidden="true"></i></button>
           </div>
         </td>
       </tr>`;
@@ -4952,9 +4952,9 @@ window.renderUsersTable = async () => {
         <span class="badge ${statusClass}">${workStatus}</span>
       </td>
       <td>
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="openUserForm(${u.id})" title="Edit User">✏️</button>
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="openResetStaffPasswordModal(${u.id}, ${jsArg(u.display_name)})" title="Change / Set Password" style="color:var(--brand)">🔑</button>
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="deleteUser(${u.id}, ${jsArg(u.display_name)})" title="Delete User" style="color:var(--danger)">🗑️</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="openUserForm(${u.id})" title="Edit User"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="openResetStaffPasswordModal(${u.id}, ${jsArg(u.display_name)})" title="Change / Set Password" style="color:var(--brand)"><i class="fa-solid fa-key" aria-hidden="true"></i></button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="deleteUser(${u.id}, ${jsArg(u.display_name)})" title="Delete User" style="color:var(--danger)"><i class="fa-regular fa-trash-can" aria-hidden="true"></i></button>
       </td>
     </tr>`;
   }).join('') || '<tr><td colspan="5" style="text-align:center">No users found</td></tr>';
@@ -5487,7 +5487,7 @@ window.renderAdvances = async () => {
       <td><span class="badge ${a.status==='PENDING'?'badge-pending':'badge-completed'}">${a.status}</span></td>
       <td>${a.date}</td>
       <td>
-        ${a.status === 'PENDING' ? `<button class="btn btn-ghost btn-sm" onclick="deleteAdvance(${a.id})">🗑️</button>` : ''}
+        ${a.status === 'PENDING' ? `<button class="btn btn-ghost btn-sm" onclick="deleteAdvance(${a.id})" title="Delete advance" aria-label="Delete advance"><i class="fa-regular fa-trash-can" aria-hidden="true"></i></button>` : ''}
       </td>
     </tr>
   `).join('') || '<tr><td colspan="6" style="text-align:center">No advances found</td></tr>';
@@ -5805,8 +5805,8 @@ window.renderExpenses = async () => {
         <td class="td-mono fw-600">${formatMoney(x.amount || 0)}</td>
         <td>
           <div class="row-actions">
-            <button class="btn btn-ghost btn-sm btn-icon" onclick="openExpenseForm(${x.id})" title="Edit expense">✏️</button>
-            <button class="btn btn-ghost btn-sm btn-icon danger-action" onclick="deleteExpense(${x.id})" title="Delete expense">🗑️</button>
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="openExpenseForm(${x.id})" title="Edit expense"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+            <button class="btn btn-ghost btn-sm btn-icon danger-action" onclick="deleteExpense(${x.id})" title="Delete expense"><i class="fa-regular fa-trash-can" aria-hidden="true"></i></button>
           </div>
         </td>
       </tr>`;
@@ -8331,7 +8331,7 @@ window.submitShiftClose = async (expected) => {
       </div>
     `, `
       <button class="btn btn-secondary" onclick="closeModal()">Skip</button>
-      <button class="btn btn-primary" onclick="printShiftReport(${JSON.stringify(closureData).replace(/"/g, '&quot;')})">🖨️ Print Report</button>
+      <button class="btn btn-primary" onclick="printShiftReport(${JSON.stringify(closureData).replace(/"/g, '&quot;')})"><i class="fa-solid fa-print" aria-hidden="true"></i> Print Report</button>
     `);
 
   } catch (err) {
@@ -8440,7 +8440,7 @@ window.renderShiftHistory = async () => {
           </td>
           <td><span class="badge ${statusClass}">${varStatus}</span></td>
           <td>
-            <button class="btn btn-ghost btn-sm" onclick="printShiftReport(${JSON.stringify(c).replace(/"/g, '&quot;')})">🖨️</button>
+            <button class="btn btn-ghost btn-sm" onclick="printShiftReport(${JSON.stringify(c).replace(/"/g, '&quot;')})"><i class="fa-solid fa-print" aria-hidden="true"></i></button>
           </td>
         </tr>
       `;
@@ -8543,7 +8543,7 @@ window.saRenderDashboard = async () => {
     const actionClass = l.action.includes('CREATE') ? 'action-create' : l.action.includes('LOGIN') ? 'action-login' : l.action.includes('DELETE') ? 'action-delete' : 'action-update';
     return `
     <div class="sa-recent-item">
-      <div class="sa-recent-icon">📋</div>
+      <div class="sa-recent-icon"><i class="fa-solid fa-clipboard-list" aria-hidden="true"></i></div>
       <div class="sa-recent-text">
         <div class="sa-recent-name">${l.actor_name || l.actor_id}</div>
         <div class="sa-recent-meta">${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
@@ -8597,8 +8597,8 @@ window.saRenderBusinesses = async () => {
       <td><span class="badge ${o.is_active ? 'badge-active' : 'badge-inactive'}">${o.is_active ? 'Active' : 'Inactive'}</span></td>
       <td style="font-size:12px">${d.toLocaleDateString()}</td>
       <td>
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="saViewBusinessDetail('${o.id}')" title="View">👁️</button>
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="saQuickImpersonate('${o.id}',${jsArg(o.name||'')})" title="Enter POS">🔑</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="saViewBusinessDetail('${o.id}')" title="View"><i class="fa-regular fa-eye" aria-hidden="true"></i></button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="saQuickImpersonate('${o.id}',${jsArg(o.name||'')})" title="Enter POS"><i class="fa-solid fa-key" aria-hidden="true"></i></button>
       </td>
     </tr>`);
   }
@@ -8729,7 +8729,7 @@ window.saViewBusinessDetail = async (orgId) => {
         <div class="fw-600">${escapeHtml(u.display_name)}</div>
         <div style="font-size:11px;color:var(--text-muted)">${escapeHtml(u.username)} · ${u.role}</div>
       </div>
-      <button class="btn btn-ghost btn-sm btn-icon" onclick="saResetUserPassword(${u.id}, ${jsArg(u.display_name)})" title="Reset User Password" style="color:var(--brand); margin-right:8px">🔑</button>
+      <button class="btn btn-ghost btn-sm btn-icon" onclick="saResetUserPassword(${u.id}, ${jsArg(u.display_name)})" title="Reset User Password" style="color:var(--brand); margin-right:8px"><i class="fa-solid fa-key" aria-hidden="true"></i></button>
       <span class="badge ${u.is_active ? 'badge-active' : 'badge-inactive'}">${u.is_active ? 'Active' : 'Inactive'}</span>
     </div>
   `).join('') : '<div style="color:var(--text-muted); padding:12px">No users</div>';
@@ -9125,10 +9125,10 @@ window.saToggleApiKeyVisibility = () => {
   if (!input) return;
   if (input.type === 'password') {
     input.type = 'text';
-    if (btn) btn.textContent = '🔒';
+    if (btn) btn.innerHTML = '<i class="fa-regular fa-eye-slash" aria-hidden="true"></i>';
   } else {
     input.type = 'password';
-    if (btn) btn.textContent = '👁️';
+    if (btn) btn.innerHTML = '<i class="fa-regular fa-eye" aria-hidden="true"></i>';
   }
 };
 
@@ -10555,17 +10555,17 @@ window.openTableDetails = (tableId) => {
     </div>
     <div style="display:flex; flex-direction:column; gap:8px">
       <button class="btn btn-primary" onclick="settleTableBill('${tableId}')">
-        💳 Proceed to Checkout & Pay Bill
+        <i class="fa-solid fa-credit-card" aria-hidden="true"></i> Proceed to Checkout & Pay Bill
       </button>
       <button class="btn btn-secondary" onclick="startOrderAtTable('${tableId}')">
-        ➕ Add More Food Items in POS
+        <i class="fa-solid fa-plus" aria-hidden="true"></i> Add More Food Items in POS
       </button>
       <div style="display:flex; gap:8px">
         <button class="btn btn-secondary" style="flex:1" onclick="openMoveTableModal('${tableId}')"><i class="fa-solid fa-right-left"></i> Move / Merge</button>
         <button class="btn btn-secondary" style="flex:1" onclick="openSplitTableModal('${tableId}')"><i class="fa-solid fa-code-branch"></i> Split Bill</button>
       </div>
       <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="clearTableOrder('${tableId}')">
-        ✕ Clear & Reset Table
+        <i class="fa-solid fa-xmark" aria-hidden="true"></i> Clear & Reset Table
       </button>
     </div>
   `;

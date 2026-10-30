@@ -1867,19 +1867,6 @@ input, select, textarea, button { font-family: inherit; }
 /* ═══════════════════════════════════════
    BILL EDIT & DELETE
    ═══════════════════════════════════════ */
-/* Table bill — the pre-payment slip a server carries to the guest.
-   Tinted apart from Hold/Resume/Discount because it is the one action that
-   puts paper in a customer’s hands before money changes hands. */
-.btn-table-bill {
-  background: var(--info-bg) !important;
-  color: var(--info) !important;
-  border-color: rgba(2,132,199,0.28) !important;
-}
-.btn-table-bill:hover {
-  background: var(--info) !important;
-  color: #fff !important;
-  border-color: var(--info) !important;
-}
 
 /* Profit & loss — the walk from revenue down to what the business keeps */
 .pnl-card { padding: 16px 18px; margin-bottom: 15px; }

@@ -345,7 +345,7 @@
         <div class="page">
           <div class="page-header">
             <div><div class="page-title sa-title">Platform Activity Log</div><div class="page-subtitle">All actions across the platform</div></div>
-            <div class="page-actions"><button class="btn btn-secondary btn-sm" onclick="saRenderActivity()">🔄 Refresh</button></div>
+            <div class="page-actions"><button class="btn btn-secondary btn-sm" onclick="saRenderActivity()"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Refresh</button></div>
           </div>
           <div class="card">
             <div class="data-table-wrap">
@@ -402,7 +402,7 @@
           <div class="page-header">
             <div><div class="page-title sa-title" id="sa-detail-title">Business Details</div><div class="page-subtitle" id="sa-detail-subtitle">View and manage business</div></div>
             <div class="page-actions">
-              <button class="btn btn-primary btn-sm" onclick="saImpersonateBusiness()" id="sa-imp-btn">👁️ Enter Business POS</button>
+              <button class="btn btn-primary btn-sm" onclick="saImpersonateBusiness()" id="sa-imp-btn"><i class="fa-regular fa-eye" aria-hidden="true"></i> Enter Business POS</button>
               <button class="btn btn-secondary btn-sm" onclick="saNav('sa-businesses')">← Back</button>
             </div>
           </div>
@@ -412,9 +412,9 @@
               <div class="section-header">Business Info</div>
               <div id="sa-detail-info"></div>
               <div style="margin-top:16px; display:flex; gap:8px">
-                <button class="btn btn-secondary btn-sm" onclick="saEditBusiness()">✏️ Edit</button>
+                <button class="btn btn-secondary btn-sm" onclick="saEditBusiness()"><i class="fa-solid fa-pen" aria-hidden="true"></i> Edit</button>
                 <button class="btn btn-secondary btn-sm" id="sa-toggle-status-btn" onclick="saToggleStatus()">⏸ Deactivate</button>
-                <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="saDeleteBusiness()">🗑️ Delete</button>
+                <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="saDeleteBusiness()"><i class="fa-regular fa-trash-can" aria-hidden="true"></i> Delete</button>
               </div>
             </div></div>
             <div class="card"><div class="card-body">
@@ -471,7 +471,7 @@
             <!-- Left Card: Platform AI Engine Configuration -->
             <div class="card">
               <div class="card-body">
-                <div class="form-section-title">🔑 Platform AI API Configuration</div>
+                <div class="form-section-title"><i class="fa-solid fa-key" aria-hidden="true"></i> Platform AI API Configuration</div>
                 <div class="page-subtitle" style="margin-bottom:16px">
                   Businesses never need their own API keys. Configure the central AI engine here.
                 </div>
@@ -491,7 +491,7 @@
                     <label class="form-label">Platform API Key *</label>
                     <div style="display:flex; gap:8px">
                       <input class="form-input" type="password" id="sa-ai-api-key" placeholder="Enter provider API key (e.g. AIzaSy... or sk-...)" oninput="saOnAiApiKeyInput(this.value)">
-                      <button class="btn btn-secondary btn-sm" type="button" onclick="saToggleApiKeyVisibility()" id="sa-ai-key-toggle-btn" title="Show/Hide">👁️</button>
+                      <button class="btn btn-secondary btn-sm" type="button" onclick="saToggleApiKeyVisibility()" id="sa-ai-key-toggle-btn" title="Show/Hide"><i class="fa-regular fa-eye" aria-hidden="true"></i></button>
                     </div>
                     <div id="sa-ai-key-hint" style="display:none; margin-top:6px; font-size:12px; padding:6px 10px; border-radius:6px; background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe"></div>
                     <div style="font-size:11px; color:var(--text-muted); margin-top:4px">
@@ -576,7 +576,7 @@
                 <div id="sa-ai-report-output" style="margin-top:18px; display:none; background:var(--surface-2); border-radius:10px; padding:16px; border:1px solid var(--border)">
                   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
                     <span class="badge badge-active" id="sa-ai-report-badge">AI Diagnostic Report</span>
-                    <button class="btn btn-ghost btn-sm" onclick="saCopyAiReport()">📋 Copy</button>
+                    <button class="btn btn-ghost btn-sm" onclick="saCopyAiReport()"><i class="fa-regular fa-copy" aria-hidden="true"></i> Copy</button>
                   </div>
                   <div id="sa-ai-report-text" style="font-size:13px; line-height:1.6; color:var(--text-primary); white-space:pre-wrap"></div>
                 </div>
@@ -669,9 +669,6 @@
                   <button class="btn btn-secondary" onclick="holdCart()"><i class="fa-solid fa-pause"></i> Hold</button>
                   <button class="btn btn-secondary" onclick="openHeldBills()" id="btn-held-bills" title="Resume a parked bill"><i class="fa-solid fa-folder-open"></i> Resume<span class="held-count-badge" id="held-count" style="display:none">0</span></button>
                   <button class="btn btn-secondary" onclick="applyDiscount()"><i class="fa-solid fa-tag"></i> Discount</button>
-                  <button class="btn btn-secondary btn-table-bill restaurant-only" id="btn-table-bill" onclick="printTableBill()" title="Print the bill to take to the table (no payment taken)" style="display:none">
-                    <i class="fa-solid fa-receipt"></i> Print Bill
-                  </button>
                   <button class="btn btn-warning btn-kot-action restaurant-only" id="btn-fire-kot" onclick="sendOrderToKitchen()" title="Fire order to kitchen KOT" style="display:none">
                     <i class="fa-solid fa-fire-burner"></i> Send to KOT
                   </button>
@@ -908,7 +905,7 @@
                 <button class="btn btn-ghost btn-sm" id="tab-shifts-list" onclick="toggleSalesTab('shifts')">Shift History</button>
                 <button class="btn btn-ghost btn-sm" id="tab-ramis-list" onclick="toggleSalesTab('ramis')"><i class="fa-solid fa-building-columns" style="margin-right:5px; color:var(--brand)"></i> IRD RAMIS Invoices</button>
               </div>
-              <button class="btn btn-secondary btn-sm" onclick="exportSalesCSV()">⬇ Export CSV</button>
+              <button class="btn btn-secondary btn-sm" onclick="exportSalesCSV()"><i class="fa-solid fa-download" aria-hidden="true"></i> Export CSV</button>
             </div>
           </div>
           <div class="card">
@@ -1452,7 +1449,7 @@
 
               <div id="period-report-controls" style="display:none; gap:10px">
                 <button class="btn btn-primary" onclick="downloadPDFReport()" id="btn-download-pdf">📄 Download PDF Report</button>
-                <button class="btn btn-secondary" onclick="renderAIReports()">🔄 Refresh Data</button>
+                <button class="btn btn-secondary" onclick="renderAIReports()"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Refresh Data</button>
               </div>
             </div>
           </div>
@@ -1608,7 +1605,7 @@
     </div>
     <div class="modal-body thermal-paper" id="receipt-body" style="font-family:var(--mono); font-size:13px; font-weight:600; line-height:1.4"></div>
     <div class="modal-footer" style="flex-wrap:wrap; gap:8px">
-      <button class="btn btn-primary btn-sm" onclick="printReceipt()">🖨️ Print</button>
+      <button class="btn btn-primary btn-sm" onclick="printReceipt()"><i class="fa-solid fa-print" aria-hidden="true"></i> Print</button>
       <button class="btn btn-secondary btn-sm" onclick="shareReceiptPDF()">📄 WhatsApp PDF</button>
       <button class="btn btn-secondary btn-sm" onclick="printViaRawBT()">🔌 Bluetooth</button>
       <button class="btn btn-ghost btn-sm" onclick="closeReceipt()">Close</button>
