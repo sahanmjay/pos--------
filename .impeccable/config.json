@@ -15,6 +15,15 @@
         "value": "arial",
         "createdAt": "2026-10-13T05:13:38.406Z",
         "reason": "Claude: thermal receipt print font (@media print, 80mm) chosen for a heavy face guaranteed on Windows tills; not a screen typography choice"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "index.html"
+        ],
+        "createdAt": "2026-10-30T15:31:53.301Z",
+        "reason": "Claude, checked against style.css: all hits are .topbar (56px centered), .status-pill (32px centered), .main (child .page pads 28/32px) and .card frames (inset from .card-body/.filter-bar/table cells). Static check cannot see the inset. Re-check if new bordered containers are added to index.html."
       }
     ]
   }

@@ -635,6 +635,15 @@
                   <button type="button" class="dining-type-btn" data-type="delivery" onclick="setDiningType('delivery')">
                     <i class="fa-solid fa-motorcycle"></i> Delivery
                   </button>
+                  <button type="button" class="dining-type-btn" data-type="pickme" onclick="setDiningType('pickme')">
+                    <i class="fa-solid fa-mobile-screen-button"></i> PickMe
+                  </button>
+                  <button type="button" class="dining-type-btn" data-type="uber" onclick="setDiningType('uber')">
+                    <i class="fa-solid fa-mobile-screen-button"></i> Uber Eats
+                  </button>
+                </div>
+                <div class="platform-ref-row" id="platform-ref-row" style="display:none">
+                  <input class="form-input" id="platform-ref-no" placeholder="Platform order no." autocomplete="off" aria-label="Platform order number">
                 </div>
                 <div class="dining-table-row" id="dining-table-row" style="margin-top:8px">
                   <button type="button" class="btn btn-secondary btn-full btn-sm dining-table-btn" onclick="openTablePickerModal()">
@@ -686,6 +695,7 @@
                     <button class="btn btn-secondary" onclick="payNow('credit')"><i class="fa-regular fa-note-sticky"></i> Credit</button>
                   </div>
                 </div>
+                <button class="btn btn-primary btn-full cash-payment-btn" id="platform-pay-btn" onclick="payNow('platform')" style="display:none"><i class="fa-solid fa-mobile-screen-button"></i> <span id="platform-pay-label">Complete order</span></button>
               </div> <!-- /cart-totals -->
             </div> <!-- /pos-cart-panel -->
           </div> <!-- /pos-cart-wrap -->
@@ -753,7 +763,7 @@
           </div>
 
           <!-- Table Summary Cards -->
-          <div class="summary-grid" style="margin-bottom:20px;">
+          <div class="summary-grid tables-summary" style="margin-bottom:20px;">
             <div class="summary-card">
               <div class="summary-icon" style="color:var(--brand); background:var(--brand-light)"><i class="fa-solid fa-chair"></i></div>
               <div>
@@ -776,6 +786,13 @@
               </div>
             </div>
             <div class="summary-card">
+              <div class="summary-icon" style="color:var(--g7); background:var(--g2)"><i class="fa-solid fa-broom"></i></div>
+              <div>
+                <div class="summary-label">Needs Cleaning</div>
+                <div class="summary-val" id="tables-cleaning-count">0</div>
+              </div>
+            </div>
+            <div class="summary-card">
               <div class="summary-icon" style="color:var(--brand); background:var(--brand-light)"><i class="fa-solid fa-receipt"></i></div>
               <div>
                 <div class="summary-label">Active Dining Revenue</div>
@@ -785,7 +802,8 @@
           </div>
 
           <!-- Floor Plan / Tables Grid -->
-          <div id="tables-floor-grid" class="tables-floor-grid"></div>
+          <div id="tables-area-chips" class="tables-area-chips"></div>
+          <div id="tables-floor-grid"></div>
         </div>
       </div>
 
@@ -1282,6 +1300,19 @@
                     <option value="true">Enabled — Play chime on new kitchen order</option>
                     <option value="false">Muted</option>
                   </select>
+                </div>
+                <div class="form-group" style="grid-column: span 2">
+                  <label class="form-label">Delivery platforms</label>
+                  <div class="platform-settings">
+                    <span></span><span class="platform-settings-head">Price markup %</span><span class="platform-settings-head">Commission %</span>
+                    <strong>PickMe</strong>
+                    <input class="form-input" type="number" min="0" step="0.5" id="set-pickme-markup" placeholder="0" aria-label="PickMe price markup percent">
+                    <input class="form-input" type="number" min="0" step="0.5" id="set-pickme-commission" placeholder="0" aria-label="PickMe commission percent">
+                    <strong>Uber Eats</strong>
+                    <input class="form-input" type="number" min="0" step="0.5" id="set-uber-markup" placeholder="0" aria-label="Uber Eats price markup percent">
+                    <input class="form-input" type="number" min="0" step="0.5" id="set-uber-commission" placeholder="0" aria-label="Uber Eats commission percent">
+                  </div>
+                  <div style="font-size:11.5px; color:var(--text-muted); margin-top:6px">Markup raises menu prices on PickMe / Uber Eats orders (rounded up to Rs. 10). Commission is taken off profit in the reports.</div>
                 </div>
                 <div class="form-group" style="grid-column: span 2">
                   <label class="form-label" style="display:flex; justify-content:space-between">

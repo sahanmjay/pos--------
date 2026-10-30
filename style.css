@@ -403,6 +403,7 @@ input, select, textarea, button { font-family: inherit; }
 .card-body.p-0 { padding: 0 !important; }
 
 .summary-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 16px; }
+.tables-summary { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 .summary-card {
   background: var(--g0); border: 1px solid var(--g3);
   border-radius: var(--radius-lg); padding: 18px;
@@ -632,14 +633,14 @@ input, select, textarea, button { font-family: inherit; }
 /* ─── Category Pills ─── */
 .pos-cat-filters { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; padding: 2px 0; }
 .pos-cat-filters::-webkit-scrollbar { display: none; }
-.pos-cat-filters .cat-pill {
+.pos-cat-filters .cat-pill, .tables-area-chips .cat-pill {
   padding: 6px 14px; min-height: 34px; display: inline-flex; align-items: center;
   border-radius: 999px; font-size: 13.5px; font-weight: 500;
   cursor: pointer; border: 1px solid var(--g3); background: var(--g0);
   color: var(--g7); white-space: nowrap; transition: border-color var(--transition), background-color var(--transition), color var(--transition);
 }
-.pos-cat-filters .cat-pill:hover { border-color: var(--g4); color: var(--g9); }
-.pos-cat-filters .cat-pill.active { background: var(--brand); color: var(--on-brand); border-color: var(--brand); }
+.pos-cat-filters .cat-pill:hover, .tables-area-chips .cat-pill:hover { border-color: var(--g4); color: var(--g9); }
+.pos-cat-filters .cat-pill.active, .tables-area-chips .cat-pill.active { background: var(--brand); color: var(--on-brand); border-color: var(--brand); }
 .cat-pill-popular { gap: 6px; }
 .cat-pill-popular i { font-size: 12px; color: var(--warning); }
 .cat-pill-popular.active i { color: inherit; }
@@ -1341,6 +1342,10 @@ input, select, textarea, button { font-family: inherit; }
   white-space: nowrap;
   transition: all var(--transition);
 }
+.platform-settings { display: grid; grid-template-columns: 90px minmax(0, 160px) minmax(0, 160px); gap: 8px 12px; align-items: center; }
+.platform-settings-head { font-size: 11.5px; color: var(--text-muted); font-weight: 600; }
+.platform-ref-row { margin-top: 8px; }
+.platform-ref-row .form-input { padding: 8px 12px; font-size: 14px; font-weight: 600; }
 .dining-type-btn:hover {
   color: var(--text-primary);
 }
@@ -1588,6 +1593,31 @@ input, select, textarea, button { font-family: inherit; }
   border-color: rgba(245,158,11,0.5);
   background: #FFFDF5;
 }
+.table-card.table-cleaning {
+  border-style: dashed;
+  border-color: var(--g4);
+  background: var(--g1);
+}
+.table-status-cleaning { color: var(--g7); background: var(--g2); }
+.tables-area-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.tables-area-chips:empty { display: none; }
+.tables-area-title { font-size: 13px; font-weight: 600; color: var(--g7); text-transform: uppercase; letter-spacing: 0.04em; margin: 22px 0 10px; }
+.tables-area-title:first-child { margin-top: 0; }
+.tables-area-title span { color: var(--g5); font-weight: 500; margin-left: 4px; }
+.table-pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; max-height: 50vh; overflow-y: auto; }
+.table-pick-btn {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 10px 12px; border: 1px solid var(--g3); border-radius: var(--radius);
+  background: var(--g0); cursor: pointer; text-align: left; font: inherit; color: var(--g9);
+}
+.table-pick-btn span { font-size: 12px; color: var(--g6); }
+.table-pick-btn:hover { border-color: var(--brand); }
+.table-pick-occupied { border-color: rgba(245,158,11,0.5); background: #FFFDF5; }
+.split-lines { display: flex; flex-direction: column; border: 1px solid var(--g3); border-radius: var(--radius); }
+.split-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--g2); }
+.split-line:last-child { border-bottom: 0; }
+.split-line-name { font-size: 14px; font-weight: 500; display: flex; flex-direction: column; min-width: 0; }
+.split-line-name span { font-size: 12px; color: var(--g6); font-weight: 400; }
 .table-card.table-billing {
   border-color: rgba(24,24,27,0.5);
   background: var(--surface);

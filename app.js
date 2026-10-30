@@ -401,6 +401,12 @@ async function handleIncomingRealtimeEvent(event) {
       if (payload.activeTableOrders) {
         activeTableOrders = payload.activeTableOrders;
       }
+      // A moved or merged order brings its kitchen tickets along
+      if (Array.isArray(payload.activeKots)) {
+        activeKots = payload.activeKots;
+        if (typeof updateKotBadge === 'function') updateKotBadge();
+        if (document.getElementById('screen-kot')?.classList.contains('active')) renderKOTScreen();
+      }
       if (typeof updateDiningTableUI === 'function') updateDiningTableUI();
       const tablesScreen = document.getElementById('screen-tables');
       if (tablesScreen && tablesScreen.classList.contains('active')) {
@@ -1548,7 +1554,7 @@ async function renderPosGrid() {
     // In-Cart live indicator
     const inCartItem = cart.find(i => i.product_id === p.id);
     const inCartQty = inCartItem ? inCartItem.quantity : 0;
-    const priceNum = Number(p.retail_price || 0);
+    const priceNum = posPrice(p);
 
     return `
       <div class="pos-product-card ${isOutOfStock?'out-of-stock':''} ${isLowStock?'low-stock':''} ${inCartQty > 0 ? 'in-cart' : ''}" 
@@ -1586,7 +1592,7 @@ async function addToCart(id) {
     cart.push({
       product_id: p.id,
       name: p.name,
-      unit_price: p.retail_price,
+      unit_price: posPrice(p),
       // Cost is captured here and stored on the sale line, so changing a
       // product's cost tomorrow never rewrites yesterday's profit.
       cost_price: Number(p.cost_price) || 0,
@@ -1808,7 +1814,50 @@ function heldCartAge(dateStr) {
   return days + (days === 1 ? ' day ago' : ' days ago');
 }
 
-const DINING_LABELS = { dine_in: 'Dine-In', takeaway: 'Takeaway', delivery: 'Delivery' };
+const DINING_LABELS = { dine_in: 'Dine-In', takeaway: 'Takeaway', delivery: 'Delivery', pickme: 'PickMe', uber: 'Uber Eats' };
+
+// ─── PICKME / UBER EATS ───
+// A platform order is an order type: menu prices carry the platform's markup,
+// the bill is paid by the platform (payment_type pickme / uber, never cash),
+// and the platform's commission is kept on the bill for the profit figures.
+const PLATFORM_IDS = ['pickme', 'uber'];
+
+// Rounded up to the next Rs. 10 so the price reads like a menu price
+function platformPrice(price, markup) {
+  const m = Number(markup) || 0;
+  if (!m) return Number(price) || 0;
+  return Math.ceil((Number(price) || 0) * (1 + m / 100) / 10) * 10;
+}
+
+function platformCommission(total, pct) {
+  return Math.round((Number(total) || 0) * (Number(pct) || 0)) / 100;
+}
+
+function deliveryPlatforms() {
+  let saved = [];
+  try { saved = JSON.parse(currentSettings.delivery_platforms || '[]'); } catch (e) {}
+  return PLATFORM_IDS.map(id => {
+    const s = saved.find(x => x.id === id) || {};
+    return { id, name: DINING_LABELS[id], markup: Number(s.markup) || 0, commission: Number(s.commission) || 0 };
+  });
+}
+
+function currentPlatform() {
+  return PLATFORM_IDS.includes(currentDiningType) ? deliveryPlatforms().find(x => x.id === currentDiningType) : null;
+}
+
+// What a product costs on the till right now, for the selected order type
+function posPrice(p) {
+  const platform = currentPlatform();
+  return platform ? platformPrice(p.retail_price, platform.markup) : Number(p.retail_price) || 0;
+}
+
+function repriceCart() {
+  for (const line of cart) {
+    const p = (posProducts || []).find(x => x.id == line.product_id);
+    if (p) line.unit_price = posPrice(p);
+  }
+}
 
 // ─── HOLD: name the bill and pick its table ───
 let holdSelectedTableId = null;
@@ -2065,7 +2114,9 @@ let currentCashCheckout = { total: 0, subtotal: 0, discount: 0, tax: 0, tendered
 
 window.payNow = async (paymentType) => {
   if(cart.length === 0) return showToast('error', 'Cart is empty');
-  
+  // Shortcut keys still say "cash"; a platform order is always paid by the platform
+  if (currentPlatform()) paymentType = 'platform';
+
   const { subtotal, discount, tax, total } = updateTotals();
   
   if(paymentType === 'credit') {
@@ -2078,7 +2129,17 @@ window.payNow = async (paymentType) => {
   if(paymentType === 'card') {
     return executeCheckout('card', total, total, 0, subtotal, discount, tax);
   }
-  
+
+  if(paymentType === 'platform') {
+    const platform = currentPlatform();
+    const ref = document.getElementById('platform-ref-no');
+    if (!ref || !ref.value.trim()) {
+      ref?.focus();
+      return showToast('error', `Type the ${platform.name} order no. first`);
+    }
+    return executeCheckout(platform.id, total, total, 0, subtotal, discount, tax);
+  }
+
   if(paymentType === 'cash') {
     openCashPaymentModal(total, subtotal, discount, tax);
   }
@@ -2407,6 +2468,11 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     console.warn('[Checkout] Checkout already in progress, blocking duplicate execution');
     return;
   }
+  // Every way into checkout (fast cash, cash modal, buttons) passes here
+  const platform = currentPlatform();
+  if (platform && paymentType !== platform.id) {
+    return showToast('error', `This is a ${platform.name} order. Use "Complete ${platform.name} order".`);
+  }
   _isCheckingOut = true;
   const sale = {
     date: new Date().toISOString(),
@@ -2416,6 +2482,11 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     cashier: currentUser.display_name,
     items_count: cart.reduce((sum, item)=>sum+item.quantity, 0)
   };
+  if (isRestaurantMode()) {
+    sale.order_type = currentDiningType;
+    sale.ref_no = platform ? (document.getElementById('platform-ref-no')?.value.trim() || null) : null;
+    sale.commission = platform ? platformCommission(total, platform.commission) : 0;
+  }
   
   const products = new Map((posProducts || await loadPosProducts()).map(p => [Number(p.id), p]));
   const saleItems = cart.map(i => ({
@@ -2439,10 +2510,15 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
     } catch (bErr) {
       console.warn('[Checkout] Bill number generation note:', bErr);
     }
-    const saleId = await db.sales.add(sale);
+    // The receipt still shows the platform order no. when the columns are missing
+    const saleRow = { ...sale };
+    if (!(await db.salesSupportsOrderType())) ['order_type', 'ref_no', 'commission'].forEach(k => { delete saleRow[k]; });
+    const saleId = await db.sales.add(saleRow);
     await db.sale_items.bulkAdd(saleItems.map(si => ({...si, sale_id: saleId})));
 
     // Immediately clear cart, discounts, and customer selection
+    const refInput = document.getElementById('platform-ref-no');
+    if (refInput) refInput.value = '';
     cart = [];
     manualDiscount = 0;
     cartCustomerId = 1;
@@ -2459,15 +2535,18 @@ async function executeCheckout(paymentType, total, tendered, change, subtotal, d
 
     // If a restaurant order was checked out, free table and clear all table orders
     if (typeof activeTableOrders !== 'undefined') {
-      if (currentTableId) {
-        delete activeTableOrders[currentTableId];
+      // Only a dine-in bill frees its table; a takeaway or platform sale must not
+      // wipe the last-picked table's open order. The guests leave, so it waits to be cleaned.
+      if (currentDiningType === 'dine_in' && currentTableId) {
+        activeTableOrders[currentTableId] = { items: [], cleaning: true };
       }
       if (currentDiningType && activeTableOrders[currentDiningType]) {
         delete activeTableOrders[currentDiningType];
       }
       if (typeof activeKots !== 'undefined' && Array.isArray(activeKots)) {
         activeKots.forEach(k => {
-          if ((k.table_id === currentTableId || k.id === currentTableId || k.table_id === currentDiningType) && k.status !== 'served') {
+          const forThisBill = (currentDiningType === 'dine_in' && k.table_id === currentTableId) || k.id === currentTableId || k.table_id === currentDiningType;
+          if (forThisBill && k.status !== 'served') {
             k.status = 'served';
             k.sale_id = saleId;
           }
@@ -2618,7 +2697,8 @@ function showReceipt(sale, items, change, tendered, autoPrint = false) {
       <div>Receipt: <span style="font-weight:800">#${billNumber(sale)}</span></div>
       <div>Date: <span style="font-weight:600">${new Date(sale.date).toLocaleString()}</span></div>
       <div>Cashier: <span style="font-weight:600">${sale.cashier}</span></div>
-      <div>Pay Method: <span style="font-weight:800">${sale.payment_type.toUpperCase()}</span></div>
+      <div>Pay Method: <span style="font-weight:800">${(PLATFORM_IDS.includes(sale.payment_type) ? DINING_LABELS[sale.payment_type] : sale.payment_type).toUpperCase()}</span></div>
+      ${sale.ref_no ? `<div>${escapeHtml(DINING_LABELS[sale.payment_type] || 'Platform')} order: <span style="font-weight:800">#${escapeHtml(sale.ref_no)}</span></div>` : ''}
     </div>
     <table style="width:100%;text-align:left;border-bottom:1px dashed var(--rule);margin-bottom:8px;color:#000;font-size:12px;font-weight:600">
       <tr style="color:#000;font-size:11px;font-weight:800;text-transform:uppercase;border-bottom:1px dashed var(--rule)">
@@ -5861,6 +5941,7 @@ window.renderAIReports = async () => {
     ['Revenue', data.revenue, ''],
     ['Cost of goods sold', -(data.revenue - data.grossProfit), 'neg'],
     ['Gross profit', data.grossProfit, 'sub'],
+    ...(data.commissionTotal ? [['Platform commission (PickMe / Uber Eats)', -data.commissionTotal, 'neg']] : []),
     ['Daily expenses', -data.expenses.daily, 'neg'],
     ['Monthly expenses (apportioned)', -data.expenses.monthly, 'neg'],
     ['Wages paid', -data.payrollTotal, 'neg'],
@@ -6037,13 +6118,16 @@ async function buildDailyReport(day) {
     discount: sum(bills, 'discount'),
     tax: sum(bills, 'tax'),
     collected: sum(bills, 'total_amount'),
+    // PickMe / Uber Eats cut, stored on each bill at checkout
+    commission: sum(bills, 'commission'),
   };
   takings.net = takings.gross - takings.discount;
 
   const payments = new Map();
   for (const s of bills) {
     const method = String(s.payment_type || 'other').toLowerCase();
-    const t = payments.get(method) || { method, count: 0, amount: 0 };
+    // "Uber Eats", not "uber", on the report
+    const t = payments.get(method) || { method: PLATFORM_IDS.includes(method) ? DINING_LABELS[method] : method, count: 0, amount: 0 };
     t.count++;
     t.amount += Number(s.total_amount) || 0;
     payments.set(method, t);
@@ -6092,7 +6176,7 @@ async function buildDailyReport(day) {
 
   return {
     day, takings, cogs,
-    profit: takings.net - cogs,
+    profit: takings.net - cogs - takings.commission,
     expenses, expenseTotal,
     payments: [...payments.values()].sort(byAmount),
     categories: [...byCategory.values()].sort(byAmount),
@@ -6153,7 +6237,8 @@ function dailyReportHtml(r) {
           <tr><td>Tax collected</td><td class="num">${m(t.tax)}</td></tr>
           <tr class="dr-sub"><td>Total collected</td><td class="num">${m(t.collected)}</td></tr>
           <tr><td>Cost of goods sold (FIFO)</td><td class="num">− ${m(r.cogs)}</td></tr>
-          <tr class="${deduct ? 'dr-sub' : 'dr-total'}"><td>Gross profit <span>net sales − cost</span></td><td class="num">${m(r.profit)}</td></tr>
+          ${t.commission ? `<tr><td>Platform commission <span>PickMe / Uber Eats</span></td><td class="num">− ${m(t.commission)}</td></tr>` : ''}
+          <tr class="${deduct ? 'dr-sub' : 'dr-total'}"><td>Gross profit <span>net sales − cost${t.commission ? ' − commission' : ''}</span></td><td class="num">${m(r.profit)}</td></tr>
           ${deduct ? `<tr><td>Expenses (today)</td><td class="num">− ${m(r.expenseTotal)}</td></tr>
           <tr class="dr-total"><td>Net profit <span>gross profit − expenses</span></td><td class="num">${m(net)}</td></tr>` : ''}
         </tbody></table>
@@ -6304,6 +6389,7 @@ function dailyReportSlipHtml(r) {
     ${line('Tax', m(t.tax))}
     ${line('TOTAL COLLECTED', m(t.collected), true)}
     ${line('Cost (FIFO)', '-' + m(r.cogs))}
+    ${t.commission ? line('Platform commission', '-' + m(t.commission)) : ''}
     ${line('GROSS PROFIT', m(r.profit), true)}
     ${drDeductExpenses() ? line('Expenses', '-' + m(r.expenseTotal)) + line('NET PROFIT', m(r.profit - r.expenseTotal), true) : ''}
     ${r.expenses.length ? rule + head('EXPENSES') + r.expenses.map(x => line(escapeHtml(x.category || 'Other') + (x.description ? ' - ' + escapeHtml(x.description) : ''), m(x.amount))).join('') : ''}
@@ -6465,8 +6551,9 @@ async function fetchReportData(start, end) {
   const repeatRate = uniqueCustomers > 0 ? (repeatCount / uniqueCustomers) * 100 : 0;
 
   // 3. Revenue by Payment Type
-  const payments = { cash: 0, card: 0, credit: 0 };
+  const payments = { cash: 0, card: 0, credit: 0, pickme: 0, uber: 0 };
   periodSales.forEach(s => { if (payments[s.payment_type] !== undefined) payments[s.payment_type] += s.total_amount; });
+  const commissionTotal = periodSales.reduce((a, s) => a + (Number(s.commission) || 0), 0);
   
   // 4. Time Analytics (Daily & Hourly)
   const dailyRev = {};
@@ -6561,7 +6648,7 @@ async function fetchReportData(start, end) {
 
   // Gross profit is what the kitchen earns; net profit is what the business
   // keeps once rent, utilities and wages are paid.
-  const netProfit = grossProfit - expensesTotal - payrollTotal;
+  const netProfit = grossProfit - commissionTotal - expensesTotal - payrollTotal;
   const netMargin = (netProfit / (revenue || 1)) * 100;
 
   const turnoverRate = totalCost > 0 ? (totalCost / (totalInventoryValue || 1)) : 0;
@@ -6572,7 +6659,7 @@ async function fetchReportData(start, end) {
     ipt, uniqueCustomers, repeatCount, repeatRate, peakHour,
     payments, dailyRev, hourlySales, salesByCashier: {}, // Simplified for now
     categoryStats, topProducts, grossProfit, profitMargin,
-    expenses, expensesTotal, netProfit, netMargin,
+    expenses, expensesTotal, netProfit, netMargin, commissionTotal,
     payrollTotal, advancesTotal, totalHours, totalInventoryValue, lowStockCount,
     turnoverRate, sellThroughRate, start, end
   };
@@ -6608,8 +6695,8 @@ function renderReportCharts(data) {
   reportCharts.payments = new Chart(document.getElementById('chart-payments'), {
     type: 'doughnut',
     data: {
-      labels: ['Cash', 'Card', 'Credit'],
-      datasets: [{ data: [data.payments.cash, data.payments.card, data.payments.credit], backgroundColor: ['#059669', '#2563EB', '#F59E0B'] }]
+      labels: ['Cash', 'Card', 'Credit', 'PickMe', 'Uber Eats'],
+      datasets: [{ data: [data.payments.cash, data.payments.card, data.payments.credit, data.payments.pickme, data.payments.uber], backgroundColor: ['#059669', '#2563EB', '#F59E0B', '#DB2777', '#18181B'] }]
     },
     options: { maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'bottom' } } }
   });
@@ -7538,6 +7625,11 @@ window.saveSettings = async () => {
       restaurant_mode: isRestEnabled ? 'true' : 'false',
       kot_autoprint: document.getElementById('set-kot-autoprint')?.value || 'true',
       kot_sound: document.getElementById('set-kot-sound')?.value || 'true',
+      delivery_platforms: JSON.stringify(PLATFORM_IDS.map(id => ({
+        id,
+        markup: Math.max(0, parseFloat(document.getElementById(`set-${id}-markup`)?.value) || 0),
+        commission: Math.max(0, parseFloat(document.getElementById(`set-${id}-commission`)?.value) || 0),
+      }))),
       tables_config: JSON.stringify(restaurantTables && restaurantTables.length ? restaurantTables : [
         { id: 'T1', name: 'Table 1', seats: 4 },
         { id: 'T2', name: 'Table 2', seats: 2 },
@@ -9379,6 +9471,22 @@ window.setDiningType = (type) => {
   if (tableRow) {
     tableRow.style.display = (type === 'dine_in') ? 'block' : 'none';
   }
+  // A platform order is paid by the platform, so the cash, card and credit
+  // buttons give way to one "complete" button and the order no. box
+  const platform = currentPlatform();
+  const show = (id, on, display = '') => { const el = document.getElementById(id); if (el) el.style.display = on ? display : 'none'; };
+  show('platform-ref-row', !!platform, 'block');
+  show('fast-cash-bar', !platform);
+  document.querySelectorAll('.payment-btns').forEach(el => { el.style.display = platform ? 'none' : ''; });
+  show('platform-pay-btn', !!platform);
+  const label = document.getElementById('platform-pay-label');
+  if (label && platform) label.textContent = `Complete ${platform.name} order`;
+  const ref = document.getElementById('platform-ref-no');
+  if (ref && platform) ref.placeholder = `${platform.name} order no.`;
+
+  repriceCart();
+  renderCart();
+  renderPosGrid();
   updateDiningTableUI();
 };
 
@@ -9538,7 +9646,15 @@ window.sendOrderToKitchen = async () => {
   currentSettings.kot_next_num = String(nextNum + 1);
 
   const tObj = getTableObj(currentTableId);
-  const tableName = (currentDiningType === 'dine_in') ? (tObj?.name || currentTableId) : (currentDiningType === 'takeaway' ? 'Takeaway' : 'Delivery');
+  const platform = currentPlatform();
+  const platformRef = document.getElementById('platform-ref-no')?.value.trim();
+  if (platform && !platformRef) {
+    document.getElementById('platform-ref-no')?.focus();
+    return showToast('error', `Type the ${platform.name} order no. first, so the kitchen can match it`);
+  }
+  const tableName = (currentDiningType === 'dine_in') ? (tObj?.name || currentTableId)
+    : platform ? `${platform.name.toUpperCase()} #${platformRef}`
+    : (DINING_LABELS[currentDiningType] || 'Takeaway');
 
   const kot = {
     id: 'KOT-' + Date.now(),
@@ -9565,7 +9681,9 @@ window.sendOrderToKitchen = async () => {
 
   // Link / update active table order
   if (currentDiningType === 'dine_in') {
-    const prevOrder = activeTableOrders[currentTableId] || { items: [], customerId: cartCustomerId, openedAt: new Date().toISOString(), kots: [] };
+    // A table that is only waiting to be cleaned starts a fresh order
+    const prevOrder = (activeTableOrders[currentTableId]?.items?.length ? activeTableOrders[currentTableId] : null)
+      || { items: [], customerId: cartCustomerId, openedAt: new Date().toISOString(), kots: [] };
     prevOrder.items = cart.map(i => ({ ...i }));
     prevOrder.customerId = cartCustomerId;
     prevOrder.kots = prevOrder.kots || [];
@@ -9914,7 +10032,7 @@ window.openKotBillCheckout = async (kotId) => {
 
   // Ensure activeTableOrders has this order in case table state is checked
   if (currentDiningType === 'dine_in' && currentTableId) {
-    if (!activeTableOrders[currentTableId]) {
+    if (!activeTableOrders[currentTableId]?.items?.length) {
       activeTableOrders[currentTableId] = {
         items: cart.map(i => ({ ...i })),
         customerId: cartCustomerId,
@@ -9978,100 +10096,270 @@ window.reprintKotBill = async (kotId) => {
 };
 
 // 🍽️ TABLE MANAGEMENT SCREEN LOGIC
+// Move, merge and split are one operation: items leave table `fromId` for
+// table `toId`. picks null = the whole order, else [{ index, qty }] lines of
+// the source. Lines with the same product, price and note are added together.
+// Works on the plain orders object (activeTableOrders) and returns it.
+function moveTableItems(orders, fromId, toId, picks) {
+  const src = orders[fromId];
+  if (!src || !src.items || !src.items.length || fromId === toId) return orders;
+  const dst = orders[toId] && orders[toId].items && orders[toId].items.length
+    ? orders[toId]
+    : { items: [], customerId: src.customerId, customerName: src.customerName, openedAt: src.openedAt, kots: [] };
+  delete dst.cleaning;
+
+  const moving = picks
+    ? picks.map(p => {
+        const l = src.items[p.index];
+        const qty = l ? Math.min(Math.max(0, p.qty), l.quantity) : 0;
+        if (qty) l.quantity -= qty;
+        return qty ? { ...l, quantity: qty } : null;
+      }).filter(Boolean)
+    : src.items.map(l => ({ ...l }));
+  src.items = picks ? src.items.filter(l => l.quantity > 0) : [];
+
+  for (const l of moving) {
+    const same = dst.items.find(d => d.product_id === l.product_id && d.unit_price === l.unit_price && (d.notes || '') === (l.notes || ''));
+    if (same) same.quantity += l.quantity;
+    else dst.items.push(l);
+  }
+  if (src.openedAt && (!dst.openedAt || Date.parse(src.openedAt) < Date.parse(dst.openedAt))) dst.openedAt = src.openedAt;
+
+  orders[toId] = dst;
+  if (!src.items.length) delete orders[fromId];
+  return orders;
+}
+
+// '' = every area; remembered while the app is open
+let tablesAreaFilter = '';
+
+function tableStatus(tableId) {
+  const ord = activeTableOrders[tableId];
+  if (ord && ord.items && ord.items.length > 0) return 'occupied';
+  if (ord && ord.cleaning) return 'cleaning';
+  return 'vacant';
+}
+
+function tableAreas() {
+  return [...new Set(restaurantTables.map(t => (t.area || '').trim()).filter(Boolean))];
+}
+
+window.setTablesAreaFilter = (area) => {
+  tablesAreaFilter = area;
+  renderTablesScreen();
+};
+
 window.renderTablesScreen = () => {
   const grid = document.getElementById('tables-floor-grid');
   if (!grid) return;
 
-  const total = restaurantTables.length;
-  let vacant = 0;
-  let occupied = 0;
+  const counts = { vacant: 0, occupied: 0, cleaning: 0 };
   let activeRev = 0;
   const now = Date.now();
 
   restaurantTables.forEach(t => {
-    const ord = activeTableOrders[t.id];
-    if (ord && ord.items && ord.items.length > 0) {
-      occupied++;
-      activeRev += ord.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0);
-    } else {
-      vacant++;
-    }
+    const st = tableStatus(t.id);
+    counts[st]++;
+    if (st === 'occupied') activeRev += activeTableOrders[t.id].items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0);
   });
 
-  const elTot = document.getElementById('tables-total-count');
-  const elVac = document.getElementById('tables-vacant-count');
-  const elOcc = document.getElementById('tables-occupied-count');
-  const elRev = document.getElementById('tables-active-revenue');
-  if (elTot) elTot.textContent = total;
-  if (elVac) elVac.textContent = vacant;
-  if (elOcc) elOcc.textContent = occupied;
-  if (elRev) elRev.textContent = formatMoney(activeRev);
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setText('tables-total-count', restaurantTables.length);
+  setText('tables-vacant-count', counts.vacant);
+  setText('tables-occupied-count', counts.occupied);
+  setText('tables-cleaning-count', counts.cleaning);
+  setText('tables-active-revenue', formatMoney(activeRev));
 
-  grid.innerHTML = restaurantTables.map(t => {
+  // Area chips only once a table has an area
+  const areas = tableAreas();
+  if (tablesAreaFilter && !areas.includes(tablesAreaFilter)) tablesAreaFilter = '';
+  const chips = document.getElementById('tables-area-chips');
+  if (chips) {
+    chips.innerHTML = areas.length ? ['', ...areas].map(a => `
+      <button type="button" class="cat-pill ${tablesAreaFilter === a ? 'active' : ''}" onclick="setTablesAreaFilter('${escapeHtml(a).replace(/'/g, '&#39;')}')">${a ? escapeHtml(a) : 'All areas'}</button>
+    `).join('') : '';
+  }
+
+  const card = t => {
+    const st = tableStatus(t.id);
     const ord = activeTableOrders[t.id];
-    const isOccupied = ord && ord.items && ord.items.length > 0;
-    const subtotal = isOccupied ? ord.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
-    const itemsCount = isOccupied ? ord.items.reduce((sum, it) => sum + it.quantity, 0) : 0;
-    const elapsedMins = (isOccupied && ord.openedAt) ? Math.floor((now - new Date(ord.openedAt).getTime()) / 60000) : 0;
+    const subtotal = st === 'occupied' ? ord.items.reduce((sum, it) => sum + (it.unit_price * it.quantity), 0) : 0;
+    const itemsCount = st === 'occupied' ? ord.items.reduce((sum, it) => sum + it.quantity, 0) : 0;
+    const elapsedMins = (st === 'occupied' && ord.openedAt) ? Math.floor((now - new Date(ord.openedAt).getTime()) / 60000) : 0;
+    const label = { vacant: 'Vacant', occupied: 'Occupied', cleaning: 'Needs Cleaning' }[st];
 
     return `
-      <div class="table-card ${isOccupied ? 'table-occupied' : 'table-vacant'}" onclick="openTableDetails('${t.id}')">
+      <div class="table-card table-${st}" onclick="openTableDetails('${t.id}')">
         <div class="table-top">
           <div class="table-name">
-            <span>${isOccupied ? '🍽️' : '🪑'}</span>
             <span>${escapeHtml(t.name)}</span>
           </div>
           <div style="display:flex; align-items:center; gap:6px">
-            <span class="table-status-pill ${isOccupied ? 'table-status-occupied' : 'table-status-vacant'}">
-              ${isOccupied ? 'Occupied' : 'Vacant'}
-            </span>
-            <button type="button" class="table-opt-btn" onclick="event.stopPropagation(); openEditTableModal('${t.id}')" title="Edit Table details (Name & Seats)">
+            <span class="table-status-pill table-status-${st}">${label}</span>
+            <button type="button" class="table-opt-btn" onclick="event.stopPropagation(); openEditTableModal('${t.id}')" title="Edit table" aria-label="Edit ${escapeHtml(t.name)}">
               <i class="fa-solid fa-pen"></i>
             </button>
-            ${!isOccupied ? `
-              <button type="button" class="table-opt-btn" onclick="event.stopPropagation(); deleteTable('${t.id}')" title="Remove Table from floor" style="color:var(--danger)">
-                <i class="fa-regular fa-trash-can"></i>
-              </button>
-            ` : ''}
           </div>
         </div>
         <div class="table-body-info">
-          <div class="table-seats"><i class="fa-solid fa-users"></i> ${t.seats} Guest Seats</div>
-          ${isOccupied ? `
+          <div class="table-seats"><i class="fa-solid fa-users"></i> ${t.seats} seats</div>
+          ${st === 'occupied' ? `
             <div class="table-subtotal">${formatMoney(subtotal)}</div>
-            <div class="table-time">
-              <span>${itemsCount} items ordered</span> · <span>⏱️ ${elapsedMins}m dining</span>
-            </div>
+            <div class="table-time">${itemsCount} item${itemsCount === 1 ? '' : 's'} · ${elapsedMins}m dining</div>
+          ` : st === 'cleaning' ? `
+            <div class="table-time">Bill paid. Clear and wipe down before seating.</div>
           ` : `
-            <div style="font-size:12px; color:var(--text-muted); margin-top:6px">Clean & Ready for guests</div>
+            <div class="table-time">Ready for guests</div>
           `}
         </div>
         <div class="table-actions">
-          ${isOccupied ? `
+          ${st === 'occupied' ? `
             <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); settleTableBill('${t.id}')" style="flex:1">
               <i class="fa-solid fa-credit-card"></i> Settle Bill
             </button>
-            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); startOrderAtTable('${t.id}')" title="Add items to table">
-              + Items
+            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); startOrderAtTable('${t.id}')" title="Add items to this table">+ Items</button>
+            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openMoveTableModal('${t.id}')" title="Move or merge this order to another table">
+              <i class="fa-solid fa-right-left"></i> Move
             </button>
-            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openEditTableModal('${t.id}')" title="Manage Table">
-              <i class="fa-solid fa-sliders"></i>
+          ` : st === 'cleaning' ? `
+            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); markTableClean('${t.id}')" style="flex:1">
+              <i class="fa-solid fa-broom"></i> Mark Clean
             </button>
           ` : `
             <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); startOrderAtTable('${t.id}')" style="flex:1">
               <i class="fa-solid fa-plus"></i> Start Order
             </button>
-            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openEditTableModal('${t.id}')" title="Edit Table Details">
-              <i class="fa-solid fa-sliders"></i>
-            </button>
-            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); deleteTable('${t.id}')" title="Remove Table" style="color:var(--danger)">
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); deleteTable('${t.id}')" title="Remove table" aria-label="Remove ${escapeHtml(t.name)}" style="color:var(--danger)">
               <i class="fa-regular fa-trash-can"></i>
             </button>
           `}
         </div>
       </div>
     `;
-  }).join('');
+  };
+
+  // Grouped by area; tables without one go under "Main floor"
+  const groups = new Map();
+  restaurantTables
+    .filter(t => !tablesAreaFilter || (t.area || '').trim() === tablesAreaFilter)
+    .forEach(t => {
+      const a = (t.area || '').trim() || 'Main floor';
+      if (!groups.has(a)) groups.set(a, []);
+      groups.get(a).push(t);
+    });
+
+  grid.innerHTML = [...groups].map(([area, tables]) => `
+    ${areas.length ? `<h3 class="tables-area-title">${escapeHtml(area)} <span>${tables.length}</span></h3>` : ''}
+    <div class="tables-floor-grid">${tables.map(card).join('')}</div>
+  `).join('');
+};
+
+// Shared by table changes: keep this device, the cloud copy and the other tills in step
+async function commitTableChange() {
+  await saveRestaurantState();
+  renderTablesScreen();
+  updateDiningTableUI();
+  if (typeof broadcastRealtimeEvent === 'function') {
+    broadcastRealtimeEvent('TABLE_UPDATED', { activeTableOrders, activeKots });
+  }
+}
+
+window.markTableClean = async (tableId) => {
+  if (tableStatus(tableId) !== 'cleaning') return;
+  delete activeTableOrders[tableId];
+  await commitTableChange();
+  showToast('success', `${getTableObj(tableId)?.name || 'Table'} is ready for guests`);
+};
+
+// Move / merge: pick where the whole order goes
+window.openMoveTableModal = (fromId) => {
+  const from = getTableObj(fromId);
+  if (!from || tableStatus(fromId) !== 'occupied') return;
+  const targets = restaurantTables.filter(t => t.id !== fromId);
+  const html = `
+    <p style="margin:0 0 12px; font-size:13px; color:var(--text-secondary)">
+      Move the whole order from <strong>${escapeHtml(from.name)}</strong>. Picking an occupied table merges both orders into one bill.
+    </p>
+    <div class="table-pick-grid">
+      ${targets.map(t => {
+        const st = tableStatus(t.id);
+        return `
+          <button type="button" class="table-pick-btn table-pick-${st}" onclick="confirmMoveTable('${fromId}', '${t.id}')">
+            <strong>${escapeHtml(t.name)}</strong>
+            <span>${st === 'occupied' ? 'Merge' : st === 'cleaning' ? 'Needs cleaning' : 'Vacant'} · ${t.seats} seats</span>
+          </button>`;
+      }).join('')}
+    </div>
+  `;
+  openModal(`Move ${from.name}`, html, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>`);
+};
+
+window.confirmMoveTable = async (fromId, toId, picks = null) => {
+  const from = getTableObj(fromId), to = getTableObj(toId);
+  if (!from || !to) return;
+  const merging = tableStatus(toId) === 'occupied';
+  if (!picks && merging && !await showConfirmation(
+    `Merge ${from.name} into ${to.name}? Both orders become one bill on ${to.name}.`,
+    { title: 'Merge tables', confirmLabel: 'Merge' })) return;
+
+  moveTableItems(activeTableOrders, fromId, toId, picks);
+  // Kitchen tickets follow the order only when all of it moved
+  if (!picks) {
+    activeKots.forEach(k => {
+      if (k.table_id === fromId && k.status !== 'served') { k.table_id = toId; k.table_name = to.name; }
+    });
+  }
+  if (currentTableId === fromId && !activeTableOrders[fromId]) currentTableId = toId;
+  closeModal();
+  await commitTableChange();
+  if (typeof renderKOTScreen === 'function') renderKOTScreen();
+  showToast('success', picks ? `Items moved to ${to.name}` : merging ? `${from.name} merged into ${to.name}` : `Order moved to ${to.name}`);
+};
+
+// Split: choose how many of each line go to another table
+window.openSplitTableModal = (fromId) => {
+  const from = getTableObj(fromId);
+  const ord = activeTableOrders[fromId];
+  if (!from || !ord || !ord.items.length) return;
+  const html = `
+    <p style="margin:0 0 12px; font-size:13px; color:var(--text-secondary)">Choose what moves to another table. Each table then gets its own bill.</p>
+    <div class="split-lines">
+      ${ord.items.map((it, i) => `
+        <div class="split-line">
+          <div class="split-line-name">${escapeHtml(it.name)}<span>${it.quantity} on the table · ${formatMoney(it.unit_price)}</span></div>
+          <div class="cart-item-qty">
+            <button type="button" onclick="stepSplitQty(${i}, -1)" aria-label="Fewer">−</button>
+            <span id="split-qty-${i}" data-max="${it.quantity}">0</span>
+            <button type="button" onclick="stepSplitQty(${i}, 1)" aria-label="More">+</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <label class="form-label" style="margin-top:14px">Move to</label>
+    <select class="form-input" id="split-target">
+      ${restaurantTables.filter(t => t.id !== fromId).map(t => `<option value="${t.id}">${escapeHtml(t.name)}${tableStatus(t.id) === 'occupied' ? ' (adds to its order)' : ''}</option>`).join('')}
+    </select>
+  `;
+  openModal(`Split ${from.name}`, html, `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="confirmSplitTable('${fromId}')"><i class="fa-solid fa-code-branch"></i> Split</button>
+  `);
+};
+
+window.stepSplitQty = (i, d) => {
+  const el = document.getElementById(`split-qty-${i}`);
+  if (!el) return;
+  el.textContent = Math.min(Number(el.dataset.max), Math.max(0, Number(el.textContent) + d));
+};
+
+window.confirmSplitTable = (fromId) => {
+  const picks = [...document.querySelectorAll('[id^="split-qty-"]')]
+    .map(el => ({ index: Number(el.id.replace('split-qty-', '')), qty: Number(el.textContent) }))
+    .filter(p => p.qty > 0);
+  if (!picks.length) return showToast('error', 'Choose at least one item to move');
+  const toId = document.getElementById('split-target')?.value;
+  if (!toId) return showToast('error', 'Add another table first');
+  confirmMoveTable(fromId, toId, picks);
 };
 
 window.openTableDetails = (tableId) => {
@@ -10117,6 +10405,10 @@ window.openTableDetails = (tableId) => {
       <button class="btn btn-secondary" onclick="startOrderAtTable('${tableId}')">
         ➕ Add More Food Items in POS
       </button>
+      <div style="display:flex; gap:8px">
+        <button class="btn btn-secondary" style="flex:1" onclick="openMoveTableModal('${tableId}')"><i class="fa-solid fa-right-left"></i> Move / Merge</button>
+        <button class="btn btn-secondary" style="flex:1" onclick="openSplitTableModal('${tableId}')"><i class="fa-solid fa-code-branch"></i> Split Bill</button>
+      </div>
       <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="clearTableOrder('${tableId}')">
         ✕ Clear & Reset Table
       </button>
@@ -10171,6 +10463,16 @@ window.clearTableOrder = async (tableId) => {
   showToast('info', `Table cleared and marked vacant.`);
 };
 
+// Free text with the areas already in use offered, so "Outdoor" is not typed three ways
+function tableAreaField(id, value) {
+  return `
+    <div class="form-group" style="grid-column:span 2">
+      <label class="form-label" for="${id}">Area <span style="font-weight:400; color:var(--text-muted)">(optional, e.g. Indoor, Outdoor, VIP)</span></label>
+      <input class="form-input" id="${id}" list="${id}-list" value="${escapeHtml(value || '')}" placeholder="Main floor" autocomplete="off">
+      <datalist id="${id}-list">${tableAreas().map(a => `<option value="${escapeHtml(a)}">`).join('')}</datalist>
+    </div>`;
+}
+
 window.openAddNewTableModal = () => {
   const html = `
     <div class="form-grid">
@@ -10182,6 +10484,7 @@ window.openAddNewTableModal = () => {
         <label class="form-label">Seating Capacity</label>
         <input class="form-input" id="new-tbl-seats" type="number" value="4" min="1" max="50">
       </div>
+      ${tableAreaField('new-tbl-area', tablesAreaFilter)}
     </div>
   `;
   openModal('Add Dining Table', html, `
@@ -10196,7 +10499,8 @@ window.saveNewTable = async () => {
   if (!name) return showToast('error', 'Table name is required');
 
   const id = 'T-' + Date.now();
-  restaurantTables.push({ id, name, seats });
+  const area = document.getElementById('new-tbl-area')?.value.trim() || '';
+  restaurantTables.push({ id, name, seats, area });
   currentSettings.tables_config = JSON.stringify(restaurantTables);
 
   const existing = await db.settings.where('key').equals('tables_config').first();
@@ -10225,6 +10529,7 @@ window.openEditTableModal = (tableId) => {
         <label class="form-label">Guest Seating Capacity</label>
         <input class="form-input" id="edit-tbl-seats" type="number" value="${t.seats || 4}" min="1" max="50">
       </div>
+      ${tableAreaField('edit-tbl-area', t.area || '')}
       ${isOccupied ? `
         <div style="grid-column:span 2; padding:10px 12px; background:rgba(245,158,11,0.1); border-radius:8px; border:1px solid #fde68a; font-size:12px; color:#92400e">
           ⚠️ <strong>Table Currently Occupied:</strong> Active guest order in progress. You can edit the name or seats, but cannot remove this table until the bill is settled or cleared.
@@ -10266,6 +10571,7 @@ window.saveEditTable = async (tableId) => {
 
   t.name = name;
   t.seats = seats;
+  t.area = document.getElementById('edit-tbl-area')?.value.trim() || '';
   currentSettings.tables_config = JSON.stringify(restaurantTables);
 
   const existing = await db.settings.where('key').equals('tables_config').first();
@@ -10381,6 +10687,12 @@ window.renderRestaurantSettingsUI = () => {
   const isRest = currentSettings.restaurant_mode === 'true' || currentSettings.biz_type === 'Restaurant' || (bizTypeSel && bizTypeSel.value === 'Restaurant');
 
   if (enabledCb) enabledCb.checked = isRest;
+  deliveryPlatforms().forEach(pl => {
+    const mk = document.getElementById(`set-${pl.id}-markup`);
+    const cm = document.getElementById(`set-${pl.id}-commission`);
+    if (mk) mk.value = pl.markup || '';
+    if (cm) cm.value = pl.commission || '';
+  });
   if (badge) {
     badge.textContent = isRest ? 'Restaurant Active' : 'Suite Disabled';
     badge.className = isRest ? 'badge badge-warning' : 'badge';

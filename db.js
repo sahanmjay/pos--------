@@ -554,6 +554,8 @@ const db = {
   set isSuperAdmin(val) { isSuperAdmin = val; },
   // Whether public.sales carries the per-business bill_no column
   salesSupportsBillNo,
+  // Whether public.sales records order type, platform order no. and commission
+  salesSupportsOrderType,
   // Whether public.products can mark kitchen ingredients
   productsSupportItemType,
   // Whether public.products can hold a dish's recipe
@@ -1001,6 +1003,22 @@ async function salesSupportsBillNo() {
     _billNoSupported = false;
   }
   return _billNoSupported;
+}
+
+// sales.order_type / ref_no / commission arrive with
+// migrations/2026-10-30-sales-order-type.sql
+let _orderTypeSupported = null;
+async function salesSupportsOrderType() {
+  if (_orderTypeSupported !== null) return _orderTypeSupported;
+  if (isOffline()) return false;
+  try {
+    const { error } = await supa.from('sales').select('order_type').limit(1);
+    _orderTypeSupported = !error;
+    if (error) console.warn('[order_type] Columns not present — run migrations/2026-10-30-sales-order-type.sql.');
+  } catch (e) {
+    return false;
+  }
+  return _orderTypeSupported;
 }
 
 async function saCreateOrganization(orgData, adminData) {
