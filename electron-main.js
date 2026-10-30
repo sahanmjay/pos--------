@@ -93,6 +93,8 @@ function createWindow(port) {
 
   // Show window when content is ready (avoids white flash)
   mainWindow.once('ready-to-show', () => {
+    // Maximized fits the screen above the taskbar; a fixed 1366x768 hides the pay buttons under it
+    mainWindow.maximize();
     mainWindow.show();
 
     // Focus on startup

@@ -40,10 +40,10 @@ for %%i in (
 :: Launch in app mode (frameless dedicated window)
 if defined CHROME (
   echo  Opening NexPOS in Chrome App Mode...
-  start "" "%CHROME%" --app=http://localhost:3000 --window-size=1366,768 --disable-extensions --kiosk-printing
+  start "" "%CHROME%" --app=http://localhost:3000 --start-maximized --disable-extensions --kiosk-printing
 ) else if defined EDGE (
   echo  Opening NexPOS in Edge App Mode...
-  start "" "%EDGE%" --app=http://localhost:3000 --window-size=1366,768 --disable-extensions --kiosk-printing
+  start "" "%EDGE%" --app=http://localhost:3000 --start-maximized --disable-extensions --kiosk-printing
 ) else (
   echo  Chrome/Edge not found - opening the default browser.
   echo  NOTE: silent printing needs Chrome or Edge; this window will

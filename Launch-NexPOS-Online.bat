@@ -28,9 +28,9 @@ for %%i in (
 set "PROFILE=%LocalAppData%\NexPOS-Till"
 
 if defined CHROME (
-  start "" "%CHROME%" --app=%POS_URL% --user-data-dir="%PROFILE%" --kiosk-printing --window-size=1366,768
+  start "" "%CHROME%" --app=%POS_URL% --user-data-dir="%PROFILE%" --kiosk-printing --start-maximized
 ) else if defined EDGE (
-  start "" "%EDGE%" --app=%POS_URL% --user-data-dir="%PROFILE%" --kiosk-printing --window-size=1366,768
+  start "" "%EDGE%" --app=%POS_URL% --user-data-dir="%PROFILE%" --kiosk-printing --start-maximized
 ) else (
   echo Chrome or Edge is needed for printing without the dialog.
   pause
