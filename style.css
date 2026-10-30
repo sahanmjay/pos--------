@@ -1401,6 +1401,8 @@ input, select, textarea, button { font-family: inherit; }
   gap: 4px;
   cursor: pointer;
 }
+/* Its own full-width row under Hold / Resume / Discount */
+.cart-actions .btn-kot-action { flex-basis: 100%; }
 .btn-kot-action {
   background: #FEF3C7 !important;
   color: #92400E !important;
